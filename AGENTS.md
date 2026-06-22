@@ -43,6 +43,8 @@ Do not implement Phase 2 database work or later phases unless explicitly asked.
   future task explicitly asks for that phase.
 - Add tests for any behavior change.
 - Update docs when architecture changes.
+- When a phase is complete and checks pass, commit and push automatically unless
+  the user says otherwise.
 
 ## Definition Of Done
 
