@@ -38,6 +38,14 @@ source for nearest-neighbor search and proximity explanations.
 - `export.html`: self-contained offline HTML export.
 - `export.json`: optional JSON sidecar export without full source text.
 - `pipeline`: Phase 1 orchestration.
+- `chunking`: deterministic paragraph/window text chunking.
+- `records`: persistent dataclasses for documents, chunks, scan summaries,
+  search results, and database stats.
+- `storage.sqlite`: database path resolution and SQLite connection setup.
+- `storage.migrations`: idempotent schema initialization.
+- `storage.repository`: explicit parameterized SQL operations.
+- `indexer`: Phase 2 incremental indexing orchestration.
+- `search`: local FTS search and database stats wrappers.
 
 Future modules may add persistent records, graph construction, better layout
 stability, and a richer local UI.
@@ -53,6 +61,42 @@ It does not embed full extracted source text.
 Nearest neighbors come from high-dimensional TF-IDF cosine similarity. The 2D
 coordinates are an exploratory view only, so visual closeness should not be used
 as the canonical neighbor definition.
+
+## Phase 2 Local Storage
+
+Phase 2 adds a local SQLite database under `.paper-galaxy/` by default. The
+indexing flow is:
+
+```text
+resolve project database
+  -> initialize schema
+  -> discover corpus files
+  -> hash each file
+  -> skip unchanged documents
+  -> extract changed/new text
+  -> chunk text
+  -> upsert document metadata
+  -> replace document text/chunks/FTS rows
+  -> mark unseen active documents missing
+  -> finish scan run summary
+```
+
+The storage layer uses standard library `sqlite3`, foreign keys, explicit SQL,
+and SQLite FTS5. It does not run a server and does not add an ORM.
+
+Schema overview:
+
+- `schema_meta`: schema version.
+- `corpora`: indexed corpus roots.
+- `scan_runs`: one row per indexing run.
+- `documents`: stable path-based document records and hashes.
+- `document_texts`: local extracted full text.
+- `chunks`: deterministic text chunks for future app views.
+- `skipped_files`: per-run skipped files and reasons.
+- `documents_fts`: FTS5 table for local search.
+
+Phase 2 prepares for Phase 3 by making project state persistent and incremental.
+The static Phase 1 `scan` command remains file-based and independent.
 
 ## Future Data Model Sketch
 

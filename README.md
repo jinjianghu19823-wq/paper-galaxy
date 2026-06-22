@@ -4,10 +4,10 @@ Paper Galaxy is a local-first research cartography tool for turning a personal
 research corpus into an interactive map of documents, clusters, and conceptual
 neighborhoods.
 
-Current status: Phase 1 static CLI MVP. This repository can scan a local sample
-corpus, extract simple text formats, build a TF-IDF similarity baseline, reduce
-documents to a 2D view, cluster them, and export a self-contained offline
-`galaxy.html`.
+Current status: Phase 2 local database. This repository can scan a local sample
+corpus, export a self-contained offline `galaxy.html`, index documents and
+chunks into local SQLite, rerun indexing incrementally, and search indexed text
+with SQLite FTS5.
 
 Eventually, Paper Galaxy will let a user point the app at folders or a Zotero
 library, represent each document as a point in a 2D map, place similar documents
@@ -19,8 +19,8 @@ files -> extraction -> cleaning -> records -> vectors -> graph -> map -> cluster
 ```
 
 Intentionally not implemented yet: OCR, full LaTeX parsing, dense embeddings,
-UMAP as a required path, SQLite storage, FastAPI, React, Zotero integration,
-desktop packaging, cloud sync, accounts, telemetry, and LLM chat.
+UMAP as a required path, FastAPI, React, Zotero integration, desktop packaging,
+cloud sync, accounts, telemetry, and LLM chat.
 
 Paper Galaxy is local-first by default. There is no account, no telemetry, no
 automatic upload, and no cloud dependency. Generated HTML is local and offline.
@@ -54,6 +54,9 @@ paper-galaxy init
 paper-galaxy init /path/to/project
 paper-galaxy scan examples/tiny_corpus --out galaxy.html --force
 paper-galaxy scan examples/tiny_corpus --out galaxy.html --json-out galaxy.json --force
+paper-galaxy index examples/tiny_corpus --project-dir . --min-chars 40
+paper-galaxy search "neural operator" --project-dir .
+paper-galaxy db-stats --project-dir .
 ```
 
 `paper-galaxy init` creates `.paper-galaxy/project.toml` only. It does not scan
@@ -74,8 +77,18 @@ with a clear reason. OCR is not implemented in Phase 1.
 Nearest neighbors are computed from high-dimensional TF-IDF cosine similarity,
 not from visual distance in the 2D map. The 2D layout is only a view.
 
+`paper-galaxy index` persists extracted text and deterministic chunks in a local
+SQLite database under `.paper-galaxy/paper_galaxy.sqlite3` by default. It uses
+SHA-256 hashes to skip unchanged files, preserves document IDs when a file keeps
+the same corpus-relative path, and marks removed files as `missing` rather than
+deleting their rows.
+
+`paper-galaxy search` uses local SQLite FTS5 over document titles, relative
+paths, and extracted text. `paper-galaxy db-stats` reports local database
+counts. Database files live under `.paper-galaxy/` and are gitignored.
+
 ## Next Phase
 
-The next planned implementation phase is Phase 2: a local SQLite database with
-document hashes, incremental scanning, document/chunk tables, and basic
-full-text search.
+The next planned implementation phase is Phase 3: a local interactive web app
+that reads the persistent project state. There is still no server, cloud
+dependency, OCR, dense embeddings, or frontend framework in Phase 2.

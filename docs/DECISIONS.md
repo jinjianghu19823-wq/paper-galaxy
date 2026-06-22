@@ -61,3 +61,27 @@ introduced.
 Basic PDF extraction uses optional `pypdf` only. If `pypdf` is unavailable, PDF
 files are skipped with a clear reason. OCR, PyMuPDF, GROBID, and Tesseract are
 not part of Phase 1.
+
+## ADR 0012: Standard Library sqlite3 Instead Of An ORM
+
+Phase 2 uses Python's standard library `sqlite3` with explicit SQL. This keeps
+the local persistence layer lightweight, inspectable, and dependency-free while
+the schema is still small.
+
+## ADR 0013: SQLite FTS5 For Basic Local Search
+
+Phase 2 uses SQLite FTS5 over titles, relative paths, and extracted text. This
+provides offline full-text search without a server, cloud service, or separate
+search dependency.
+
+## ADR 0014: Stable IDs From Corpus And Relative Path
+
+Corpus IDs are derived from the resolved corpus root path. Document IDs are
+derived from corpus ID plus corpus-relative path, so editing a file preserves
+the document ID while changing its content hash and updated metadata.
+
+## ADR 0015: Missing Files Are Marked, Not Deleted
+
+When a previously indexed file disappears, Phase 2 marks its document row as
+`missing` instead of deleting it. This preserves history and lets future app
+views decide how to display or recover missing documents.

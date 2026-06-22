@@ -106,3 +106,60 @@ def test_scan_reports_missing_ml_dependency(
     assert result.exit_code == 1
     assert "Missing optional dependency" in result.output
     assert 'python -m pip install -e ".[dev,ml,pdf]"' in result.output
+
+
+def test_index_search_and_db_stats_commands(tmp_path: Path) -> None:
+    runner = CliRunner()
+
+    first = runner.invoke(
+        app,
+        [
+            "index",
+            "examples/tiny_corpus",
+            "--project-dir",
+            str(tmp_path),
+            "--min-chars",
+            "40",
+        ],
+    )
+    second = runner.invoke(
+        app,
+        [
+            "index",
+            "examples/tiny_corpus",
+            "--project-dir",
+            str(tmp_path),
+            "--min-chars",
+            "40",
+        ],
+    )
+    search = runner.invoke(
+        app,
+        ["search", "neural", "--project-dir", str(tmp_path)],
+    )
+    stats = runner.invoke(
+        app,
+        ["db-stats", "--project-dir", str(tmp_path)],
+    )
+
+    assert first.exit_code == 0
+    assert "Documents inserted" in first.output
+    assert second.exit_code == 0
+    assert "Documents unchanged" in second.output
+    assert search.exit_code == 0
+    assert "neural_operators" in search.output
+    assert stats.exit_code == 0
+    assert "Active documents" in stats.output
+
+
+def test_search_missing_database_prints_clear_message(tmp_path: Path) -> None:
+    runner = CliRunner()
+
+    result = runner.invoke(
+        app,
+        ["search", "neural", "--project-dir", str(tmp_path)],
+    )
+
+    assert result.exit_code == 1
+    assert "No Paper Galaxy database found" in result.output
+    assert "Run paper-galaxy index CORPUS_DIR first" in result.output

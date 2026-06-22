@@ -33,15 +33,18 @@ summary, and neighbor data based on TF-IDF cosine similarity.
 Non-goals: persistent database, chunk embeddings, backend server, React UI,
 cloud features, and high-quality OCR.
 
-## Phase 2: Local Database
+## Phase 2: Local Database (implemented)
 
 Goal: persist document records and support incremental local scans.
 
-Deliverables: SQLite schema, document hashes, document and chunk tables,
-incremental scanning, and basic full-text search.
+Deliverables: SQLite schema, document hashes, stable document IDs, document and
+chunk tables, scan run records, missing-file tracking, incremental indexing,
+and basic local FTS5 full-text search.
 
-Definition of done: rerunning a scan updates only changed documents and preserves
-stable document identifiers.
+Definition of done: rerunning an index skips unchanged documents, updates
+changed files while preserving path-based document IDs, marks removed files as
+missing, writes deterministic chunks, records scan summaries, and returns useful
+local search results.
 
 Non-goals: semantic embeddings, remote sync, multi-user accounts, and desktop
 packaging.
