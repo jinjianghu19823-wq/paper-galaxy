@@ -49,7 +49,8 @@ source for nearest-neighbor search and proximity explanations.
 - `web.server`: lazy FastAPI/Uvicorn app creation and local server startup.
 - `web.api`: read-only local JSON API routes.
 - `web.map_builder`: ephemeral map generation from active indexed documents.
-- `web.static`: static HTML/CSS/vanilla JavaScript browser UI.
+- `web.static`: static HTML/CSS/vanilla JavaScript browser UI, including the
+  Phase 3.1 dependency-free force graph renderer.
 
 Future modules may add persistent records, graph construction, better layout
 stability, and a richer local UI.
@@ -149,6 +150,24 @@ does not re-extract source files. It reuses the Phase 1 TF-IDF, layout,
 clustering, label, top-term, and neighbor helpers. Nearest neighbors are
 computed from high-dimensional TF-IDF cosine similarity, not from 2D map
 distance.
+
+Phase 3.1 keeps `/api/map` as the canonical source of semantic graph data:
+documents, initial x/y coordinates, cluster labels, and nearest-neighbor lists.
+The frontend derives SVG links from each point's `nearest_neighbors` entries and
+does not recompute document similarity in the browser.
+
+The browser-side `web.static/graph.js` force graph then treats the API x/y
+coordinates as initial positions only. It runs a local `requestAnimationFrame`
+simulation with center, repulsion, link spring, collision, damping, and subtle
+pointer forces. It supports hover focus, click selection, drag-to-pin nodes,
+background pan, mouse-wheel zoom, reset view, reset layout, and force/display
+settings. SVG elements are created on data load and updated in place on each
+tick.
+
+Manual layout is frontend-only state. Dragged or pinned node positions and
+graph display settings are stored in browser `localStorage`, keyed by local
+database identity and map settings. Graph movement does not mutate SQLite,
+create map runs, or change the indexed corpus.
 
 Missing and unindexed documents are excluded from the default map. Search can
 include missing documents when explicitly requested, but unindexed documents

@@ -1,28 +1,20 @@
 const API = {
   health: "/api/health",
+  config: "/api/config",
   stats: "/api/stats",
   map: "/api/map",
   search: "/api/search",
   documents: "/api/documents"
 };
 
-const CLUSTER_COLORS = [
-  "#0f766e",
-  "#2563eb",
-  "#d97706",
-  "#be315b",
-  "#7c3aed",
-  "#0891b2",
-  "#4d7c0f",
-  "#c2410c"
-];
-
-const SVG_NS = "http:" + "//www.w3.org/2000/svg";
+const THEME_KEY = "paper-galaxy:theme";
 
 const state = {
   health: null,
+  config: null,
   stats: null,
   map: null,
+  graph: null,
   selectedId: null,
   selectedDetail: null,
   filter: "",
@@ -35,6 +27,7 @@ const els = {
   missingCount: document.querySelector("#missing-count"),
   unindexedCount: document.querySelector("#unindexed-count"),
   lastScan: document.querySelector("#last-scan"),
+  themeToggle: document.querySelector("#theme-toggle"),
   searchForm: document.querySelector("#search-form"),
   searchInput: document.querySelector("#search-input"),
   includeMissing: document.querySelector("#include-missing"),
@@ -45,16 +38,31 @@ const els = {
   mapEmpty: document.querySelector("#map-empty"),
   mapSvg: document.querySelector("#map-svg"),
   resetSelection: document.querySelector("#reset-selection"),
+  resetView: document.querySelector("#reset-view"),
+  resetLayout: document.querySelector("#reset-layout"),
+  pauseGraph: document.querySelector("#pause-graph"),
+  animateToggle: document.querySelector("#animate-toggle"),
+  arrowsToggle: document.querySelector("#arrows-toggle"),
+  centerForce: document.querySelector("#center-force"),
+  repelForce: document.querySelector("#repel-force"),
+  linkForce: document.querySelector("#link-force"),
+  linkDistance: document.querySelector("#link-distance"),
+  nodeSize: document.querySelector("#node-size"),
+  linkThickness: document.querySelector("#link-thickness"),
+  labelThreshold: document.querySelector("#label-threshold"),
   inspector: document.querySelector("#inspector-content")
 };
 
 document.addEventListener("DOMContentLoaded", init);
 
 async function init() {
+  initTheme();
+  initGraph();
   bindEvents();
   setInspectorMessage("Select a document point or search result.");
   try {
     state.health = await fetchJson(API.health);
+    state.config = await fetchJson(API.config);
     updateHealth(state.health);
     await loadStats();
     await loadMap();
@@ -63,7 +71,39 @@ async function init() {
   }
 }
 
+function initGraph() {
+  state.graph = new window.PaperGalaxyGraph.ForceGraph(els.mapSvg, {
+    onSelect: selectDocument,
+    onVisibleCountChange: updateMapCaption,
+    onPinChange: () => {
+      if (state.selectedDetail) {
+        renderInspector();
+      }
+    },
+    onLayoutReset: () => {
+      if (state.selectedDetail) {
+        renderInspector();
+      }
+    }
+  });
+  state.graph.bindControls({
+    animate: els.animateToggle,
+    showArrows: els.arrowsToggle,
+    centerForce: els.centerForce,
+    repelForce: els.repelForce,
+    linkForce: els.linkForce,
+    linkDistance: els.linkDistance,
+    nodeSize: els.nodeSize,
+    linkThickness: els.linkThickness,
+    labelThreshold: els.labelThreshold,
+    resetView: els.resetView,
+    resetLayout: els.resetLayout,
+    pause: els.pauseGraph
+  });
+}
+
 function bindEvents() {
+  els.themeToggle.addEventListener("click", toggleTheme);
   els.searchForm.addEventListener("submit", (event) => {
     event.preventDefault();
     runSearch();
@@ -75,15 +115,18 @@ function bindEvents() {
   els.includeMissing.addEventListener("change", runSearch);
   els.pointFilter.addEventListener("input", () => {
     state.filter = els.pointFilter.value.trim().toLowerCase();
-    renderMap();
+    if (state.graph) {
+      state.graph.setFilter(state.filter);
+    }
   });
   els.resetSelection.addEventListener("click", () => {
     state.selectedId = null;
     state.selectedDetail = null;
-    renderMap();
+    if (state.graph) {
+      state.graph.setSelected(null);
+    }
     setInspectorMessage("Select a document point or search result.");
   });
-  window.addEventListener("resize", renderMap);
 }
 
 async function loadStats() {
@@ -102,7 +145,9 @@ async function loadMap() {
   state.map = payload;
   if (!payload.database_exists) {
     updateMissingDatabase(payload.error);
-    renderMap();
+    if (state.graph) {
+      state.graph.clear();
+    }
     return;
   }
   renderMap();
@@ -131,7 +176,9 @@ async function runSearch() {
 async function selectDocument(documentId) {
   state.selectedId = documentId;
   state.selectedDetail = null;
-  renderMap();
+  if (state.graph) {
+    state.graph.setSelected(documentId);
+  }
   setInspectorMessage("Loading document...");
   try {
     const detail = await fetchJson(`${API.documents}/${encodeURIComponent(documentId)}`);
@@ -162,19 +209,17 @@ function updateMissingDatabase(error) {
   els.lastScan.textContent = "none";
   showEmptyState(
     "No Paper Galaxy database found",
-    "Run indexing from the command line before opening the map.",
+    "Run indexing from the command line before opening the graph.",
     error ? error.command : "paper-galaxy index /path/to/corpus --project-dir /path/to/project"
   );
 }
 
 function renderMap() {
   const payload = state.map;
-  els.mapSvg.replaceChildren();
   if (!payload || !payload.database_exists) {
     els.mapSvg.hidden = true;
     return;
   }
-  const documents = payload.documents || [];
   const points = payload.points || [];
   if (!points.length) {
     els.mapSvg.hidden = true;
@@ -182,89 +227,28 @@ function renderMap() {
     showEmptyState("No active documents", message, null);
     renderLegend(points, payload.cluster_labels || {});
     els.mapCaption.textContent = "0 active documents";
+    if (state.graph) {
+      state.graph.clear();
+    }
     return;
   }
 
   els.mapEmpty.hidden = true;
   els.mapSvg.hidden = false;
-  const docsById = new Map(documents.map((doc) => [doc.document_id, doc]));
-  const pointsById = new Map(points.map((point) => [point.document_id, point]));
-  const visiblePoints = filteredPoints(points, docsById);
-  els.mapCaption.textContent = `${visiblePoints.length} of ${points.length} active documents`;
   renderLegend(points, payload.cluster_labels || {});
+  state.graph.setData(payload, { layoutKey: graphLayoutKey(payload) });
+  state.graph.setFilter(state.filter);
+  state.graph.setSelected(state.selectedId);
+}
 
-  const width = 1000;
-  const height = 640;
-  const padding = 62;
-  els.mapSvg.setAttribute("viewBox", `0 0 ${width} ${height}`);
-  els.mapSvg.setAttribute("preserveAspectRatio", "xMidYMid meet");
-
-  const lineLayer = svgEl("g");
-  const pointLayer = svgEl("g");
-  els.mapSvg.append(lineLayer, pointLayer);
-
-  const visibleIds = new Set(visiblePoints.map((point) => point.document_id));
-  const drawnLinks = new Set();
-  for (const point of visiblePoints) {
-    const from = projectPoint(point, width, height, padding);
-    for (const neighbor of point.nearest_neighbors || []) {
-      if (!visibleIds.has(neighbor.document_id)) {
-        continue;
-      }
-      const key = [point.document_id, neighbor.document_id].sort().join(":");
-      if (drawnLinks.has(key)) {
-        continue;
-      }
-      drawnLinks.add(key);
-      const neighborPoint = pointsById.get(neighbor.document_id);
-      if (!neighborPoint) {
-        continue;
-      }
-      const to = projectPoint(neighborPoint, width, height, padding);
-      const line = svgEl("line", {
-        x1: from.x,
-        y1: from.y,
-        x2: to.x,
-        y2: to.y,
-        class: linkClass(point.document_id, neighbor.document_id)
-      });
-      lineLayer.append(line);
-    }
+function updateMapCaption(visible, total) {
+  if (!state.map || !state.map.database_exists) {
+    return;
   }
-
-  for (const point of visiblePoints) {
-    const doc = docsById.get(point.document_id);
-    const projected = projectPoint(point, width, height, padding);
-    const circle = svgEl("circle", {
-      cx: projected.x,
-      cy: projected.y,
-      r: state.selectedId === point.document_id ? 9 : 7,
-      fill: clusterColor(point.cluster_id),
-      class: state.selectedId === point.document_id ? "map-point selected" : "map-point",
-      tabindex: "0"
-    });
-    const title = svgEl("title");
-    title.textContent = `${doc ? doc.title : point.document_id}\n${point.cluster_label}`;
-    circle.append(title);
-    circle.addEventListener("click", () => selectDocument(point.document_id));
-    circle.addEventListener("keydown", (event) => {
-      if (event.key === "Enter" || event.key === " ") {
-        event.preventDefault();
-        selectDocument(point.document_id);
-      }
-    });
-    pointLayer.append(circle);
-
-    if (state.selectedId === point.document_id && doc) {
-      const label = svgEl("text", {
-        x: projected.x + 12,
-        y: projected.y - 12,
-        class: "map-label"
-      });
-      label.textContent = doc.title;
-      pointLayer.append(label);
-    }
-  }
+  const warnings = state.map.warnings || [];
+  const mode = state.graph && state.graph.settings.animate ? "animated" : "paused";
+  const base = `${visible} of ${total} active documents - semantic TF-IDF links - ${mode}`;
+  els.mapCaption.textContent = warnings.length ? `${base} - ${warnings[0]}` : base;
 }
 
 function renderLegend(points, clusterLabels) {
@@ -283,7 +267,7 @@ function renderLegend(points, clusterLabels) {
     row.className = "legend-item";
     const swatch = document.createElement("span");
     swatch.className = "swatch";
-    swatch.style.background = clusterColor(Number(id));
+    swatch.style.background = window.PaperGalaxyGraph.clusterColor(Number(id));
     const label = document.createElement("span");
     label.textContent = clusterLabels[id];
     const count = document.createElement("span");
@@ -345,6 +329,7 @@ function renderInspector() {
   if (metadata.local_path) {
     appendText(els.inspector, "div", metadata.local_path, "meta-row");
   }
+  renderPinControl(metadata.document_id);
 
   const terms = point ? point.top_terms || [] : [];
   const termsSection = inspectorSection("Top terms");
@@ -395,37 +380,37 @@ function renderInspector() {
   els.inspector.append(chunksSection);
 }
 
-function filteredPoints(points, docsById) {
-  if (!state.filter) {
-    return points;
+function renderPinControl(documentId) {
+  if (!state.graph || !state.graph.nodeById.has(documentId)) {
+    return;
   }
-  return points.filter((point) => {
-    const doc = docsById.get(point.document_id);
-    const haystack = [
-      doc ? doc.title : "",
-      doc ? doc.relative_path : "",
-      point.cluster_label,
-      ...(point.top_terms || [])
-    ].join(" ").toLowerCase();
-    return haystack.includes(state.filter);
+  const pinned = state.graph.isPinned(documentId);
+  const row = document.createElement("div");
+  row.className = "pin-row";
+  const status = document.createElement("span");
+  status.textContent = pinned ? "Pinned manual position" : "Free force layout";
+  const button = document.createElement("button");
+  button.type = "button";
+  button.textContent = pinned ? "Unpin" : "Pin";
+  button.addEventListener("click", () => {
+    state.graph.togglePin(documentId);
+    renderInspector();
   });
+  row.append(status, button);
+  els.inspector.append(row);
 }
 
-function linkClass(a, b) {
-  return state.selectedId === a || state.selectedId === b
-    ? "map-link selected"
-    : "map-link";
-}
-
-function projectPoint(point, width, height, padding) {
-  return {
-    x: padding + ((point.x + 1) / 2) * (width - padding * 2),
-    y: padding + ((1 - (point.y + 1) / 2)) * (height - padding * 2)
-  };
-}
-
-function clusterColor(clusterId) {
-  return CLUSTER_COLORS[Math.abs(Number(clusterId) || 0) % CLUSTER_COLORS.length];
+function graphLayoutKey(payload) {
+  const config = state.config || {};
+  const identity =
+    config.database_path ||
+    (state.health && state.health.database_path) ||
+    (state.health && state.health.project_dir) ||
+    "unknown";
+  const points = payload.points || [];
+  const seed = config.seed === null || config.seed === undefined ? "default" : config.seed;
+  const limit = config.map_limit === null || config.map_limit === undefined ? "default" : config.map_limit;
+  return `${identity}|seed:${seed}|limit:${limit}|docs:${points.length}`;
 }
 
 function showEmptyState(title, body, command) {
@@ -471,12 +456,25 @@ function appendText(parent, tagName, text, className) {
   return child;
 }
 
-function svgEl(tagName, attributes = {}) {
-  const element = document.createElementNS(SVG_NS, tagName);
-  for (const [key, value] of Object.entries(attributes)) {
-    element.setAttribute(key, String(value));
-  }
-  return element;
+function initTheme() {
+  const theme = localStorage.getItem(THEME_KEY) || "dark";
+  document.documentElement.dataset.theme = theme;
+  updateThemeToggle(theme);
+}
+
+function toggleTheme() {
+  const current = document.documentElement.dataset.theme || "dark";
+  const next = current === "dark" ? "light" : "dark";
+  document.documentElement.dataset.theme = next;
+  localStorage.setItem(THEME_KEY, next);
+  updateThemeToggle(next);
+}
+
+function updateThemeToggle(theme) {
+  els.themeToggle.setAttribute(
+    "aria-label",
+    theme === "dark" ? "Switch to light theme" : "Switch to dark theme"
+  );
 }
 
 async function fetchJson(url) {

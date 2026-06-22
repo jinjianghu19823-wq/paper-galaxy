@@ -55,7 +55,12 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 "paper_galaxy.storage" = ["schema.sql"]
-"paper_galaxy.web" = ["static/index.html", "static/app.js", "static/styles.css"]
+"paper_galaxy.web" = [
+  "static/index.html",
+  "static/app.js",
+  "static/graph.js",
+  "static/styles.css",
+]
 
 [tool.ruff]
 line-length = 88

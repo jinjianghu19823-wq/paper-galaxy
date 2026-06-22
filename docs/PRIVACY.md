@@ -18,6 +18,9 @@ Paper Galaxy is local-first by default.
   fonts, or external images.
 - The browser app does not upload documents, collect telemetry, or call remote
   services.
+- Phase 3.1 stores graph UI preferences and manually pinned node positions only
+  in browser `localStorage`, keyed by local database identity and document IDs.
+  These layout values are not uploaded and are not written to SQLite.
 - Choosing a non-loopback host may expose the app to other devices on the local
   network.
 - `.paper-galaxy/` is local project state and is gitignored.

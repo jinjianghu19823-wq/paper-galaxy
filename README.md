@@ -7,8 +7,8 @@ neighborhoods.
 Current status: Phase 3 local interactive web app. This repository can scan a
 local sample corpus, export a self-contained offline `galaxy.html`, index
 documents and chunks into local SQLite, rerun indexing incrementally, search
-indexed text with SQLite FTS5, and serve a local browser app for browsing the
-indexed corpus.
+indexed text with SQLite FTS5, and serve a local browser app with an
+Obsidian-inspired dynamic document graph for browsing the indexed corpus.
 
 Eventually, Paper Galaxy will let a user point the app at folders or a Zotero
 library, represent each document as a point in a 2D map, place similar documents
@@ -113,6 +113,16 @@ paper-galaxy serve --project-dir .
 The app reads the local SQLite database and serves static HTML/CSS/JavaScript
 with no CDN assets. It does not upload documents, collect telemetry, or run
 indexing from the browser UI. Indexing remains a CLI command.
+
+The local app graph is dynamic in Phase 3.1. `/api/map` still provides the
+canonical active documents, TF-IDF nearest neighbors, cluster labels, and
+initial x/y coordinates. The browser then runs a dependency-free vanilla
+JavaScript force simulation so the map can move subtly, pan and zoom, fade
+unrelated nodes on hover, and keep semantic links attached while nodes move.
+Users can drag nodes to pin manual positions, double-click or use the inspector
+to unpin, and use reset view or reset layout controls. Manual node positions
+and graph display settings are stored only in browser `localStorage`, keyed by
+the local database identity and map settings; they are not written to SQLite.
 
 ## Next Phase
 

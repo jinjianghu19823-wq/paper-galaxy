@@ -18,10 +18,10 @@ exports into an interactive 2D research universe.
 
 ## Current Phase
 
-This repository is in Phase 3: local interactive web app. It can still export
-static offline HTML, persist document/chunk records in SQLite, search local FTS,
-and serve a local read-only browser app. Do not implement Phase 4 or later
-phases unless explicitly asked.
+This repository is in Phase 3: local interactive web app, including the Phase
+3.1 dynamic graph UI. It can still export static offline HTML, persist
+document/chunk records in SQLite, search local FTS, and serve a local read-only
+browser app. Do not implement Phase 4 or later phases unless explicitly asked.
 
 ## Commands
 
@@ -47,6 +47,10 @@ phases unless explicitly asked.
 - Do not add React, Node build tooling, desktop packaging, cloud sync, accounts,
   telemetry, OCR, Zotero integration, LLM chat, dense embeddings, or other
   Phase 4+ features unless a future task explicitly asks for that phase.
+- Frontend assets must not include remote URLs, CDN references, remote fonts, or
+  external images.
+- Graph movement, force settings, and manual layout persistence are local
+  browser UI state only. Do not write graph positions to SQLite in Phase 3.
 - Do not commit `.paper-galaxy/`, `*.sqlite3`, `galaxy.html`, `galaxy.json`, or
   other generated local artifacts.
 - Add tests for any behavior change.

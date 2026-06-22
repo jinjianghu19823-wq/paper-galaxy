@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Paper Galaxy</title>
     <link rel="stylesheet" href="/static/styles.css">
+    <script src="/static/graph.js" defer></script>
     <script src="/static/app.js" defer></script>
   </head>
   <body>
@@ -17,6 +18,7 @@
             <p id="project-status">Checking local database...</p>
           </div>
         </div>
+        <div class="topbar-hint">Local graph workspace - index from CLI</div>
         <div class="status-strip" aria-live="polite">
           <div>
             <span class="metric-label">Active</span>
@@ -35,6 +37,9 @@
             <strong id="last-scan">none</strong>
           </div>
         </div>
+        <button id="theme-toggle" class="icon-button" type="button" aria-label="Toggle theme">
+          <span aria-hidden="true">◐</span>
+        </button>
       </header>
 
       <main class="workspace">
@@ -59,7 +64,10 @@
           </section>
 
           <section class="panel">
-            <h2>Clusters</h2>
+            <div class="panel-title-row">
+              <h2>Clusters</h2>
+              <span class="panel-kicker">groups</span>
+            </div>
             <input
               id="point-filter"
               class="filter-input"
@@ -69,22 +77,78 @@
             >
             <div id="cluster-legend" class="legend"></div>
           </section>
+
+          <section class="panel settings-panel">
+            <div class="panel-title-row">
+              <h2>Forces</h2>
+              <span class="panel-kicker">local</span>
+            </div>
+            <label class="toggle-row">
+              <input id="animate-toggle" type="checkbox" checked>
+              <span>Animate graph</span>
+            </label>
+            <label class="toggle-row">
+              <input id="arrows-toggle" type="checkbox">
+              <span>Show arrows</span>
+            </label>
+            <label class="range-row">
+              <span>Center</span>
+              <input id="center-force" type="range" min="0" max="20" step="1" value="7">
+            </label>
+            <label class="range-row">
+              <span>Repel</span>
+              <input id="repel-force" type="range" min="200" max="3600" step="100" value="1600">
+            </label>
+            <label class="range-row">
+              <span>Link force</span>
+              <input id="link-force" type="range" min="1" max="60" step="1" value="18">
+            </label>
+            <label class="range-row">
+              <span>Link distance</span>
+              <input id="link-distance" type="range" min="54" max="220" step="2" value="118">
+            </label>
+            <label class="range-row">
+              <span>Node size</span>
+              <input id="node-size" type="range" min="4" max="13" step="1" value="7">
+            </label>
+            <label class="range-row">
+              <span>Link width</span>
+              <input id="link-thickness" type="range" min="0.5" max="3" step="0.1" value="1.1">
+            </label>
+            <label class="range-row">
+              <span>Labels</span>
+              <input id="label-threshold" type="range" min="0.4" max="2.2" step="0.1" value="1.4">
+            </label>
+          </section>
         </aside>
 
-        <section class="map-panel" aria-label="Document map">
-          <div class="map-toolbar">
+        <section class="graph-stage" aria-label="Document graph">
+          <div class="graph-titlebar">
             <div>
-              <h2>Document Map</h2>
+              <h2>Document Graph</h2>
               <p id="map-caption">Loading active indexed documents...</p>
             </div>
-            <button id="reset-selection" type="button">Reset</button>
+            <div class="graph-controls" aria-label="Graph controls">
+              <button id="reset-view" class="icon-button" type="button" aria-label="Reset view">
+                <span aria-hidden="true">⌖</span>
+              </button>
+              <button id="reset-layout" class="icon-button" type="button" aria-label="Reset layout">
+                <span aria-hidden="true">↺</span>
+              </button>
+              <button id="pause-graph" class="icon-button" type="button" aria-label="Pause animation">
+                <span aria-hidden="true">Ⅱ</span>
+              </button>
+              <button id="reset-selection" class="icon-button" type="button" aria-label="Clear selection">
+                <span aria-hidden="true">×</span>
+              </button>
+            </div>
           </div>
           <div id="map-empty" class="empty-state" hidden></div>
           <svg
             id="map-svg"
-            class="map-svg"
+            class="graph-svg"
             role="img"
-            aria-label="Paper Galaxy document map"
+            aria-label="Paper Galaxy document similarity graph"
           ></svg>
         </section>
 

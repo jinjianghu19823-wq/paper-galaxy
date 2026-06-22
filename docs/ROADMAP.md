@@ -54,8 +54,8 @@ packaging.
 
 Goal: provide an interactive local map and document inspector.
 
-Deliverables: local backend, interactive map UI, document inspector, cluster
-panel, and search view.
+Deliverables: local backend, Obsidian-inspired dynamic graph UI, document
+inspector, cluster panel, graph controls, and search view.
 
 Definition of done: users can open a local app, browse a map, inspect a
 document, and see nearby documents without uploading data.

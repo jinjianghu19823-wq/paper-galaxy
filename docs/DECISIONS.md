@@ -119,3 +119,25 @@ non-loopback host, the CLI prints a local-network exposure warning.
 The Phase 3 browser app reads the local SQLite database and does not mutate the
 corpus or run indexing. Indexing remains CLI-driven through `paper-galaxy
 index`.
+
+## ADR 0021: Phase 3.1 Dependency-Free Force Graph
+
+Phase 3.1 implements the interactive graph as static vanilla JavaScript instead
+of adding D3, React, Node, npm, Vite, or a frontend build step. This preserves
+the Phase 3 local package shape: Python serves packaged HTML/CSS/JavaScript and
+the browser app remains usable without network access or external assets.
+
+## ADR 0022: Manual Layout Stays In Browser Local Storage
+
+Dragging and pinning graph nodes is a view preference, not indexed project
+data. Phase 3.1 stores manual node positions and graph display settings in
+browser `localStorage`, keyed by local database identity and map settings. It
+does not write manual positions to SQLite or introduce persistent `map_runs`.
+
+## ADR 0023: Graph Interactions Are Frontend-Only
+
+Hover focus, pan/zoom, drag/pin, reset layout, and force settings are
+frontend-only interactions. The backend continues to provide read-only
+documents, cluster labels, initial coordinates, and TF-IDF nearest-neighbor
+links through `/api/map`; the browser does not recompute similarity from 2D map
+distance.
