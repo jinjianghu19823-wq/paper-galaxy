@@ -78,6 +78,7 @@ class DatabaseStats:
     documents: int
     active_documents: int
     missing_documents: int
+    unindexed_documents: int
     chunks: int
     scan_runs: int
     last_scan_time: str | None

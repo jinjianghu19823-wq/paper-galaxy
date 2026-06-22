@@ -1,6 +1,7 @@
 import sqlite3
 from pathlib import Path
 
+from paper_galaxy.config import _validate_model
 from paper_galaxy.storage.migrations import initialize_database
 from paper_galaxy.storage.sqlite import connect_database, resolve_database_path
 
@@ -63,3 +64,35 @@ def test_sqlite_build_supports_fts5(tmp_path: Path) -> None:
         connection.execute("CREATE VIRTUAL TABLE probe USING fts5(text)")
     finally:
         connection.close()
+
+
+def test_validate_model_uses_pydantic_v2_style_api_when_available() -> None:
+    class V2Style:
+        def __init__(self, value: str, source: str) -> None:
+            self.value = value
+            self.source = source
+
+        @classmethod
+        def model_validate(cls, data: dict[str, object]) -> "V2Style":
+            return cls(str(data["value"]), "model_validate")
+
+    result = _validate_model(V2Style, {"value": "ok"})
+
+    assert result.value == "ok"
+    assert result.source == "model_validate"
+
+
+def test_validate_model_falls_back_to_pydantic_v1_style_api() -> None:
+    class V1Style:
+        def __init__(self, value: str, source: str) -> None:
+            self.value = value
+            self.source = source
+
+        @classmethod
+        def parse_obj(cls, data: dict[str, object]) -> "V1Style":
+            return cls(str(data["value"]), "parse_obj")
+
+    result = _validate_model(V1Style, {"value": "ok"})
+
+    assert result.value == "ok"
+    assert result.source == "parse_obj"

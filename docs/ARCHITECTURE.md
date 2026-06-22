@@ -77,6 +77,7 @@ resolve project database
   -> chunk text
   -> upsert document metadata
   -> replace document text/chunks/FTS rows
+  -> mark present but unindexable existing documents unindexed
   -> mark unseen active documents missing
   -> finish scan run summary
 ```
@@ -94,6 +95,13 @@ Schema overview:
 - `chunks`: deterministic text chunks for future app views.
 - `skipped_files`: per-run skipped files and reasons.
 - `documents_fts`: FTS5 table for local search.
+
+Document status controls search visibility. `active` documents are returned by
+default. `missing` documents keep their previous extracted text and FTS rows and
+are returned only with `--include-missing`. `unindexed` documents represent
+files that exist but currently fail extraction or minimum-length requirements;
+they are hidden from search until a later successful indexing run reactivates
+them.
 
 Phase 2 prepares for Phase 3 by making project state persistent and incremental.
 The static Phase 1 `scan` command remains file-based and independent.

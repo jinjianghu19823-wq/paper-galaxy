@@ -397,6 +397,7 @@ def db_stats_command(
     table.add_row("Documents", str(stats.documents))
     table.add_row("Active documents", str(stats.active_documents))
     table.add_row("Missing documents", str(stats.missing_documents))
+    table.add_row("Unindexed documents", str(stats.unindexed_documents))
     table.add_row("Chunks", str(stats.chunks))
     table.add_row("Scan runs", str(stats.scan_runs))
     table.add_row("Last scan time", stats.last_scan_time or "none")

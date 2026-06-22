@@ -85,3 +85,15 @@ the document ID while changing its content hash and updated metadata.
 When a previously indexed file disappears, Phase 2 marks its document row as
 `missing` instead of deleting it. This preserves history and lets future app
 views decide how to display or recover missing documents.
+
+Missing documents keep their previous extracted text, chunks, and FTS rows so
+`paper-galaxy search --include-missing` can still find them. Default search
+filters to `active` documents only.
+
+## ADR 0016: Present But Currently Unindexable Files Are Unindexed
+
+If a previously indexed file still exists but cannot currently be indexed, such
+as when extraction fails or the text falls below the configured minimum length,
+Phase 2 marks its document row as `unindexed`. This avoids returning stale
+search results while preserving the stable document ID and prior local records
+for later recovery.

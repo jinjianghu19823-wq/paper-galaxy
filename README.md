@@ -81,11 +81,17 @@ not from visual distance in the 2D map. The 2D layout is only a view.
 SQLite database under `.paper-galaxy/paper_galaxy.sqlite3` by default. It uses
 SHA-256 hashes to skip unchanged files, preserves document IDs when a file keeps
 the same corpus-relative path, and marks removed files as `missing` rather than
-deleting their rows.
+deleting their rows. If an existing file is present but cannot currently be
+indexed, for example because extraction fails or the extracted text is shorter
+than `--min-chars`, it is marked `unindexed` instead of being left active with
+stale search content.
 
 `paper-galaxy search` uses local SQLite FTS5 over document titles, relative
-paths, and extracted text. `paper-galaxy db-stats` reports local database
-counts. Database files live under `.paper-galaxy/` and are gitignored.
+paths, and extracted text. Search returns active documents by default.
+`--include-missing` includes documents whose source files disappeared, while
+`unindexed` documents remain hidden until a later successful indexing run makes
+them active again. `paper-galaxy db-stats` reports local database counts.
+Database files live under `.paper-galaxy/` and are gitignored.
 
 ## Next Phase
 

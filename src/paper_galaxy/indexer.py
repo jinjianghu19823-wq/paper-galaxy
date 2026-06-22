@@ -121,6 +121,7 @@ def _index_with_repository(
             if (
                 existing is not None
                 and existing.sha256 == digest
+                and existing.status in {"active", "missing"}
                 and not force_reextract
             ):
                 repository.touch_document(existing.id, now)
@@ -138,7 +139,14 @@ def _index_with_repository(
                     created_at=now,
                 )
                 if existing is not None:
-                    repository.touch_document(existing.id, now)
+                    repository.mark_document_unindexed(
+                        existing.id,
+                        path=str(path.resolve()),
+                        sha256=digest,
+                        size_bytes=stat.st_size,
+                        mtime_ns=stat.st_mtime_ns,
+                        now=now,
+                    )
                     seen_document_ids.add(existing.id)
                 skipped_files += 1
                 continue
@@ -151,7 +159,14 @@ def _index_with_repository(
                     created_at=now,
                 )
                 if existing is not None:
-                    repository.touch_document(existing.id, now)
+                    repository.mark_document_unindexed(
+                        existing.id,
+                        path=str(path.resolve()),
+                        sha256=digest,
+                        size_bytes=stat.st_size,
+                        mtime_ns=stat.st_mtime_ns,
+                        now=now,
+                    )
                     seen_document_ids.add(existing.id)
                 skipped_files += 1
                 continue

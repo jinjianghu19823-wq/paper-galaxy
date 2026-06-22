@@ -43,8 +43,9 @@ and basic local FTS5 full-text search.
 
 Definition of done: rerunning an index skips unchanged documents, updates
 changed files while preserving path-based document IDs, marks removed files as
-missing, writes deterministic chunks, records scan summaries, and returns useful
-local search results.
+missing, marks present but currently unindexable existing files as unindexed,
+writes deterministic chunks, records scan summaries, and returns useful local
+search results.
 
 Non-goals: semantic embeddings, remote sync, multi-user accounts, and desktop
 packaging.

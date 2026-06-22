@@ -150,6 +150,7 @@ def test_index_search_and_db_stats_commands(tmp_path: Path) -> None:
     assert "neural_operators" in search.output
     assert stats.exit_code == 0
     assert "Active documents" in stats.output
+    assert "Unindexed documents" in stats.output
 
 
 def test_search_missing_database_prints_clear_message(tmp_path: Path) -> None:

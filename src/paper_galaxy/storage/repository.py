@@ -110,6 +110,46 @@ class Repository:
             """,
             (now, document_id),
         )
+        self.connection.execute(
+            """
+            INSERT INTO documents_fts(document_id, title, relative_path, text)
+            SELECT d.id, d.title, d.relative_path, dt.text
+            FROM documents d
+            JOIN document_texts dt ON dt.document_id = d.id
+            WHERE d.id = ?
+              AND NOT EXISTS (
+                SELECT 1
+                FROM documents_fts
+                WHERE document_id = d.id
+              )
+            """,
+            (document_id,),
+        )
+
+    def mark_document_unindexed(
+        self,
+        document_id: str,
+        *,
+        path: str,
+        sha256: str,
+        size_bytes: int,
+        mtime_ns: int,
+        now: str,
+    ) -> None:
+        self.connection.execute(
+            """
+            UPDATE documents
+            SET path = ?,
+                sha256 = ?,
+                size_bytes = ?,
+                mtime_ns = ?,
+                status = 'unindexed',
+                last_seen_at = ?,
+                updated_at = ?
+            WHERE id = ?
+            """,
+            (path, sha256, size_bytes, mtime_ns, now, now, document_id),
+        )
 
     def upsert_document(
         self, document: IndexedDocument, text: str, chunks: list[IndexedChunk]
@@ -242,10 +282,6 @@ class Repository:
                 """,
                 (now, document_id),
             )
-            self.connection.execute(
-                "DELETE FROM documents_fts WHERE document_id = ?",
-                (document_id,),
-            )
         return len(missing_ids)
 
     def search_documents(
@@ -281,7 +317,10 @@ class Repository:
             FROM documents_fts
             JOIN documents d ON d.id = documents_fts.document_id
             WHERE documents_fts MATCH ?
-              AND (? OR d.status != 'missing')
+              AND (
+                d.status = 'active'
+                OR (? AND d.status = 'missing')
+              )
             ORDER BY bm25(documents_fts), d.relative_path
             LIMIT ?
             """,
@@ -312,6 +351,10 @@ class Repository:
             self.connection,
             "SELECT COUNT(*) FROM documents WHERE status = 'missing'",
         )
+        unindexed = _scalar_int(
+            self.connection,
+            "SELECT COUNT(*) FROM documents WHERE status = 'unindexed'",
+        )
         chunks = _scalar_int(self.connection, "SELECT COUNT(*) FROM chunks")
         scan_runs = _scalar_int(self.connection, "SELECT COUNT(*) FROM scan_runs")
         total_chars = _scalar_int(
@@ -335,6 +378,7 @@ class Repository:
             documents=documents,
             active_documents=active,
             missing_documents=missing,
+            unindexed_documents=unindexed,
             chunks=chunks,
             scan_runs=scan_runs,
             last_scan_time=str(last_scan["scan_time"]) if last_scan else None,
