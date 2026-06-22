@@ -1,6 +1,8 @@
 import json
 from pathlib import Path
 
+import click
+from typer.main import get_command
 from typer.testing import CliRunner
 
 from paper_galaxy.cli import app
@@ -159,12 +161,20 @@ def test_index_help_lists_phase_four_extraction_options() -> None:
     runner = CliRunner()
 
     result = runner.invoke(app, ["index", "--help"])
+    command = get_command(app)
+    index_command = command.get_command(click.Context(command), "index")
+    assert index_command is not None
+    option_names = {
+        option
+        for param in index_command.params
+        for option in [*param.opts, *param.secondary_opts]
+    }
 
     assert result.exit_code == 0
-    assert "--include-images" in result.output
-    assert "--ocr" in result.output
-    assert "--ocr-language" in result.output
-    assert "--extraction-report" in result.output
+    assert "--include-images" in option_names
+    assert "--ocr" in option_names
+    assert "--ocr-language" in option_names
+    assert "--extraction-report-json" in option_names
 
 
 def test_index_command_writes_extraction_report_json(tmp_path: Path) -> None:
