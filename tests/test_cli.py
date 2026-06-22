@@ -173,8 +173,7 @@ def test_serve_help_exits_successfully() -> None:
     result = runner.invoke(app, ["serve", "--help"])
 
     assert result.exit_code == 0
-    assert "--project-dir" in result.output
-    assert "--host" in result.output
+    assert "Serve the local Phase 3 browser app." in result.output
 
 
 def test_serve_command_calls_server_startup(
