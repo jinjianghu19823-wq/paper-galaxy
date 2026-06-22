@@ -9,7 +9,8 @@ exports into an interactive 2D research universe.
 ## Layout
 
 - `src/paper_galaxy/`: Python package, CLI, scanner, extractors, pipeline,
-  ML helpers, static exporters, chunking, SQLite storage, indexer, and search.
+  ML helpers, static exporters, chunking, SQLite storage, indexer, search, and
+  local web app.
 - `tests/`: pytest coverage for imports and Phase 0/Phase 1/Phase 2 behavior.
 - `examples/tiny_corpus/`: synthetic local corpus for scan smoke tests.
 - `docs/`: roadmap, architecture, decisions, and privacy notes.
@@ -17,9 +18,9 @@ exports into an interactive 2D research universe.
 
 ## Current Phase
 
-This repository is in Phase 2: local SQLite database and incremental indexing.
-It can still export static offline HTML, and it can now persist document/chunk
-records plus local FTS search. Do not implement Phase 3 web app work or later
+This repository is in Phase 3: local interactive web app. It can still export
+static offline HTML, persist document/chunk records in SQLite, search local FTS,
+and serve a local read-only browser app. Do not implement Phase 4 or later
 phases unless explicitly asked.
 
 ## Commands
@@ -33,6 +34,7 @@ phases unless explicitly asked.
 - `paper-galaxy index examples/tiny_corpus --project-dir . --min-chars 40`
 - `paper-galaxy search "neural operator" --project-dir .`
 - `paper-galaxy db-stats --project-dir .`
+- `paper-galaxy serve --project-dir .`
 
 ## Engineering Rules
 
@@ -42,9 +44,9 @@ phases unless explicitly asked.
 - Do not add heavyweight dependencies to the default install.
 - Do not add AGPL/copyleft dependencies without explicit approval.
 - Do not implement future phases unless asked.
-- Do not add FastAPI, React, desktop packaging, cloud sync, accounts,
+- Do not add React, Node build tooling, desktop packaging, cloud sync, accounts,
   telemetry, OCR, Zotero integration, LLM chat, dense embeddings, or other
-  Phase 3+ features unless a future task explicitly asks for that phase.
+  Phase 4+ features unless a future task explicitly asks for that phase.
 - Do not commit `.paper-galaxy/`, `*.sqlite3`, `galaxy.html`, `galaxy.json`, or
   other generated local artifacts.
 - Add tests for any behavior change.

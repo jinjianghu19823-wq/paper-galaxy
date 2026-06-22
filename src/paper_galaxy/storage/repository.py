@@ -100,6 +100,99 @@ class Repository:
         ).fetchone()
         return _document_from_row(row) if row is not None else None
 
+    def list_documents(
+        self,
+        *,
+        statuses: set[str] | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[IndexedDocument]:
+        status_sql, status_params = _status_filter(statuses)
+        rows = self.connection.execute(
+            f"""
+            SELECT *
+            FROM documents
+            {status_sql}
+            ORDER BY relative_path
+            LIMIT ? OFFSET ?
+            """,
+            (*status_params, max(0, limit), max(0, offset)),
+        ).fetchall()
+        return [_document_from_row(row) for row in rows]
+
+    def list_documents_with_text(
+        self,
+        *,
+        statuses: set[str] | None = None,
+        limit: int = 1000,
+    ) -> list[tuple[IndexedDocument, str]]:
+        status_sql, status_params = _status_filter(statuses, table_alias="d")
+        rows = self.connection.execute(
+            f"""
+            SELECT d.*, dt.text
+            FROM documents d
+            JOIN document_texts dt ON dt.document_id = d.id
+            {status_sql}
+            ORDER BY d.relative_path
+            LIMIT ?
+            """,
+            (*status_params, max(0, limit)),
+        ).fetchall()
+        return [(_document_from_row(row), str(row["text"])) for row in rows]
+
+    def get_document(self, document_id: str) -> IndexedDocument | None:
+        row = self.connection.execute(
+            """
+            SELECT *
+            FROM documents
+            WHERE id = ?
+            """,
+            (document_id,),
+        ).fetchone()
+        return _document_from_row(row) if row is not None else None
+
+    def get_document_text(self, document_id: str) -> str | None:
+        row = self.connection.execute(
+            """
+            SELECT text
+            FROM document_texts
+            WHERE document_id = ?
+            """,
+            (document_id,),
+        ).fetchone()
+        return str(row["text"]) if row is not None else None
+
+    def get_document_chunks(
+        self, document_id: str, *, limit: int = 20, offset: int = 0
+    ) -> list[IndexedChunk]:
+        rows = self.connection.execute(
+            """
+            SELECT id, document_id, chunk_index, text, char_count
+            FROM chunks
+            WHERE document_id = ?
+            ORDER BY chunk_index
+            LIMIT ? OFFSET ?
+            """,
+            (document_id, max(0, limit), max(0, offset)),
+        ).fetchall()
+        return [
+            IndexedChunk(
+                id=str(row["id"]),
+                document_id=str(row["document_id"]),
+                chunk_index=int(row["chunk_index"]),
+                text=str(row["text"]),
+                char_count=int(row["char_count"]),
+            )
+            for row in rows
+        ]
+
+    def count_document_chunks(self, document_id: str) -> int:
+        return _scalar_int(
+            self.connection,
+            "SELECT COUNT(*) FROM chunks WHERE document_id = ?",
+            (document_id,),
+        )
+
     def touch_document(self, document_id: str, now: str) -> None:
         self.connection.execute(
             """
@@ -417,6 +510,21 @@ def _safe_fts_query(query: str) -> str:
     return " OR ".join(f'"{token}"' for token in tokens)
 
 
-def _scalar_int(connection: sqlite3.Connection, sql: str) -> int:
-    row = connection.execute(sql).fetchone()
+def _status_filter(
+    statuses: set[str] | None, *, table_alias: str | None = None
+) -> tuple[str, tuple[str, ...]]:
+    if not statuses:
+        return "", ()
+    ordered_statuses = tuple(sorted(statuses))
+    placeholders = ", ".join("?" for _ in ordered_statuses)
+    column = f"{table_alias}.status" if table_alias else "status"
+    return f"WHERE {column} IN ({placeholders})", ordered_statuses
+
+
+def _scalar_int(
+    connection: sqlite3.Connection,
+    sql: str,
+    parameters: tuple[object, ...] = (),
+) -> int:
+    row = connection.execute(sql, parameters).fetchone()
     return int(row[0]) if row is not None else 0

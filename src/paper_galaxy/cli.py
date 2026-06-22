@@ -34,6 +34,7 @@ OPTIONAL_MODULES: tuple[tuple[str, str], ...] = (
     ("sentence_transformers", "sentence_transformers"),
     ("faiss", "faiss"),
     ("fastapi", "fastapi"),
+    ("uvicorn", "uvicorn"),
     ("plotly", "plotly"),
 )
 
@@ -65,6 +66,7 @@ def doctor() -> None:
     console.print("Status: Phase 0 scaffold is ready.")
     console.print("Scan command: Phase 1 static CLI MVP is available.")
     console.print("Index/search commands: Phase 2 local database is available.")
+    console.print("Serve command: Phase 3 local web app is available.")
 
 
 @app.command("init")
@@ -403,6 +405,77 @@ def db_stats_command(
     table.add_row("Last scan time", stats.last_scan_time or "none")
     table.add_row("Total indexed characters", str(stats.total_indexed_characters))
     console.print(table)
+
+
+@app.command("serve")
+def serve_command(
+    project_dir: Annotated[
+        Path,
+        typer.Option(
+            "--project-dir", help="Project directory containing .paper-galaxy."
+        ),
+    ] = Path("."),
+    host: Annotated[
+        str,
+        typer.Option("--host", help="Host interface for the local app."),
+    ] = "127.0.0.1",
+    port: Annotated[
+        int,
+        typer.Option("--port", help="Port for the local app."),
+    ] = 8765,
+    reload: Annotated[
+        bool,
+        typer.Option("--reload", help="Enable Uvicorn reload mode for development."),
+    ] = False,
+    open_browser: Annotated[
+        bool,
+        typer.Option(
+            "--open/--no-open",
+            help="Open the local app in the default browser after startup.",
+        ),
+    ] = False,
+    seed: Annotated[
+        int,
+        typer.Option("--seed", help="Random seed for deterministic map layout."),
+    ] = 42,
+    clusters: Annotated[
+        int | None,
+        typer.Option("--clusters", help="Optional cluster count for the map."),
+    ] = None,
+    neighbors: Annotated[
+        int,
+        typer.Option("--neighbors", help="Nearest neighbors per document."),
+    ] = 5,
+    limit: Annotated[
+        int,
+        typer.Option("--limit", help="Maximum active documents to map."),
+    ] = 1000,
+) -> None:
+    """Serve the local Phase 3 browser app."""
+
+    console = get_console()
+    try:
+        from paper_galaxy.web.server import serve_app
+
+        serve_app(
+            project_dir=project_dir.expanduser().resolve(),
+            host=host,
+            port=port,
+            reload=reload,
+            open_browser=open_browser,
+            seed=seed,
+            clusters=clusters,
+            neighbors=neighbors,
+            map_limit=limit,
+        )
+    except MissingDependencyError as exc:
+        del exc
+        console.print(
+            "Missing optional dependency for Phase 3 app. Install with: "
+            'python -m pip install -e ".[dev,ml,pdf,app]"',
+            markup=False,
+        )
+        raise typer.Exit(1) from None
 
 
 def _default_project_toml(project_dir: Path) -> str:

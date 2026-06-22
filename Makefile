@@ -1,7 +1,7 @@
 .PHONY: install-dev test lint format typecheck check doctor
 
 install-dev:
-	python -m pip install -e ".[dev,ml,pdf]"
+	python -m pip install -e ".[dev,ml,pdf,app]"
 
 test:
 	python -m pytest

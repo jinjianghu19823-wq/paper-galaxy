@@ -4,10 +4,11 @@ Paper Galaxy is a local-first research cartography tool for turning a personal
 research corpus into an interactive map of documents, clusters, and conceptual
 neighborhoods.
 
-Current status: Phase 2 local database. This repository can scan a local sample
-corpus, export a self-contained offline `galaxy.html`, index documents and
-chunks into local SQLite, rerun indexing incrementally, and search indexed text
-with SQLite FTS5.
+Current status: Phase 3 local interactive web app. This repository can scan a
+local sample corpus, export a self-contained offline `galaxy.html`, index
+documents and chunks into local SQLite, rerun indexing incrementally, search
+indexed text with SQLite FTS5, and serve a local browser app for browsing the
+indexed corpus.
 
 Eventually, Paper Galaxy will let a user point the app at folders or a Zotero
 library, represent each document as a point in a 2D map, place similar documents
@@ -19,8 +20,8 @@ files -> extraction -> cleaning -> records -> vectors -> graph -> map -> cluster
 ```
 
 Intentionally not implemented yet: OCR, full LaTeX parsing, dense embeddings,
-UMAP as a required path, FastAPI, React, Zotero integration, desktop packaging,
-cloud sync, accounts, telemetry, and LLM chat.
+UMAP as a required path, React, Node build tooling, Zotero integration, desktop
+packaging, cloud sync, accounts, telemetry, and LLM chat.
 
 Paper Galaxy is local-first by default. There is no account, no telemetry, no
 automatic upload, and no cloud dependency. Generated HTML is local and offline.
@@ -30,7 +31,7 @@ automatic upload, and no cloud dependency. Generated HTML is local and offline.
 ```bash
 python -m venv .venv
 source .venv/bin/activate
-python -m pip install -e ".[dev,ml,pdf]"
+python -m pip install -e ".[dev,ml,pdf,app]"
 paper-galaxy doctor
 python -m pytest
 ```
@@ -40,7 +41,7 @@ If `uv` is available, it can be used as a faster local environment helper:
 ```bash
 uv venv
 source .venv/bin/activate
-uv pip install -e ".[dev,ml,pdf]"
+uv pip install -e ".[dev,ml,pdf,app]"
 paper-galaxy doctor
 python -m pytest
 ```
@@ -57,6 +58,7 @@ paper-galaxy scan examples/tiny_corpus --out galaxy.html --json-out galaxy.json 
 paper-galaxy index examples/tiny_corpus --project-dir . --min-chars 40
 paper-galaxy search "neural operator" --project-dir .
 paper-galaxy db-stats --project-dir .
+paper-galaxy serve --project-dir .
 ```
 
 `paper-galaxy init` creates `.paper-galaxy/project.toml` only. It does not scan
@@ -93,8 +95,27 @@ paths, and extracted text. Search returns active documents by default.
 them active again. `paper-galaxy db-stats` reports local database counts.
 Database files live under `.paper-galaxy/` and are gitignored.
 
+`paper-galaxy serve` starts the Phase 3 local web app on `127.0.0.1` by default.
+Install app dependencies with:
+
+```bash
+python -m pip install -e ".[dev,ml,pdf,app]"
+```
+
+Typical local app usage is:
+
+```bash
+paper-galaxy init .
+paper-galaxy index examples/tiny_corpus --project-dir . --min-chars 40
+paper-galaxy serve --project-dir .
+```
+
+The app reads the local SQLite database and serves static HTML/CSS/JavaScript
+with no CDN assets. It does not upload documents, collect telemetry, or run
+indexing from the browser UI. Indexing remains a CLI command.
+
 ## Next Phase
 
-The next planned implementation phase is Phase 3: a local interactive web app
-that reads the persistent project state. There is still no server, cloud
-dependency, OCR, dense embeddings, or frontend framework in Phase 2.
+The next planned implementation phase is Phase 4: better extraction quality.
+There is still no cloud dependency, OCR, dense embeddings, Zotero integration,
+desktop packaging, account system, telemetry, or React/Node frontend in Phase 3.

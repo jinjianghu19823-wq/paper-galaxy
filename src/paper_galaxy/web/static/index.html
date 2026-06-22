@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Paper Galaxy</title>
+    <link rel="stylesheet" href="/static/styles.css">
+    <script src="/static/app.js" defer></script>
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <div class="brand">
+          <div class="brand-mark" aria-hidden="true"></div>
+          <div>
+            <h1>Paper Galaxy</h1>
+            <p id="project-status">Checking local database...</p>
+          </div>
+        </div>
+        <div class="status-strip" aria-live="polite">
+          <div>
+            <span class="metric-label">Active</span>
+            <strong id="active-count">0</strong>
+          </div>
+          <div>
+            <span class="metric-label">Missing</span>
+            <strong id="missing-count">0</strong>
+          </div>
+          <div>
+            <span class="metric-label">Unindexed</span>
+            <strong id="unindexed-count">0</strong>
+          </div>
+          <div class="wide-metric">
+            <span class="metric-label">Last scan</span>
+            <strong id="last-scan">none</strong>
+          </div>
+        </div>
+      </header>
+
+      <main class="workspace">
+        <aside class="sidebar" aria-label="Search and clusters">
+          <section class="panel">
+            <h2>Search</h2>
+            <form id="search-form" class="search-form">
+              <input
+                id="search-input"
+                name="q"
+                type="search"
+                placeholder="Search indexed text"
+                autocomplete="off"
+              >
+              <button type="submit">Search</button>
+            </form>
+            <label class="check-row">
+              <input id="include-missing" type="checkbox">
+              <span>Include missing</span>
+            </label>
+            <div id="search-results" class="result-list"></div>
+          </section>
+
+          <section class="panel">
+            <h2>Clusters</h2>
+            <input
+              id="point-filter"
+              class="filter-input"
+              type="search"
+              placeholder="Filter visible points"
+              autocomplete="off"
+            >
+            <div id="cluster-legend" class="legend"></div>
+          </section>
+        </aside>
+
+        <section class="map-panel" aria-label="Document map">
+          <div class="map-toolbar">
+            <div>
+              <h2>Document Map</h2>
+              <p id="map-caption">Loading active indexed documents...</p>
+            </div>
+            <button id="reset-selection" type="button">Reset</button>
+          </div>
+          <div id="map-empty" class="empty-state" hidden></div>
+          <svg
+            id="map-svg"
+            class="map-svg"
+            role="img"
+            aria-label="Paper Galaxy document map"
+          ></svg>
+        </section>
+
+        <aside class="inspector" aria-label="Document inspector">
+          <section class="panel inspector-panel">
+            <h2>Inspector</h2>
+            <div id="inspector-content" class="inspector-content">
+              <p class="muted">Select a document point or search result.</p>
+            </div>
+          </section>
+        </aside>
+      </main>
+    </div>
+  </body>
+</html>

@@ -97,3 +97,25 @@ as when extraction fails or the text falls below the configured minimum length,
 Phase 2 marks its document row as `unindexed`. This avoids returning stale
 search results while preserving the stable document ID and prior local records
 for later recovery.
+
+## ADR 0017: FastAPI And Uvicorn As Optional App Extra
+
+Phase 3 uses FastAPI and Uvicorn for the local browser app. They remain in the
+optional `app` dependency extra, and server modules import them lazily so the
+default install stays light.
+
+## ADR 0018: Static Vanilla JavaScript Frontend
+
+Phase 3 serves static HTML, CSS, and vanilla JavaScript from the Python package.
+There is no React, Node, npm, Vite, CDN, remote font, or frontend build step.
+
+## ADR 0019: Localhost Binding By Default
+
+`paper-galaxy serve` binds to `127.0.0.1` by default. If a user chooses a
+non-loopback host, the CLI prints a local-network exposure warning.
+
+## ADR 0020: Phase 3 Web App Is Read-Only
+
+The Phase 3 browser app reads the local SQLite database and does not mutate the
+corpus or run indexing. Indexing remains CLI-driven through `paper-galaxy
+index`.

@@ -12,6 +12,14 @@ Paper Galaxy is local-first by default.
 - Missing and unindexed records may preserve previously extracted local text and
   chunks so the local index can recover document history without rescanning
   unavailable content.
+- Phase 3 starts a local server bound to `127.0.0.1` by default.
+- The browser app communicates with the local backend only.
+- Phase 3 static assets are served locally and do not reference CDNs, remote
+  fonts, or external images.
+- The browser app does not upload documents, collect telemetry, or call remote
+  services.
+- Choosing a non-loopback host may expose the app to other devices on the local
+  network.
 - `.paper-galaxy/` is local project state and is gitignored.
 - Deleting `.paper-galaxy/` removes the local Paper Galaxy database and project
   metadata for that project.

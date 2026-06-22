@@ -14,6 +14,7 @@ def test_doctor_exits_successfully() -> None:
     assert result.exit_code == 0
     assert "Paper Galaxy version" in result.output
     assert "Status: Phase 0 scaffold is ready." in result.output
+    assert "Serve command: Phase 3 local web app is available." in result.output
 
 
 def test_init_creates_project_metadata(tmp_path: Path) -> None:
@@ -164,3 +165,74 @@ def test_search_missing_database_prints_clear_message(tmp_path: Path) -> None:
     assert result.exit_code == 1
     assert "No Paper Galaxy database found" in result.output
     assert "Run paper-galaxy index CORPUS_DIR first" in result.output
+
+
+def test_serve_help_exits_successfully() -> None:
+    runner = CliRunner()
+
+    result = runner.invoke(app, ["serve", "--help"])
+
+    assert result.exit_code == 0
+    assert "--project-dir" in result.output
+    assert "--host" in result.output
+
+
+def test_serve_command_calls_server_startup(
+    monkeypatch: object, tmp_path: Path
+) -> None:
+    runner = CliRunner()
+    calls: dict[str, object] = {}
+
+    def fake_serve_app(**kwargs: object) -> None:
+        calls.update(kwargs)
+
+    monkeypatch.setattr("paper_galaxy.web.server.serve_app", fake_serve_app)
+
+    result = runner.invoke(
+        app,
+        [
+            "serve",
+            "--project-dir",
+            str(tmp_path),
+            "--host",
+            "127.0.0.1",
+            "--port",
+            "9876",
+            "--seed",
+            "17",
+            "--clusters",
+            "3",
+            "--neighbors",
+            "4",
+            "--limit",
+            "25",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert calls["project_dir"] == tmp_path.resolve()
+    assert calls["host"] == "127.0.0.1"
+    assert calls["port"] == 9876
+    assert calls["seed"] == 17
+    assert calls["clusters"] == 3
+    assert calls["neighbors"] == 4
+    assert calls["map_limit"] == 25
+
+
+def test_serve_reports_missing_app_dependency(monkeypatch: object) -> None:
+    runner = CliRunner()
+
+    def raise_missing_dependency(**kwargs: object) -> None:
+        del kwargs
+        raise MissingDependencyError("uvicorn")
+
+    monkeypatch.setattr(
+        "paper_galaxy.web.server.serve_app",
+        raise_missing_dependency,
+    )
+
+    result = runner.invoke(app, ["serve"])
+
+    assert result.exit_code == 1
+    assert "Missing optional dependency for Phase 3 app" in result.output
+    assert 'python -m pip install -e ".[dev,ml,pdf,app]"' in result.output

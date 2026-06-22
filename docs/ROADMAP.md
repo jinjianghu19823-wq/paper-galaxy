@@ -50,7 +50,7 @@ search results.
 Non-goals: semantic embeddings, remote sync, multi-user accounts, and desktop
 packaging.
 
-## Phase 3: Interactive Local Web App
+## Phase 3: Interactive Local Web App (implemented)
 
 Goal: provide an interactive local map and document inspector.
 
@@ -60,7 +60,9 @@ panel, and search view.
 Definition of done: users can open a local app, browse a map, inspect a
 document, and see nearby documents without uploading data.
 
-Non-goals: cloud hosting, account system, telemetry, and LLM chat.
+Non-goals: OCR, dense embeddings, Zotero integration, desktop packaging, cloud
+hosting, account system, telemetry, LLM chat, and React/Node tooling unless a
+later task explicitly asks for them.
 
 ## Phase 4: Better Extraction
 

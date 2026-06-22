@@ -46,6 +46,10 @@ source for nearest-neighbor search and proximity explanations.
 - `storage.repository`: explicit parameterized SQL operations.
 - `indexer`: Phase 2 incremental indexing orchestration.
 - `search`: local FTS search and database stats wrappers.
+- `web.server`: lazy FastAPI/Uvicorn app creation and local server startup.
+- `web.api`: read-only local JSON API routes.
+- `web.map_builder`: ephemeral map generation from active indexed documents.
+- `web.static`: static HTML/CSS/vanilla JavaScript browser UI.
 
 Future modules may add persistent records, graph construction, better layout
 stability, and a richer local UI.
@@ -105,6 +109,55 @@ them.
 
 Phase 2 prepares for Phase 3 by making project state persistent and incremental.
 The static Phase 1 `scan` command remains file-based and independent.
+
+## Phase 3 Local Web App
+
+Phase 3 adds `paper-galaxy serve`, which starts a local FastAPI app with
+Uvicorn. FastAPI and Uvicorn remain optional dependencies under the `app` extra,
+and they are imported lazily so the base package can still be imported without
+app dependencies.
+
+The local app architecture is:
+
+```text
+paper-galaxy serve
+  -> FastAPI local backend on 127.0.0.1 by default
+  -> static HTML/CSS/vanilla JS frontend
+  -> SQLite repository read APIs
+  -> ephemeral map builder using TF-IDF helpers
+```
+
+The browser app communicates only with the local backend. Static assets are
+served from the Python package and do not reference CDNs, remote fonts, or
+external images.
+
+API endpoints:
+
+- `GET /api/health`: app status, project directory, database path, and database
+  existence.
+- `GET /api/config`: read-only runtime app configuration.
+- `GET /api/stats`: Phase 2 database counts.
+- `GET /api/search`: local SQLite FTS search.
+- `GET /api/documents`: document metadata lists.
+- `GET /api/documents/{document_id}`: metadata, local path, chunk previews, and
+  text preview.
+- `GET /api/map`: active document map points, cluster labels, nearest neighbors,
+  stats, and warnings.
+
+Map generation reads active indexed records and extracted text from SQLite. It
+does not re-extract source files. It reuses the Phase 1 TF-IDF, layout,
+clustering, label, top-term, and neighbor helpers. Nearest neighbors are
+computed from high-dimensional TF-IDF cosine similarity, not from 2D map
+distance.
+
+Missing and unindexed documents are excluded from the default map. Search can
+include missing documents when explicitly requested, but unindexed documents
+remain hidden from search until a successful indexing run reactivates them.
+
+If the database is missing, `/api/health` still works and the app returns
+structured empty states with the indexing command instead of a traceback. If the
+database exists but has no active documents, map endpoints return empty arrays
+and warnings.
 
 ## Future Data Model Sketch
 
