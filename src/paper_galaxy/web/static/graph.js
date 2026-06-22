@@ -22,6 +22,7 @@
     linkDistance: 118,
     nodeSize: 7,
     linkThickness: 1.1,
+    labelMode: "focus",
     labelThreshold: 1.4
   };
 
@@ -84,6 +85,11 @@
       if (this.controls.showArrows) {
         this.controls.showArrows.addEventListener("change", () => {
           this.updateSettings({ showArrows: this.controls.showArrows.checked });
+        });
+      }
+      if (this.controls.labelMode) {
+        this.controls.labelMode.addEventListener("change", () => {
+          this.updateSettings({ labelMode: this.controls.labelMode.value });
         });
       }
       if (this.controls.resetView) {
@@ -717,6 +723,8 @@
       const selectedNeighbors = this.selectedId
         ? this.adjacency.get(this.selectedId) || new Set()
         : new Set();
+      const visibleLabelBoxes = [];
+      let ambientLabelBudget = this.settings.labelMode === "always" ? 48 : 18;
 
       for (const link of this.links) {
         if (!link.element) {
@@ -770,10 +778,19 @@
 
         const showLabel =
           node.visible &&
-          (isHovered ||
-            isSelected ||
-            isNeighbor ||
-            (!hasHoverFocus && this.zoom >= this.settings.labelThreshold && this.nodes.length <= 120));
+          this.shouldShowLabel({
+            node,
+            screen,
+            isHovered,
+            isSelected,
+            isNeighbor,
+            hasHoverFocus,
+            visibleLabelBoxes,
+            ambientLabelBudget
+          });
+        if (showLabel && !isHovered && !isSelected && !isNeighbor) {
+          ambientLabelBudget -= 1;
+        }
         node.label.className.baseVal = classNames("graph-label", {
           "is-visible": showLabel,
           "is-selected": isSelected
@@ -786,6 +803,51 @@
           "is-pinned": node.fixed
         });
       }
+    }
+
+    shouldShowLabel({
+      node,
+      screen,
+      isHovered,
+      isSelected,
+      isNeighbor,
+      hasHoverFocus,
+      visibleLabelBoxes,
+      ambientLabelBudget
+    }) {
+      if (isHovered || isSelected || isNeighbor) {
+        visibleLabelBoxes.push(this.estimatedLabelBox(node, screen));
+        return true;
+      }
+      if (hasHoverFocus || this.settings.labelMode === "focus") {
+        return false;
+      }
+      if (this.settings.labelMode === "zoom" && this.zoom < this.settings.labelThreshold) {
+        return false;
+      }
+      if (!["zoom", "always"].includes(this.settings.labelMode)) {
+        return false;
+      }
+      if (ambientLabelBudget <= 0) {
+        return false;
+      }
+      const box = this.estimatedLabelBox(node, screen);
+      if (visibleLabelBoxes.some((candidate) => boxesOverlap(candidate, box))) {
+        return false;
+      }
+      visibleLabelBoxes.push(box);
+      return true;
+    }
+
+    estimatedLabelBox(node, screen) {
+      const title = node.document ? node.document.title : node.id;
+      const width = Math.min(240, Math.max(44, title.length * 6.4));
+      return {
+        x1: screen.x + 9,
+        y1: screen.y - 24,
+        x2: screen.x + 9 + width,
+        y2: screen.y - 7
+      };
     }
 
     focusSet() {
@@ -913,6 +975,9 @@
       if (this.controls.showArrows) {
         this.controls.showArrows.checked = this.settings.showArrows;
       }
+      if (this.controls.labelMode) {
+        this.controls.labelMode.value = this.settings.labelMode;
+      }
       if (this.controls.pause) {
         this.controls.pause.setAttribute(
           "aria-label",
@@ -955,6 +1020,10 @@
 
   function finiteNumber(value) {
     return Number.isFinite(Number(value));
+  }
+
+  function boxesOverlap(a, b) {
+    return !(a.x2 < b.x1 || b.x2 < a.x1 || a.y2 < b.y1 || b.y2 < a.y1);
   }
 
   function classNames(base, flags) {

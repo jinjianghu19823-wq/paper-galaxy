@@ -5,7 +5,10 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-SUPPORTED_EXTENSIONS = {".txt", ".md", ".markdown", ".tex", ".pdf"}
+TEXT_EXTENSIONS = {".txt", ".md", ".markdown", ".tex"}
+PDF_EXTENSIONS = {".pdf"}
+IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".tif", ".tiff"}
+SUPPORTED_EXTENSIONS = TEXT_EXTENSIONS | PDF_EXTENSIONS
 IGNORED_DIR_NAMES = {
     ".git",
     ".paper-galaxy",
@@ -16,7 +19,9 @@ IGNORED_DIR_NAMES = {
 }
 
 
-def discover_files(corpus_dir: Path, *, include_pdf: bool = True) -> list[Path]:
+def discover_files(
+    corpus_dir: Path, *, include_pdf: bool = True, include_images: bool = False
+) -> list[Path]:
     """Discover supported files under a corpus directory.
 
     Hidden directories and common generated folders are skipped. Symlinks are
@@ -24,9 +29,11 @@ def discover_files(corpus_dir: Path, *, include_pdf: bool = True) -> list[Path]:
     """
 
     root = corpus_dir.expanduser().resolve()
-    supported_extensions = set(SUPPORTED_EXTENSIONS)
-    if not include_pdf:
-        supported_extensions.remove(".pdf")
+    supported_extensions = set(TEXT_EXTENSIONS)
+    if include_pdf:
+        supported_extensions.update(PDF_EXTENSIONS)
+    if include_images:
+        supported_extensions.update(IMAGE_EXTENSIONS)
 
     files: list[Path] = []
     for current_dir_raw, dirnames, filenames in os.walk(root, followlinks=False):

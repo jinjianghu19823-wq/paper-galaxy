@@ -17,6 +17,14 @@ def test_scanner_finds_supported_files_deterministically(tmp_path: Path) -> None
         "b/note.txt",
     ]
 
+    files_with_images = discover_files(tmp_path, include_images=True)
+
+    assert [relative_path(path, tmp_path) for path in files_with_images] == [
+        "a/ignore.png",
+        "a/paper.md",
+        "b/note.txt",
+    ]
+
 
 def test_scanner_ignores_generated_and_hidden_dirs(tmp_path: Path) -> None:
     for dirname in [

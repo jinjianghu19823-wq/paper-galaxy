@@ -49,6 +49,7 @@ const els = {
   linkDistance: document.querySelector("#link-distance"),
   nodeSize: document.querySelector("#node-size"),
   linkThickness: document.querySelector("#link-thickness"),
+  labelMode: document.querySelector("#label-mode"),
   labelThreshold: document.querySelector("#label-threshold"),
   inspector: document.querySelector("#inspector-content")
 };
@@ -95,6 +96,7 @@ function initGraph() {
     linkDistance: els.linkDistance,
     nodeSize: els.nodeSize,
     linkThickness: els.linkThickness,
+    labelMode: els.labelMode,
     labelThreshold: els.labelThreshold,
     resetView: els.resetView,
     resetLayout: els.resetLayout,

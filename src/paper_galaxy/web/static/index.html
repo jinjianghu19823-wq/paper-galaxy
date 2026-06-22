@@ -116,7 +116,15 @@
               <input id="link-thickness" type="range" min="0.5" max="3" step="0.1" value="1.1">
             </label>
             <label class="range-row">
-              <span>Labels</span>
+              <span>Label mode</span>
+              <select id="label-mode">
+                <option value="focus" selected>Focus labels only</option>
+                <option value="zoom">Show at high zoom</option>
+                <option value="always">Always show labels</option>
+              </select>
+            </label>
+            <label class="range-row">
+              <span>Zoom labels</span>
               <input id="label-threshold" type="range" min="0.4" max="2.2" step="0.1" value="1.4">
             </label>
           </section>

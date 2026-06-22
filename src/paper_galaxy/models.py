@@ -13,6 +13,10 @@ class ExtractedContent:
     title: str
     text: str
     warnings: tuple[str, ...] = ()
+    method: str = "unknown"
+    metadata: dict[str, object] = field(default_factory=dict)
+    sections: tuple[str, ...] = ()
+    links: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)

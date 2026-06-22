@@ -65,3 +65,34 @@ def test_static_graph_assets_include_dynamic_interaction_primitives() -> None:
     ]
     for token in required_tokens:
         assert token in combined
+
+
+def test_graph_labels_default_to_focus_only() -> None:
+    html = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
+    graph_js = (STATIC_DIR / "graph.js").read_text(encoding="utf-8")
+
+    assert '<option value="focus" selected>Focus labels only</option>' in html
+    assert 'labelMode: "focus"' in graph_js
+    assert 'this.settings.labelMode === "focus"' in graph_js
+
+
+def test_graph_labels_do_not_use_small_corpus_global_default() -> None:
+    graph_js = (STATIC_DIR / "graph.js").read_text(encoding="utf-8")
+
+    assert "this.nodes.length <= 120" not in graph_js
+    assert "shouldShowLabel" in graph_js
+    assert "ambientLabelBudget" in graph_js
+    assert "boxesOverlap" in graph_js
+
+
+def test_graph_labels_keep_focus_context_visible() -> None:
+    graph_js = (STATIC_DIR / "graph.js").read_text(encoding="utf-8")
+
+    required_tokens = [
+        "isHovered || isSelected || isNeighbor",
+        "visibleLabelBoxes",
+        "is-selected",
+        "is-focused",
+    ]
+    for token in required_tokens:
+        assert token in graph_js

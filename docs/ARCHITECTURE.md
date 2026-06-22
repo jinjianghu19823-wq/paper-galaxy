@@ -29,7 +29,8 @@ source for nearest-neighbor search and proximity explanations.
 - `logging`: shared console and logging setup.
 - `models`: dataclasses shared by the Phase 1 pipeline.
 - `ingest.scanner`: deterministic recursive local file discovery.
-- `extract`: simple local `.txt`, Markdown, LaTeX, and optional PDF extraction.
+- `extract`: local `.txt`, Markdown, LaTeX, optional PDF extraction, and
+  optional image OCR wrappers.
 - `ml.tfidf`: TF-IDF feature extraction and document top terms.
 - `ml.layout`: deterministic 2D layout using TruncatedSVD with fallbacks.
 - `ml.cluster`: conservative k-means clustering.
@@ -39,8 +40,8 @@ source for nearest-neighbor search and proximity explanations.
 - `export.json`: optional JSON sidecar export without full source text.
 - `pipeline`: Phase 1 orchestration.
 - `chunking`: deterministic paragraph/window text chunking.
-- `records`: persistent dataclasses for documents, chunks, scan summaries,
-  search results, and database stats.
+- `records`: persistent dataclasses for documents, chunks, extraction reports,
+  scan summaries, search results, and database stats.
 - `storage.sqlite`: database path resolution and SQLite connection setup.
 - `storage.migrations`: idempotent schema initialization.
 - `storage.repository`: explicit parameterized SQL operations.
@@ -52,8 +53,8 @@ source for nearest-neighbor search and proximity explanations.
 - `web.static`: static HTML/CSS/vanilla JavaScript browser UI, including the
   Phase 3.1 dependency-free force graph renderer.
 
-Future modules may add persistent records, graph construction, better layout
-stability, and a richer local UI.
+Future modules may add graph construction, better layout stability, semantic
+embedding records, and a richer local UI.
 
 ## Phase 1 Static Export
 
@@ -79,6 +80,7 @@ resolve project database
   -> hash each file
   -> skip unchanged documents
   -> extract changed/new text
+  -> record extraction report diagnostics
   -> chunk text
   -> upsert document metadata
   -> replace document text/chunks/FTS rows
@@ -99,6 +101,8 @@ Schema overview:
 - `document_texts`: local extracted full text.
 - `chunks`: deterministic text chunks for future app views.
 - `skipped_files`: per-run skipped files and reasons.
+- `extraction_reports`: per-run extraction method, status, warnings, character
+  counts, and compact metadata.
 - `documents_fts`: FTS5 table for local search.
 
 Document status controls search visibility. `active` documents are returned by
@@ -177,6 +181,53 @@ If the database is missing, `/api/health` still works and the app returns
 structured empty states with the indexing command instead of a traceback. If the
 database exists but has no active documents, map endpoints return empty arrays
 and warnings.
+
+## Phase 4 Extraction Quality
+
+Phase 4 extends the extractor result model with defaulted fields:
+
+- `method`: extractor path such as `markdown`, `latex`, `pdf-pypdf`, or
+  `image-ocr-tesseract`.
+- `warnings`: non-fatal extraction concerns.
+- `metadata`: compact JSON-serializable quality and structure hints.
+- `sections`: headings or section names.
+- `links`: Markdown wikilinks, Markdown link targets, citation keys, or
+  bibliography references.
+
+The scanner still discovers text, Markdown, LaTeX, and PDF files by default.
+Image extensions are discovered only when `include_images` is enabled. OCR is
+attempted only when `ocr` is enabled. The OCR wrapper imports Pillow and
+pytesseract lazily and checks for the local `tesseract` binary before running,
+so normal installs and CI do not require OCR system services.
+
+The `indexer` stores one `extraction_reports` row per discovered file in a run.
+Rows contain method, status, character count, warnings JSON, compact metadata
+JSON, and foreign keys to the scan run and document when available. Statuses
+include `extracted`, `skipped`, `failed`, `unindexed`, `ocr_unavailable`, and
+`scanned_pdf_candidate`.
+
+Extraction options are included in a small fingerprint stored in report
+metadata. If an unchanged file was last processed with different material
+options, such as enabling image OCR, indexing re-extracts it instead of relying
+only on the source hash.
+
+`paper-galaxy index --extraction-report-json PATH` writes an optional local
+sidecar report with counts and per-file diagnostics. It intentionally omits
+full extracted text.
+
+Markdown extraction keeps frontmatter values searchable, records frontmatter
+metadata keys, preserves headings, strips fenced code blocks, captures Obsidian
+wikilinks and Markdown links, and never fetches URLs. LaTeX extraction remains a
+heuristic pass, not a full TeX parser, but captures simple title, author,
+abstract, sections, captions, labels, citations, and bibliography resources.
+PDF extraction remains based on optional `pypdf`; it records page count,
+per-page character counts, metadata-title source, encrypted-PDF warnings, page
+failures, and likely scanned/image-only PDF warnings.
+
+The Phase 3.1 graph label policy is also tightened in Phase 4. Labels are
+focus-only by default: selected, hovered, and direct-neighbor labels are visible.
+High-zoom or always-on labels are explicit UI settings and use a simple budget
+plus bounding-box collision skip to reduce overlap.
 
 ## Future Data Model Sketch
 

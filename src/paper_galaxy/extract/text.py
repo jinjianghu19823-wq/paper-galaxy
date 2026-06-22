@@ -19,6 +19,7 @@ def extract_text_file(path: Path) -> ExtractedContent:
         title=first_meaningful_line(text) or path.stem,
         text=cleaned,
         warnings=tuple(warnings),
+        method="text",
     )
 
 

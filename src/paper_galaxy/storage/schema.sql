@@ -73,6 +73,24 @@ CREATE TABLE IF NOT EXISTS skipped_files (
   FOREIGN KEY(corpus_id) REFERENCES corpora(id)
 );
 
+CREATE TABLE IF NOT EXISTS extraction_reports (
+  id TEXT PRIMARY KEY,
+  scan_run_id TEXT NOT NULL,
+  document_id TEXT,
+  corpus_id TEXT NOT NULL,
+  relative_path TEXT NOT NULL,
+  file_type TEXT NOT NULL,
+  method TEXT NOT NULL,
+  status TEXT NOT NULL,
+  char_count INTEGER NOT NULL DEFAULT 0,
+  warnings_json TEXT NOT NULL DEFAULT '[]',
+  metadata_json TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL,
+  FOREIGN KEY(scan_run_id) REFERENCES scan_runs(id),
+  FOREIGN KEY(document_id) REFERENCES documents(id),
+  FOREIGN KEY(corpus_id) REFERENCES corpora(id)
+);
+
 CREATE VIRTUAL TABLE IF NOT EXISTS documents_fts USING fts5(
   document_id UNINDEXED,
   title,
@@ -94,3 +112,15 @@ CREATE INDEX IF NOT EXISTS idx_chunks_document_id
 
 CREATE INDEX IF NOT EXISTS idx_scan_runs_corpus_started_at
   ON scan_runs(corpus_id, started_at);
+
+CREATE INDEX IF NOT EXISTS idx_extraction_reports_scan_run_id
+  ON extraction_reports(scan_run_id);
+
+CREATE INDEX IF NOT EXISTS idx_extraction_reports_document_id
+  ON extraction_reports(document_id);
+
+CREATE INDEX IF NOT EXISTS idx_extraction_reports_status
+  ON extraction_reports(status);
+
+CREATE INDEX IF NOT EXISTS idx_extraction_reports_corpus_relative_path
+  ON extraction_reports(corpus_id, relative_path);

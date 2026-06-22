@@ -64,19 +64,24 @@ Non-goals: OCR, dense embeddings, Zotero integration, desktop packaging, cloud
 hosting, account system, telemetry, LLM chat, and React/Node tooling unless a
 later task explicitly asks for them.
 
-## Phase 4: Better Extraction
+## Phase 4: Better Extraction (implemented)
 
 Goal: improve corpus ingestion quality.
 
 Deliverables: higher-quality PDF extraction, LaTeX structure extraction,
-Markdown frontmatter and backlink parsing, and an OCR path for screenshots and
-scanned PDFs.
+Markdown frontmatter and backlink parsing, optional local OCR for screenshots
+and images, scanned-PDF detection, extraction warnings, and persisted extraction
+quality reports.
 
 Definition of done: extraction quality is measurable on a small fixture corpus
-and failures are visible rather than silent.
+and failures are visible rather than silent. Graph labels also default to
+focus-only display so the Phase 3.1 dynamic graph does not pile labels on small
+corpora.
 
 Non-goals: default cloud OCR, AGPL/copyleft dependencies without approval, and
-mandatory system services such as GROBID or Tesseract.
+mandatory system services such as GROBID, Tesseract, or Poppler. Phase 4 also
+does not add dense embeddings, Zotero integration, cloud sync, accounts,
+desktop packaging, or React/Node tooling.
 
 ## Phase 5: Semantic Embeddings
 

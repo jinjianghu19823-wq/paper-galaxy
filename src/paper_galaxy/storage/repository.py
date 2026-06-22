@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 import sqlite3
 from pathlib import Path
 
 from paper_galaxy.records import (
     DatabaseStats,
+    ExtractionReport,
     IndexedChunk,
     IndexedDocument,
     SearchResult,
@@ -349,6 +351,71 @@ class Repository:
             ),
         )
 
+    def record_extraction_report(self, report: ExtractionReport) -> None:
+        """Persist compact extraction diagnostics for one file."""
+
+        self.connection.execute(
+            """
+            INSERT INTO extraction_reports(
+              id, scan_run_id, document_id, corpus_id, relative_path, file_type,
+              method, status, char_count, warnings_json, metadata_json, created_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                report.id,
+                report.scan_run_id,
+                report.document_id,
+                report.corpus_id,
+                report.relative_path,
+                report.file_type,
+                report.method,
+                report.status,
+                report.char_count,
+                json.dumps(list(report.warnings), sort_keys=True),
+                json.dumps(report.metadata, sort_keys=True, default=str),
+                report.created_at,
+            ),
+        )
+
+    def latest_extraction_fingerprint(
+        self, corpus_id: str, relative_path: str
+    ) -> str | None:
+        """Return the latest stored extraction fingerprint for a corpus path."""
+
+        row = self.connection.execute(
+            """
+            SELECT metadata_json
+            FROM extraction_reports
+            WHERE corpus_id = ? AND relative_path = ?
+            ORDER BY created_at DESC, rowid DESC
+            LIMIT 1
+            """,
+            (corpus_id, relative_path),
+        ).fetchone()
+        if row is None:
+            return None
+        try:
+            metadata = json.loads(str(row["metadata_json"]))
+        except json.JSONDecodeError:
+            return None
+        fingerprint = metadata.get("extraction_fingerprint")
+        return str(fingerprint) if fingerprint else None
+
+    def list_extraction_reports(self, scan_run_id: str) -> list[ExtractionReport]:
+        """List extraction reports for one scan run in stable path order."""
+
+        rows = self.connection.execute(
+            """
+            SELECT *
+            FROM extraction_reports
+            WHERE scan_run_id = ?
+            ORDER BY relative_path
+            """,
+            (scan_run_id,),
+        ).fetchall()
+        return [_extraction_report_from_row(row) for row in rows]
+
     def mark_missing_documents(
         self, corpus_id: str, seen_document_ids: set[str], now: str
     ) -> int:
@@ -495,6 +562,27 @@ def _document_from_row(row: sqlite3.Row) -> IndexedDocument:
         first_seen_at=str(row["first_seen_at"]),
         last_seen_at=str(row["last_seen_at"]),
         updated_at=str(row["updated_at"]),
+    )
+
+
+def _extraction_report_from_row(row: sqlite3.Row) -> ExtractionReport:
+    warnings_raw = json.loads(str(row["warnings_json"]))
+    metadata_raw = json.loads(str(row["metadata_json"]))
+    warnings = tuple(str(warning) for warning in warnings_raw)
+    metadata = metadata_raw if isinstance(metadata_raw, dict) else {}
+    return ExtractionReport(
+        id=str(row["id"]),
+        scan_run_id=str(row["scan_run_id"]),
+        document_id=str(row["document_id"]) if row["document_id"] is not None else None,
+        corpus_id=str(row["corpus_id"]),
+        relative_path=str(row["relative_path"]),
+        file_type=str(row["file_type"]),
+        method=str(row["method"]),
+        status=str(row["status"]),
+        char_count=int(row["char_count"]),
+        warnings=warnings,
+        metadata=metadata,
+        created_at=str(row["created_at"]),
     )
 
 

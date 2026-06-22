@@ -18,10 +18,11 @@ exports into an interactive 2D research universe.
 
 ## Current Phase
 
-This repository is in Phase 3: local interactive web app, including the Phase
-3.1 dynamic graph UI. It can still export static offline HTML, persist
-document/chunk records in SQLite, search local FTS, and serve a local read-only
-browser app. Do not implement Phase 4 or later phases unless explicitly asked.
+This repository is in Phase 4: better local extraction quality, including the
+Phase 3.1 dynamic graph UI. It can export static offline HTML, persist
+document/chunk records and extraction reports in SQLite, search local FTS, serve
+a local read-only browser app, and optionally run local image OCR when the user
+enables it. Do not implement Phase 5 or later phases unless explicitly asked.
 
 ## Commands
 
@@ -32,9 +33,11 @@ browser app. Do not implement Phase 4 or later phases unless explicitly asked.
 - `paper-galaxy doctor`
 - `paper-galaxy scan examples/tiny_corpus --out galaxy.html --force`
 - `paper-galaxy index examples/tiny_corpus --project-dir . --min-chars 40`
+- `paper-galaxy index examples/tiny_corpus --project-dir . --min-chars 40 --extraction-report-json extraction-report.json`
 - `paper-galaxy search "neural operator" --project-dir .`
 - `paper-galaxy db-stats --project-dir .`
 - `paper-galaxy serve --project-dir .`
+- `paper-galaxy extract-preview examples/tiny_corpus/neural_operators/fourier_neural_operator.md`
 
 ## Engineering Rules
 
@@ -45,14 +48,15 @@ browser app. Do not implement Phase 4 or later phases unless explicitly asked.
 - Do not add AGPL/copyleft dependencies without explicit approval.
 - Do not implement future phases unless asked.
 - Do not add React, Node build tooling, desktop packaging, cloud sync, accounts,
-  telemetry, OCR, Zotero integration, LLM chat, dense embeddings, or other
-  Phase 4+ features unless a future task explicitly asks for that phase.
+  telemetry, cloud OCR, Zotero integration, LLM chat, dense embeddings, or other
+  Phase 5+ features unless a future task explicitly asks for that phase.
+- OCR must stay optional, local, and disabled by default.
 - Frontend assets must not include remote URLs, CDN references, remote fonts, or
   external images.
-- Graph movement, force settings, and manual layout persistence are local
-  browser UI state only. Do not write graph positions to SQLite in Phase 3.
-- Do not commit `.paper-galaxy/`, `*.sqlite3`, `galaxy.html`, `galaxy.json`, or
-  other generated local artifacts.
+- Graph movement, force settings, labels, and manual layout persistence are
+  local browser UI state only. Do not write graph positions to SQLite.
+- Do not commit `.paper-galaxy/`, `*.sqlite3`, `galaxy.html`, `galaxy.json`,
+  `extraction-report.json`, or other generated local artifacts.
 - Add tests for any behavior change.
 - Update docs when architecture changes.
 - When a phase is complete and checks pass, commit and push automatically unless

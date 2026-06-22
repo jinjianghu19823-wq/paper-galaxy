@@ -141,3 +141,36 @@ frontend-only interactions. The backend continues to provide read-only
 documents, cluster labels, initial coordinates, and TF-IDF nearest-neighbor
 links through `/api/map`; the browser does not recompute similarity from 2D map
 distance.
+
+## ADR 0024: Phase 4 Stores Extraction Quality Reports In SQLite
+
+Phase 4 records compact extraction diagnostics in an `extraction_reports` table.
+Reports store method, status, character count, warnings, and compact metadata,
+but not full extracted text. This makes skips and low-quality extraction visible
+without changing search visibility semantics.
+
+## ADR 0025: OCR Is Optional, Local, And Disabled By Default
+
+Image OCR is available only when image discovery and OCR are explicitly enabled.
+The Python OCR wrappers live in the optional `ocr` extra, and the local
+Tesseract binary is detected at runtime. Missing OCR dependencies produce
+warnings or skip records instead of failing the whole indexing run.
+
+## ADR 0026: PyMuPDF Is Not Used In Phase 4
+
+Phase 4 keeps PDF extraction on optional `pypdf`. PyMuPDF is not added because
+the project is avoiding licensing ambiguity and heavier parser dependencies
+unless explicitly approved later.
+
+## ADR 0027: Graph Labels Default To Focus-Only
+
+The dynamic graph defaults to labels for selected, hovered, and direct-neighbor
+nodes only. High-zoom or always-on labels are explicit settings and use simple
+overlap prevention. This avoids visual clutter on small corpora while preserving
+inspectable focus context.
+
+## ADR 0028: Phase 4 Keeps The Static Vanilla Frontend
+
+The extraction and graph-label improvements do not add React, Node, npm, Vite,
+remote assets, or a frontend build step. Static HTML/CSS/vanilla JavaScript
+remains the browser surface.

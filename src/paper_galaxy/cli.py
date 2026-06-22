@@ -16,6 +16,7 @@ from paper_galaxy.errors import (
     FTSUnavailableError,
     MissingDependencyError,
 )
+from paper_galaxy.extract import extract_file
 from paper_galaxy.indexer import index_corpus
 from paper_galaxy.logging import get_console
 from paper_galaxy.paths import project_config_path
@@ -29,6 +30,8 @@ app = typer.Typer(
 
 OPTIONAL_MODULES: tuple[tuple[str, str], ...] = (
     ("pypdf", "pypdf"),
+    ("Pillow", "PIL"),
+    ("pytesseract", "pytesseract"),
     ("sklearn", "sklearn"),
     ("umap", "umap"),
     ("sentence_transformers", "sentence_transformers"),
@@ -67,6 +70,7 @@ def doctor() -> None:
     console.print("Scan command: Phase 1 static CLI MVP is available.")
     console.print("Index/search commands: Phase 2 local database is available.")
     console.print("Serve command: Phase 3 local web app is available.")
+    console.print("Extraction reports: Phase 4 extraction diagnostics are available.")
 
 
 @app.command("init")
@@ -149,6 +153,24 @@ def scan(
             help="Include PDFs when optional pypdf support is installed.",
         ),
     ] = True,
+    include_images: Annotated[
+        bool,
+        typer.Option(
+            "--include-images/--no-include-images",
+            help="Discover image files for optional local OCR.",
+        ),
+    ] = False,
+    ocr: Annotated[
+        bool,
+        typer.Option(
+            "--ocr/--no-ocr",
+            help="Run optional local OCR for image files when available.",
+        ),
+    ] = False,
+    ocr_language: Annotated[
+        str,
+        typer.Option("--ocr-language", help="Tesseract OCR language code."),
+    ] = "eng",
     json_out: Annotated[
         Path | None,
         typer.Option("--json-out", help="Optional sidecar JSON summary."),
@@ -185,6 +207,9 @@ def scan(
             cluster_count=clusters,
             seed=seed,
             include_pdf=include_pdf,
+            include_images=include_images,
+            ocr=ocr,
+            ocr_language=ocr_language,
             verbose=verbose,
         )
     except MissingDependencyError as exc:
@@ -232,6 +257,31 @@ def index_command(
             help="Include PDFs when optional pypdf support is installed.",
         ),
     ] = True,
+    include_images: Annotated[
+        bool,
+        typer.Option(
+            "--include-images/--no-include-images",
+            help="Discover image files for optional local OCR.",
+        ),
+    ] = False,
+    ocr: Annotated[
+        bool,
+        typer.Option(
+            "--ocr/--no-ocr",
+            help="Run optional local OCR for image files when available.",
+        ),
+    ] = False,
+    ocr_language: Annotated[
+        str,
+        typer.Option("--ocr-language", help="Tesseract OCR language code."),
+    ] = "eng",
+    extraction_report_json: Annotated[
+        Path | None,
+        typer.Option(
+            "--extraction-report-json",
+            help="Optional local JSON sidecar with extraction diagnostics.",
+        ),
+    ] = None,
     force_reextract: Annotated[
         bool,
         typer.Option(
@@ -277,6 +327,10 @@ def index_command(
             project_dir=resolved_project_dir,
             min_chars=min_chars,
             include_pdf=include_pdf,
+            include_images=include_images,
+            ocr=ocr,
+            ocr_language=ocr_language,
+            extraction_report_json=extraction_report_json,
             force_reextract=force_reextract,
             chunk_size=chunk_size,
             chunk_overlap=chunk_overlap,
@@ -299,8 +353,82 @@ def index_command(
     table.add_row("Documents marked missing", str(summary.documents_missing))
     table.add_row("Skipped files", str(summary.skipped_files))
     table.add_row("Chunks written", str(summary.chunks_written))
+    table.add_row("Files extracted", str(summary.extracted_count))
+    table.add_row("Extraction warnings", str(summary.warning_count))
+    table.add_row("OCR files extracted", str(summary.ocr_count))
+    table.add_row("Image files seen", str(summary.image_files_seen))
+    table.add_row("Low-text files", str(summary.low_text_count))
+    table.add_row("Scanned PDF candidates", str(summary.scanned_pdf_candidates))
+    if summary.extraction_report_json is not None:
+        table.add_row("Extraction report JSON", str(summary.extraction_report_json))
     table.add_row("Scan run id", summary.scan_run_id)
     console.print(table)
+
+
+@app.command("extract-preview")
+def extract_preview_command(
+    path: Annotated[
+        Path,
+        typer.Argument(help="Local file to extract without writing to the database."),
+    ],
+    ocr: Annotated[
+        bool,
+        typer.Option("--ocr/--no-ocr", help="Run optional local OCR for image files."),
+    ] = False,
+    ocr_language: Annotated[
+        str,
+        typer.Option("--ocr-language", help="Tesseract OCR language code."),
+    ] = "eng",
+    include_metadata: Annotated[
+        bool,
+        typer.Option("--include-metadata", help="Print extractor metadata."),
+    ] = False,
+    max_chars: Annotated[
+        int,
+        typer.Option("--max-chars", help="Maximum preview characters to print."),
+    ] = 1200,
+) -> None:
+    """Preview local extraction output for one file without touching SQLite."""
+
+    console = get_console()
+    source_path = path.expanduser().resolve()
+    if not source_path.exists() or not source_path.is_file():
+        console.print(f"File does not exist: {source_path}")
+        raise typer.Exit(1)
+    if max_chars < 0:
+        console.print("--max-chars must be non-negative.")
+        raise typer.Exit(1)
+
+    extracted, reason = extract_file(
+        source_path,
+        include_pdf=True,
+        include_images=True,
+        ocr=ocr,
+        ocr_language=ocr_language,
+    )
+    if reason is not None or extracted is None:
+        console.print(f"Extraction skipped: {reason or 'unknown'}")
+        raise typer.Exit(1)
+
+    table = Table(title="Paper Galaxy Extraction Preview")
+    table.add_column("Field", style="bold")
+    table.add_column("Value", overflow="fold")
+    table.add_row("Path", str(source_path))
+    table.add_row("Title", extracted.title)
+    table.add_row("Method", extracted.method)
+    table.add_row("Characters", str(len(extracted.text)))
+    table.add_row("Warnings", "; ".join(extracted.warnings) or "none")
+    if extracted.sections:
+        table.add_row("Sections", ", ".join(extracted.sections[:8]))
+    if extracted.links:
+        table.add_row("Links", ", ".join(extracted.links[:8]))
+    console.print(table)
+    if include_metadata:
+        console.print_json(data=extracted.metadata)
+    preview = extracted.text[:max_chars]
+    if len(extracted.text) > max_chars:
+        preview += "..."
+    console.print(preview or "[no extracted text]")
 
 
 @app.command("search")

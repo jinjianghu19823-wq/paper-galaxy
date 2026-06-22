@@ -28,12 +28,17 @@ def build_galaxy(
     cluster_count: int | None = None,
     seed: int = 42,
     include_pdf: bool = True,
+    include_images: bool = False,
+    ocr: bool = False,
+    ocr_language: str = "eng",
     verbose: bool = False,
 ) -> GalaxyBuildResult:
     """Build a static local galaxy HTML file from a corpus directory."""
 
     corpus_path = corpus_dir.expanduser().resolve()
-    discovered_files = discover_files(corpus_path, include_pdf=include_pdf)
+    discovered_files = discover_files(
+        corpus_path, include_pdf=include_pdf, include_images=include_images
+    )
     files_to_process = (
         discovered_files[:max_documents] if max_documents else discovered_files
     )
@@ -42,7 +47,13 @@ def build_galaxy(
     skipped_files: list[SkippedFile] = []
     for path in files_to_process:
         rel_path = relative_path(path, corpus_path)
-        extracted, skip_reason = extract_file(path, include_pdf=include_pdf)
+        extracted, skip_reason = extract_file(
+            path,
+            include_pdf=include_pdf,
+            include_images=include_images,
+            ocr=ocr,
+            ocr_language=ocr_language,
+        )
         if skip_reason is not None or extracted is None:
             skipped_files.append(
                 SkippedFile(

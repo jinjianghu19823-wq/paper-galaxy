@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 from typer.testing import CliRunner
@@ -152,6 +153,63 @@ def test_index_search_and_db_stats_commands(tmp_path: Path) -> None:
     assert stats.exit_code == 0
     assert "Active documents" in stats.output
     assert "Unindexed documents" in stats.output
+
+
+def test_index_help_lists_phase_four_extraction_options() -> None:
+    runner = CliRunner()
+
+    result = runner.invoke(app, ["index", "--help"])
+
+    assert result.exit_code == 0
+    assert "--include-images" in result.output
+    assert "--ocr" in result.output
+    assert "--ocr-language" in result.output
+    assert "--extraction-report" in result.output
+
+
+def test_index_command_writes_extraction_report_json(tmp_path: Path) -> None:
+    runner = CliRunner()
+    report_path = tmp_path / "report.json"
+
+    result = runner.invoke(
+        app,
+        [
+            "index",
+            "examples/tiny_corpus",
+            "--project-dir",
+            str(tmp_path),
+            "--min-chars",
+            "40",
+            "--extraction-report-json",
+            str(report_path),
+        ],
+    )
+    payload = json.loads(report_path.read_text(encoding="utf-8"))
+
+    assert result.exit_code == 0
+    assert report_path.exists()
+    assert "Extraction report JSON" in result.output
+    assert payload["counts"]["extracted_count"] == 8
+
+
+def test_extract_preview_command_reports_metadata() -> None:
+    runner = CliRunner()
+
+    result = runner.invoke(
+        app,
+        [
+            "extract-preview",
+            "examples/tiny_corpus/neural_operators/fourier_neural_operator.md",
+            "--include-metadata",
+            "--max-chars",
+            "120",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "Paper Galaxy Extraction Preview" in result.output
+    assert "markdown" in result.output
+    assert "frontmatter_keys" in result.output
 
 
 def test_search_missing_database_prints_clear_message(tmp_path: Path) -> None:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import shutil
 import sqlite3
 from pathlib import Path
@@ -60,6 +61,7 @@ def test_indexing_tiny_corpus_inserts_documents_chunks_and_run(
         == 8
     )
     assert scalar(database_path, "SELECT COUNT(*) FROM chunks") == 8
+    assert scalar(database_path, "SELECT COUNT(*) FROM extraction_reports") == 8
     assert (
         scalar(
             database_path,
@@ -128,3 +130,60 @@ def test_short_file_is_recorded_as_skipped(tmp_path: Path) -> None:
     assert summary.files_found == 9
     assert summary.skipped_files == 1
     assert scalar(database_path, "SELECT COUNT(*) FROM skipped_files") == 1
+    assert (
+        scalar(
+            database_path,
+            "SELECT COUNT(*) FROM extraction_reports WHERE status = 'unindexed'",
+        )
+        == 1
+    )
+
+
+def test_indexing_writes_extraction_report_json_without_text(
+    tmp_path: Path,
+) -> None:
+    corpus = tmp_path / "corpus"
+    corpus.mkdir()
+    secret_text = "Unique full extracted text that should stay out of reports."
+    (corpus / "note.txt").write_text(secret_text, encoding="utf-8")
+    report_path = tmp_path / "extraction-report.json"
+
+    summary = index_corpus(
+        corpus,
+        project_dir=tmp_path,
+        min_chars=10,
+        extraction_report_json=report_path,
+    )
+    payload = json.loads(report_path.read_text(encoding="utf-8"))
+
+    assert summary.extraction_report_json == report_path.resolve()
+    assert payload["scan_run_id"] == summary.scan_run_id
+    assert payload["counts"]["extracted_count"] == 1
+    assert payload["files"][0]["relative_path"] == "note.txt"
+    assert payload["files"][0]["method"] == "text"
+    assert secret_text not in report_path.read_text(encoding="utf-8")
+
+
+def test_indexing_records_image_ocr_unavailable_report(tmp_path: Path) -> None:
+    corpus = tmp_path / "corpus"
+    corpus.mkdir()
+    (corpus / "screen.png").write_bytes(b"image")
+
+    summary = index_corpus(
+        corpus,
+        project_dir=tmp_path,
+        include_images=True,
+        ocr=False,
+    )
+    database_path = resolve_database_path(tmp_path)
+
+    assert summary.files_found == 1
+    assert summary.image_files_seen == 1
+    assert summary.skipped_files == 1
+    assert (
+        scalar(
+            database_path,
+            "SELECT COUNT(*) FROM extraction_reports WHERE status = 'ocr_unavailable'",
+        )
+        == 1
+    )

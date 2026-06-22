@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 
 @dataclass(frozen=True)
@@ -53,6 +54,31 @@ class IndexRunSummary:
     documents_missing: int
     skipped_files: int
     chunks_written: int
+    extracted_count: int = 0
+    warning_count: int = 0
+    ocr_count: int = 0
+    scanned_pdf_candidates: int = 0
+    image_files_seen: int = 0
+    low_text_count: int = 0
+    extraction_report_json: Path | None = None
+
+
+@dataclass(frozen=True)
+class ExtractionReport:
+    """Compact extraction-quality record persisted per indexing run."""
+
+    id: str
+    scan_run_id: str
+    document_id: str | None
+    corpus_id: str
+    relative_path: str
+    file_type: str
+    method: str
+    status: str
+    char_count: int
+    warnings: tuple[str, ...]
+    metadata: dict[str, Any]
+    created_at: str
 
 
 @dataclass(frozen=True)

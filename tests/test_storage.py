@@ -48,6 +48,9 @@ def test_schema_initializes_expected_tables(tmp_path: Path) -> None:
             """
         ).fetchall()
         tables = {str(row["name"]) for row in table_rows}
+        version = connection.execute(
+            "SELECT value FROM schema_meta WHERE key = 'schema_version'"
+        ).fetchone()
     finally:
         connection.close()
 
@@ -55,7 +58,39 @@ def test_schema_initializes_expected_tables(tmp_path: Path) -> None:
     assert "documents" in tables
     assert "chunks" in tables
     assert "scan_runs" in tables
+    assert "extraction_reports" in tables
     assert "documents_fts" in tables
+
+    assert version is not None
+    assert version["value"] == "2"
+
+
+def test_schema_upgrades_version_one_database_idempotently(tmp_path: Path) -> None:
+    connection = connect_database(tmp_path)
+    try:
+        connection.execute(
+            "CREATE TABLE schema_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)"
+        )
+        connection.execute(
+            "INSERT INTO schema_meta(key, value) VALUES ('schema_version', '1')"
+        )
+        initialize_database(connection)
+        report_table = connection.execute(
+            """
+            SELECT name
+            FROM sqlite_master
+            WHERE type = 'table' AND name = 'extraction_reports'
+            """
+        ).fetchone()
+        version = connection.execute(
+            "SELECT value FROM schema_meta WHERE key = 'schema_version'"
+        ).fetchone()
+    finally:
+        connection.close()
+
+    assert report_table is not None
+    assert version is not None
+    assert version["value"] == "2"
 
 
 def test_sqlite_build_supports_fts5(tmp_path: Path) -> None:
