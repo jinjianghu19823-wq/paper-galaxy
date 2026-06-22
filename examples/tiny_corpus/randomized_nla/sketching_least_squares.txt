@@ -1,0 +1,4 @@
+Sketching least squares methods reduce a tall matrix to a smaller subproblem.
+The method uses random projections, leverage-score intuition, conditioning
+diagnostics, and residual checks to solve overdetermined numerical linear
+algebra problems efficiently.

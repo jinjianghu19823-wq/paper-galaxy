@@ -8,7 +8,7 @@ from rich.console import Console
 def get_console() -> Console:
     """Create a Rich console for CLI output."""
 
-    return Console()
+    return Console(highlight=False, soft_wrap=True)
 
 
 def configure_logging(level: int = std_logging.INFO) -> None:

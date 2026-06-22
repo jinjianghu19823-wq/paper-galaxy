@@ -3,7 +3,7 @@
 Paper Galaxy should grow incrementally. Each phase must leave the repository in
 a runnable, tested state.
 
-## Phase 0: Scaffold
+## Phase 0: Scaffold (complete)
 
 Goal: create the repository foundation.
 
@@ -17,16 +17,18 @@ documented honestly.
 Non-goals: document extraction, OCR, parsing, vectors, maps, databases, servers,
 frontends, Zotero integration, packaging, cloud sync, and LLM chat.
 
-## Phase 1: Static CLI MVP
+## Phase 1: Static CLI MVP (implemented)
 
 Goal: generate a static local galaxy map from a folder.
 
 Deliverables: folder scanning, text extraction for simple `.txt`, `.md`, `.tex`,
-and basic PDFs, TF-IDF vectors, 2D reduction, nearest-neighbor summaries, and a
-static `galaxy.html`.
+and optional basic PDFs, TF-IDF vectors, 2D reduction, k-means clustering,
+nearest-neighbor summaries, top-term cluster labels, optional JSON sidecar, and
+a static offline `galaxy.html`.
 
-Definition of done: a small sample corpus produces a readable static HTML map
-with hover labels and neighbor data.
+Definition of done: `examples/tiny_corpus` produces a readable static HTML map
+with hover labels, click inspection, cluster legend, top terms, skipped-file
+summary, and neighbor data based on TF-IDF cosine similarity.
 
 Non-goals: persistent database, chunk embeddings, backend server, React UI,
 cloud features, and high-quality OCR.

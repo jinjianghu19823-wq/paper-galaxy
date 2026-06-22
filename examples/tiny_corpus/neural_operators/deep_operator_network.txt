@@ -1,0 +1,4 @@
+Deep operator networks represent nonlinear solution operators with branch and
+trunk networks. The branch net reads sampled input functions, while the trunk
+net represents evaluation coordinates. This note discusses operator learning,
+PDE data, generalization, and basis functions.

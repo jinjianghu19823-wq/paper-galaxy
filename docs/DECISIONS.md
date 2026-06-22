@@ -41,3 +41,23 @@ workspaces must be optional and opt-in.
 Do not add AGPL/copyleft dependencies without explicit approval. The MIT license
 may need reconsideration if future optional dependencies introduce incompatible
 licensing constraints.
+
+## ADR 0009: Static HTML Export For Phase 1
+
+Phase 1 exports a single self-contained HTML file with inline CSS, inline
+JavaScript, and embedded metadata. It does not load external assets, CDNs,
+fonts, or scripts. This keeps the MVP offline, inspectable, and easy to share as
+a local artifact.
+
+## ADR 0010: TF-IDF, TruncatedSVD, And KMeans Baseline
+
+Phase 1 uses scikit-learn TF-IDF, cosine similarity, TruncatedSVD, and k-means
+as the first inspectable map pipeline. TF-IDF terms support simple cluster
+labels and "why nearby?" explanations before denser semantic embeddings are
+introduced.
+
+## ADR 0011: Optional PDF Support Via pypdf
+
+Basic PDF extraction uses optional `pypdf` only. If `pypdf` is unavailable, PDF
+files are skipped with a clear reason. OCR, PyMuPDF, GROBID, and Tesseract are
+not part of Phase 1.

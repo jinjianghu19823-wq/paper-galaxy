@@ -1,0 +1,4 @@
+The literature plan organizes papers into numerical PDEs, tensor decompositions,
+randomized numerical linear algebra, and operator learning. It tracks which
+papers support the dissertation background, experiment design, and comparison
+methods.

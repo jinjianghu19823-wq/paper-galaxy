@@ -3,6 +3,7 @@ from pathlib import Path
 from typer.testing import CliRunner
 
 from paper_galaxy.cli import app
+from paper_galaxy.errors import MissingDependencyError
 
 
 def test_doctor_exits_successfully() -> None:
@@ -38,3 +39,70 @@ def test_init_without_force_does_not_overwrite(tmp_path: Path) -> None:
     assert result.exit_code == 0
     assert "already exists" in result.output
     assert config_path.read_text(encoding="utf-8") == "sentinel = true\n"
+
+
+def test_scan_command_writes_html_and_json(tmp_path: Path) -> None:
+    runner = CliRunner()
+    output = tmp_path / "galaxy.html"
+    json_output = tmp_path / "galaxy.json"
+
+    result = runner.invoke(
+        app,
+        [
+            "scan",
+            "examples/tiny_corpus",
+            "--out",
+            str(output),
+            "--json-out",
+            str(json_output),
+            "--force",
+            "--min-chars",
+            "40",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert output.exists()
+    assert json_output.exists()
+    assert "Documents extracted" in result.output
+
+
+def test_scan_refuses_to_overwrite_without_force(tmp_path: Path) -> None:
+    runner = CliRunner()
+    output = tmp_path / "galaxy.html"
+    output.write_text("existing", encoding="utf-8")
+
+    result = runner.invoke(
+        app,
+        ["scan", "examples/tiny_corpus", "--out", str(output), "--min-chars", "40"],
+    )
+
+    assert result.exit_code == 1
+    assert "Use --force to overwrite" in result.output
+    assert output.read_text(encoding="utf-8") == "existing"
+
+
+def test_scan_reports_missing_ml_dependency(
+    monkeypatch: object, tmp_path: Path
+) -> None:
+    runner = CliRunner()
+
+    def raise_missing_dependency(*args: object, **kwargs: object) -> None:
+        raise MissingDependencyError("scikit-learn")
+
+    monkeypatch.setattr("paper_galaxy.cli.build_galaxy", raise_missing_dependency)
+
+    result = runner.invoke(
+        app,
+        [
+            "scan",
+            "examples/tiny_corpus",
+            "--out",
+            str(tmp_path / "galaxy.html"),
+            "--force",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "Missing optional dependency" in result.output
+    assert 'python -m pip install -e ".[dev,ml,pdf]"' in result.output
