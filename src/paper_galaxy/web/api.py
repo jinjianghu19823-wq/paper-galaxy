@@ -10,6 +10,8 @@ from typing import Any
 from paper_galaxy import __version__
 from paper_galaxy.embeddings.search import vector_stats as embedding_vector_stats
 from paper_galaxy.errors import MissingDependencyError
+from paper_galaxy.explain.labels import validate_manual_label
+from paper_galaxy.explain.pairs import explain_pair, pair_explanation_payload
 from paper_galaxy.records import (
     DatabaseStats,
     IndexedChunk,
@@ -215,6 +217,7 @@ def register_api_routes(app: Any, config: WebAppConfig) -> None:
                 "documents": [],
                 "points": [],
                 "cluster_labels": {},
+                "clusters": [],
                 "stats": None,
                 **missing,
             }
@@ -234,6 +237,7 @@ def register_api_routes(app: Any, config: WebAppConfig) -> None:
                     "documents": [],
                     "points": [],
                     "cluster_labels": {},
+                    "clusters": [],
                     "warnings": [
                         "Missing optional dependency for map generation: "
                         f"{exc.dependency}."
@@ -248,6 +252,151 @@ def register_api_routes(app: Any, config: WebAppConfig) -> None:
                 },
             )
         return {"database_exists": True, **payload}
+
+    @app.get("/api/clusters")
+    def cluster_data(
+        limit: int | None = None,
+        seed: int | None = None,
+        clusters: int | None = None,
+    ) -> Any:
+        missing = _missing_database_payload(config)
+        if missing is not None:
+            return {
+                "database_exists": False,
+                "clusters": [],
+                **missing,
+            }
+        try:
+            payload = build_map_payload(
+                project_dir=config.project_dir,
+                seed=config.seed if seed is None else seed,
+                clusters=config.clusters if clusters is None else clusters,
+                neighbors=config.neighbors,
+                limit=config.map_limit if limit is None else limit,
+            )
+        except MissingDependencyError as exc:
+            return JSONResponse(
+                status_code=503,
+                content={
+                    "database_exists": True,
+                    "clusters": [],
+                    "warnings": [
+                        "Missing optional dependency for cluster generation: "
+                        f"{exc.dependency}."
+                    ],
+                    "error": {
+                        "code": "missing_dependency",
+                        "dependency": exc.dependency,
+                        "message": (
+                            'Install with: python -m pip install -e ".[dev,ml,pdf,app]"'
+                        ),
+                    },
+                },
+            )
+        return {
+            "database_exists": True,
+            "clusters": payload.get("clusters", []),
+            "warnings": payload.get("warnings", []),
+        }
+
+    @app.put("/api/clusters/{cluster_signature}/label")
+    def rename_cluster(cluster_signature: str, body: dict[str, str]) -> Any:
+        missing = _missing_database_payload(config)
+        if missing is not None:
+            return JSONResponse(status_code=404, content=missing)
+        try:
+            label = validate_manual_label(str(body.get("label", "")))
+        except ValueError as exc:
+            return JSONResponse(
+                status_code=422,
+                content={
+                    "error": {
+                        "code": "invalid_cluster_label",
+                        "message": str(exc),
+                    }
+                },
+            )
+        repository = _repository(config.project_dir)
+        try:
+            with repository.connection:
+                override = repository.upsert_cluster_label_override(
+                    cluster_signature=cluster_signature,
+                    label=label,
+                )
+        finally:
+            repository.connection.close()
+        return {
+            "database_exists": True,
+            "override": override,
+            "warnings": [],
+        }
+
+    @app.delete("/api/clusters/{cluster_signature}/label")
+    def reset_cluster_label(cluster_signature: str) -> Any:
+        missing = _missing_database_payload(config)
+        if missing is not None:
+            return JSONResponse(status_code=404, content=missing)
+        repository = _repository(config.project_dir)
+        try:
+            with repository.connection:
+                deleted = repository.delete_cluster_label_override(cluster_signature)
+        finally:
+            repository.connection.close()
+        return {
+            "database_exists": True,
+            "cluster_signature": cluster_signature,
+            "deleted": deleted,
+            "warnings": [],
+        }
+
+    @app.get("/api/explain/pair")
+    def pair_data(
+        source: str = "",
+        target: str = "",
+        model_id: str | None = None,
+        chunk_limit: int = 3,
+        term_limit: int = 8,
+    ) -> Any:
+        missing = _missing_database_payload(config)
+        if missing is not None:
+            return JSONResponse(status_code=404, content=missing)
+        if not source.strip() or not target.strip():
+            return JSONResponse(
+                status_code=422,
+                content={
+                    "error": {
+                        "code": "missing_pair_id",
+                        "message": "Both source and target are required.",
+                    }
+                },
+            )
+        repository = _repository(config.project_dir)
+        try:
+            explanation = explain_pair(
+                repository,
+                source,
+                target,
+                model_id=model_id,
+                chunk_limit=max(0, chunk_limit),
+                term_limit=max(0, term_limit),
+            )
+        except ValueError as exc:
+            return JSONResponse(
+                status_code=404,
+                content={
+                    "error": {
+                        "code": "document_not_found",
+                        "message": str(exc),
+                    }
+                },
+            )
+        finally:
+            repository.connection.close()
+        return {
+            "database_exists": True,
+            "explanation": pair_explanation_payload(explanation),
+            "warnings": explanation.warnings,
+        }
 
 
 def _repository(project_dir: Path) -> Repository:

@@ -23,12 +23,18 @@ from paper_galaxy.errors import (
     FTSUnavailableError,
     MissingDependencyError,
 )
+from paper_galaxy.explain.labels import validate_manual_label
+from paper_galaxy.explain.pairs import explain_pair
 from paper_galaxy.extract import extract_file
 from paper_galaxy.indexer import index_corpus
 from paper_galaxy.logging import get_console
 from paper_galaxy.paths import project_config_path
 from paper_galaxy.pipeline import build_galaxy
 from paper_galaxy.search import get_database_stats, search_index
+from paper_galaxy.storage.migrations import initialize_database
+from paper_galaxy.storage.repository import Repository
+from paper_galaxy.storage.sqlite import connect_database, resolve_database_path
+from paper_galaxy.web.map_builder import build_map_payload
 
 app = typer.Typer(
     help="Local-first research cartography tools.",
@@ -79,6 +85,9 @@ def doctor() -> None:
     console.print("Serve command: Phase 3 local web app is available.")
     console.print("Extraction reports: Phase 4 extraction diagnostics are available.")
     console.print("Embedding commands: Phase 5 optional local vectors are available.")
+    console.print(
+        "Explainability commands: Phase 6 labels and pair evidence are available."
+    )
 
 
 @app.command("init")
@@ -715,6 +724,13 @@ def semantic_search_command(
             help="Show chunk indexes when available.",
         ),
     ] = False,
+    normalize: Annotated[
+        bool,
+        typer.Option(
+            "--normalize/--no-normalize",
+            help="Use the same vector normalization setting as paper-galaxy embed.",
+        ),
+    ] = True,
 ) -> None:
     """Search stored local vectors with a local query embedding."""
 
@@ -734,6 +750,7 @@ def semantic_search_command(
             object_type=object_type,
             limit=limit,
             include_missing=include_missing,
+            normalize=normalize,
         )
     except ModelDownloadDisabledError as exc:
         console.print(str(exc), markup=False)
@@ -806,6 +823,13 @@ def compare_neighbors_command(
         float,
         typer.Option("--tfidf-weight", help="TF-IDF cosine weight for hybrid scores."),
     ] = 0.35,
+    normalize: Annotated[
+        bool,
+        typer.Option(
+            "--normalize/--no-normalize",
+            help="Use the same vector normalization setting as paper-galaxy embed.",
+        ),
+    ] = True,
 ) -> None:
     """Compare TF-IDF, dense, and hybrid nearest neighbors."""
 
@@ -822,6 +846,7 @@ def compare_neighbors_command(
             limit=limit,
             dense_weight=dense_weight,
             tfidf_weight=tfidf_weight,
+            normalize=normalize,
         )
     except ModelDownloadDisabledError as exc:
         console.print(str(exc), markup=False)
@@ -893,6 +918,231 @@ def vector_stats_command(
                 str(row["last_vector_at"]),
             )
     get_console().print(counts_table)
+
+
+@app.command("clusters")
+def clusters_command(
+    project_dir: Annotated[
+        Path,
+        typer.Option(
+            "--project-dir", help="Project directory containing .paper-galaxy."
+        ),
+    ] = Path("."),
+    seed: Annotated[
+        int,
+        typer.Option("--seed", help="Random seed for deterministic cluster layout."),
+    ] = 42,
+    clusters: Annotated[
+        int | None,
+        typer.Option("--clusters", help="Optional cluster count."),
+    ] = None,
+    limit: Annotated[
+        int,
+        typer.Option("--limit", help="Maximum active documents to explain."),
+    ] = 1000,
+) -> None:
+    """List generated and manual cluster labels."""
+
+    console = get_console()
+    try:
+        payload = build_map_payload(
+            project_dir=project_dir.expanduser().resolve(),
+            seed=seed,
+            clusters=clusters,
+            limit=limit,
+        )
+    except MissingDependencyError as exc:
+        console.print(f"Missing optional dependency: {exc.dependency}.")
+        raise typer.Exit(1) from exc
+
+    table = Table(title="Paper Galaxy Clusters")
+    table.add_column("Cluster", justify="right")
+    table.add_column("Signature", overflow="fold")
+    table.add_column("Label", overflow="fold")
+    table.add_column("Source")
+    table.add_column("Size", justify="right")
+    table.add_column("Top terms", overflow="fold")
+    cluster_value = payload.get("clusters", [])
+    cluster_rows = cluster_value if isinstance(cluster_value, list) else []
+    for cluster in cluster_rows:
+        if not isinstance(cluster, dict):
+            continue
+        terms = cluster.get("top_terms")
+        term_text = (
+            ", ".join(
+                str(term.get("term", "")) for term in terms if isinstance(term, dict)
+            )
+            if isinstance(terms, list)
+            else ""
+        )
+        table.add_row(
+            str(cluster.get("cluster_id", "")),
+            str(cluster.get("cluster_signature", "")),
+            str(cluster.get("display_label", "")),
+            str(cluster.get("source", "")),
+            str(cluster.get("size", "")),
+            term_text,
+        )
+    console.print(table)
+
+
+@app.command("rename-cluster")
+def rename_cluster_command(
+    cluster_signature: Annotated[
+        str,
+        typer.Argument(help="Stable cluster signature from paper-galaxy clusters."),
+    ],
+    label: Annotated[
+        str,
+        typer.Argument(help="Manual local display label, 1-120 characters."),
+    ],
+    project_dir: Annotated[
+        Path,
+        typer.Option(
+            "--project-dir", help="Project directory containing .paper-galaxy."
+        ),
+    ] = Path("."),
+) -> None:
+    """Store a local manual label override for a cluster."""
+
+    console = get_console()
+    try:
+        cleaned_label = validate_manual_label(label)
+    except ValueError as exc:
+        console.print(str(exc))
+        raise typer.Exit(1) from exc
+    repository = _open_repository(project_dir.expanduser().resolve())
+    try:
+        with repository.connection:
+            repository.upsert_cluster_label_override(
+                cluster_signature=cluster_signature,
+                label=cleaned_label,
+            )
+    finally:
+        repository.connection.close()
+    console.print(f"Renamed {cluster_signature} to {cleaned_label}.")
+
+
+@app.command("reset-cluster-label")
+def reset_cluster_label_command(
+    cluster_signature: Annotated[
+        str,
+        typer.Argument(help="Stable cluster signature from paper-galaxy clusters."),
+    ],
+    project_dir: Annotated[
+        Path,
+        typer.Option(
+            "--project-dir", help="Project directory containing .paper-galaxy."
+        ),
+    ] = Path("."),
+) -> None:
+    """Remove a local manual label override for a cluster."""
+
+    repository = _open_repository(project_dir.expanduser().resolve())
+    try:
+        with repository.connection:
+            deleted = repository.delete_cluster_label_override(cluster_signature)
+    finally:
+        repository.connection.close()
+    status = "Removed" if deleted else "No override found for"
+    get_console().print(f"{status} {cluster_signature}.")
+
+
+@app.command("explain-pair")
+def explain_pair_command(
+    source: Annotated[
+        str,
+        typer.Argument(help="Source document ID or corpus-relative path."),
+    ],
+    target: Annotated[
+        str,
+        typer.Argument(help="Target document ID or corpus-relative path."),
+    ],
+    project_dir: Annotated[
+        Path,
+        typer.Option(
+            "--project-dir", help="Project directory containing .paper-galaxy."
+        ),
+    ] = Path("."),
+    term_limit: Annotated[
+        int,
+        typer.Option("--term-limit", help="Maximum shared terms to show."),
+    ] = 8,
+    chunk_limit: Annotated[
+        int,
+        typer.Option("--chunk-limit", help="Maximum matching chunk pairs to show."),
+    ] = 3,
+    model_id: Annotated[
+        str | None,
+        typer.Option("--model-id", help="Optional dense model id for future evidence."),
+    ] = None,
+    model: Annotated[
+        str,
+        typer.Option("--model", help="Reserved local model path for dense evidence."),
+    ] = "",
+    allow_model_download: Annotated[
+        bool,
+        typer.Option(
+            "--allow-model-download/--no-allow-model-download",
+            help="Reserved for future dense pair evidence.",
+        ),
+    ] = False,
+    dense: Annotated[
+        bool,
+        typer.Option(
+            "--dense/--no-dense",
+            help="Request optional dense evidence when available.",
+        ),
+    ] = False,
+) -> None:
+    """Explain why two local documents are nearby."""
+
+    del model, allow_model_download
+    console = get_console()
+    repository = _open_repository(project_dir.expanduser().resolve())
+    try:
+        explanation = explain_pair(
+            repository,
+            source,
+            target,
+            term_limit=term_limit,
+            chunk_limit=chunk_limit,
+            dense=dense,
+            model_id=model_id,
+        )
+    except ValueError as exc:
+        console.print(str(exc))
+        raise typer.Exit(1) from exc
+    finally:
+        repository.connection.close()
+
+    console.print(f"Source: {explanation.source.title}")
+    console.print(f"Target: {explanation.target.title}")
+    console.print(f"Lexical score: {explanation.lexical_score:.4f}")
+    if explanation.warnings:
+        for warning in explanation.warnings:
+            console.print(f"Warning: {warning}")
+
+    terms_table = Table(title="Shared Terms")
+    terms_table.add_column("Term")
+    terms_table.add_column("Score", justify="right")
+    for term in explanation.shared_terms:
+        terms_table.add_row(term.term, f"{term.score:.4f}")
+    console.print(terms_table)
+
+    chunk_table = Table(title="Chunk Matches")
+    chunk_table.add_column("Source chunk", justify="right")
+    chunk_table.add_column("Target chunk", justify="right")
+    chunk_table.add_column("Score", justify="right")
+    chunk_table.add_column("Shared terms", overflow="fold")
+    for match in explanation.chunk_matches:
+        chunk_table.add_row(
+            str(match.source_chunk_index),
+            str(match.target_chunk_index),
+            f"{match.score:.4f}",
+            ", ".join(match.shared_terms),
+        )
+    console.print(chunk_table)
 
 
 @app.command("serve")
@@ -991,6 +1241,12 @@ def _neighbors_table(title: str, neighbors: list[NeighborResult]) -> Table:
             f"{neighbor.score:.4f}",
         )
     return table
+
+
+def _open_repository(project_dir: Path) -> Repository:
+    connection = connect_database(project_dir)
+    initialize_database(connection)
+    return Repository(connection, resolve_database_path(project_dir))
 
 
 def _default_project_toml(project_dir: Path) -> str:

@@ -34,6 +34,7 @@ def semantic_search(
     object_type: str = "document",
     limit: int = 10,
     include_missing: bool = False,
+    normalize: bool = True,
     encoder: EmbeddingEncoder | None = None,
 ) -> list[SemanticSearchResult]:
     """Search stored local vectors using a query embedding."""
@@ -49,12 +50,12 @@ def semantic_search(
         name=selected_encoder.model_name,
         dimension=selected_encoder.dimension,
         distance=EMBEDDING_DISTANCE,
-        config={"normalize": True},
+        config={"normalize": normalize},
     )
     query_vector = selected_encoder.encode(
         [query],
         batch_size=1,
-        normalize=True,
+        normalize=normalize,
     )[0]
     connection = connect_database(project_dir)
     try:

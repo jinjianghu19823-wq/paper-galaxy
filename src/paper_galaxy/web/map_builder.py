@@ -5,6 +5,13 @@ from __future__ import annotations
 import math
 from pathlib import Path
 
+from paper_galaxy.explain.clusters import clusters_payload
+from paper_galaxy.explain.labels import (
+    apply_label_overrides,
+    fallback_cluster_labels,
+    label_clusters_ctfidf,
+)
+from paper_galaxy.explain.models import ClusterLabel
 from paper_galaxy.ml.cluster import compute_clusters
 from paper_galaxy.ml.labels import label_clusters
 from paper_galaxy.ml.layout import compute_layout
@@ -48,6 +55,7 @@ def build_map_payload(
             "documents": [],
             "points": [],
             "cluster_labels": {},
+            "clusters": [],
             "stats": _stats_payload(stats),
             "warnings": warnings,
         }
@@ -69,7 +77,15 @@ def build_map_payload(
     _, matrix, terms = compute_tfidf([document.text for document in documents])
     coordinates = compute_layout(matrix, seed=seed)
     cluster_ids = compute_clusters(matrix, requested=clusters, seed=seed)
-    cluster_labels = label_clusters(matrix, cluster_ids, terms)
+    cluster_labels = _cluster_label_metadata(
+        project_dir=project_dir,
+        documents=documents,
+        cluster_ids=cluster_ids,
+        matrix=matrix,
+        terms=terms,
+        warnings=warnings,
+    )
+    cluster_by_id = {label.cluster_id: label for label in cluster_labels}
     document_neighbors = compute_neighbors(
         matrix,
         documents,
@@ -82,7 +98,8 @@ def build_map_payload(
             x=_finite(coordinates[index][0]),
             y=_finite(coordinates[index][1]),
             cluster_id=cluster_ids[index],
-            cluster_label=cluster_labels[cluster_ids[index]],
+            cluster_label=cluster_by_id[cluster_ids[index]].display_label,
+            cluster_signature=cluster_by_id[cluster_ids[index]].cluster_signature,
             nearest_neighbors=document_neighbors[document.id],
             top_terms=document_terms[index],
         )
@@ -93,12 +110,39 @@ def build_map_payload(
         "documents": [_document_payload(document) for document in indexed_documents],
         "points": [_point_payload(point) for point in points],
         "cluster_labels": {
-            str(cluster_id): label
-            for cluster_id, label in sorted(cluster_labels.items())
+            str(label.cluster_id): label.display_label
+            for label in sorted(cluster_labels, key=lambda item: item.cluster_id)
         },
+        "clusters": clusters_payload(cluster_labels),
         "stats": _stats_payload(stats),
         "warnings": warnings,
     }
+
+
+def _cluster_label_metadata(
+    *,
+    project_dir: Path,
+    documents: list[Document],
+    cluster_ids: list[int],
+    matrix: object,
+    terms: list[str],
+    warnings: list[str],
+) -> list[ClusterLabel]:
+    try:
+        labels = label_clusters_ctfidf(documents, cluster_ids)
+    except Exception as exc:
+        simple_labels = label_clusters(matrix, cluster_ids, terms)
+        labels = fallback_cluster_labels(documents, cluster_ids, simple_labels)
+        warnings.append(f"Cluster label evidence fell back to simple labels: {exc}")
+    signatures = [label.cluster_signature for label in labels]
+    connection = connect_database(project_dir)
+    try:
+        initialize_database(connection)
+        repository = Repository(connection, resolve_database_path(project_dir))
+        overrides = repository.get_cluster_label_overrides(signatures)
+    finally:
+        connection.close()
+    return apply_label_overrides(labels, overrides)
 
 
 def _limit_warnings(
@@ -132,6 +176,7 @@ def _point_payload(point: MapPoint) -> dict[str, object]:
         "y": point.y,
         "cluster_id": point.cluster_id,
         "cluster_label": point.cluster_label,
+        "cluster_signature": point.cluster_signature,
         "top_terms": point.top_terms,
         "nearest_neighbors": [
             {

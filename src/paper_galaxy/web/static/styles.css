@@ -390,12 +390,58 @@ input[type="range"] {
 
 .legend-item {
   display: grid;
-  grid-template-columns: 12px 1fr auto;
-  align-items: center;
-  min-height: 25px;
+  grid-template-columns: 12px minmax(0, 1fr) auto;
+  align-items: start;
+  min-height: 30px;
   gap: 0.5rem;
   color: var(--muted);
   font-size: 0.78rem;
+}
+
+.legend-body {
+  display: grid;
+  min-width: 0;
+  gap: 0.22rem;
+}
+
+.legend-label {
+  color: var(--ink);
+  font-weight: 720;
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+}
+
+.legend-meta {
+  color: var(--quiet);
+  font-size: 0.68rem;
+}
+
+.legend-actions,
+.cluster-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.28rem;
+  flex-wrap: wrap;
+}
+
+.cluster-editor {
+  display: grid;
+  grid-column: 1 / -1;
+  gap: 0.38rem;
+  margin-top: 0.38rem;
+}
+
+.cluster-editor-actions {
+  display: flex;
+  gap: 0.32rem;
+}
+
+.cluster-editor-error {
+  min-height: 1rem;
+  margin: 0;
+  color: var(--danger);
+  font-size: 0.72rem;
+  line-height: 1.3;
 }
 
 .swatch {
@@ -408,6 +454,13 @@ input[type="range"] {
 .legend-count {
   color: var(--quiet);
   font-size: 0.7rem;
+}
+
+.tiny-button,
+.why-button {
+  padding: 0.32rem 0.42rem;
+  font-size: 0.68rem;
+  white-space: nowrap;
 }
 
 .graph-stage {
@@ -630,7 +683,8 @@ input[type="range"] {
   flex: 0 0 auto;
 }
 
-.term-list {
+.term-list,
+.chip-row {
   display: flex;
   flex-wrap: wrap;
   gap: 0.38rem;
@@ -639,13 +693,34 @@ input[type="range"] {
   list-style: none;
 }
 
-.term-list li {
+.term-list li,
+.chip {
   border: 1px solid var(--border);
   border-radius: 6px;
   background: var(--bg-quiet);
   color: var(--muted);
   font-size: 0.72rem;
   padding: 0.22rem 0.42rem;
+}
+
+.cluster-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.cluster-title-row strong {
+  overflow-wrap: anywhere;
+}
+
+.source-pill {
+  flex: 0 0 auto;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--quiet);
+  font-size: 0.66rem;
+  padding: 0.16rem 0.38rem;
 }
 
 .inspector-section {
@@ -666,6 +741,20 @@ input[type="range"] {
   padding: 0.55rem;
 }
 
+.neighbor-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: stretch;
+  gap: 0.42rem;
+}
+
+.pair-match {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-quiet);
+  padding: 0.56rem;
+}
+
 .chunk {
   border: 1px solid var(--border);
   border-radius: 6px;
@@ -673,7 +762,8 @@ input[type="range"] {
   padding: 0.6rem;
 }
 
-.chunk p {
+.chunk p,
+.pair-match p {
   margin: 0.28rem 0 0;
   color: var(--ink);
   font-size: 0.78rem;

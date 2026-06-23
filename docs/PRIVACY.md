@@ -13,6 +13,10 @@ Paper Galaxy is local-first by default.
   optional local JSON sidecar. These reports omit full extracted text.
 - Phase 5 can store optional dense document/chunk vectors locally in SQLite.
   Vectors are generated only when the user runs `paper-galaxy embed`.
+- Phase 6 stores manual cluster label overrides locally in SQLite only.
+- Phase 6 pair explanations expose shared terms and short chunk excerpts in the
+  local CLI or browser app. These excerpts may still contain sensitive source
+  text, but they are not uploaded by Paper Galaxy.
 - Missing and unindexed records may preserve previously extracted local text and
   chunks so the local index can recover document history without rescanning
   unavailable content.
@@ -31,6 +35,8 @@ Paper Galaxy is local-first by default.
 - Optional embeddings run locally only. Remote Sentence Transformer model names
   are rejected by default to avoid hidden downloads; using
   `--allow-model-download` is an explicit user opt-in to model resolution.
+- Cluster labels and pair explanations are generated locally from indexed text;
+  there is no mandatory LLM or remote labeling service.
 - Choosing a non-loopback host may expose the app to other devices on the local
   network.
 - `.paper-galaxy/` is local project state and is gitignored.

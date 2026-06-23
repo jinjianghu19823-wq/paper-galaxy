@@ -62,6 +62,12 @@ def test_static_graph_assets_include_dynamic_interaction_primitives() -> None:
         "localStorage",
         "resetLayout",
         "nearest_neighbors",
+        "cluster_signature",
+        "renameCluster",
+        "resetClusterLabel",
+        "explainPair",
+        "Why?",
+        "pair-explanation",
     ]
     for token in required_tokens:
         assert token in combined

@@ -91,6 +91,31 @@ def test_semantic_search_uses_stored_document_vectors(tmp_path: Path) -> None:
     assert any("neural_operators" in result.relative_path for result in results)
 
 
+def test_semantic_search_can_use_unnormalized_vector_identity(tmp_path: Path) -> None:
+    corpus = copy_tiny_corpus(tmp_path)
+    index_corpus(corpus, project_dir=tmp_path, min_chars=40)
+    encoder = FakeEncoder()
+    build_embeddings(
+        project_dir=tmp_path,
+        model="unused",
+        object_type="document",
+        encoder=encoder,
+        normalize=False,
+    )
+
+    results = semantic_search(
+        "neural operator",
+        project_dir=tmp_path,
+        model="unused",
+        encoder=encoder,
+        limit=5,
+        normalize=False,
+    )
+
+    assert results
+    assert results[0].score >= 0.99
+
+
 def test_compare_neighbors_returns_tfidf_dense_and_hybrid_lists(
     tmp_path: Path,
 ) -> None:
@@ -114,6 +139,33 @@ def test_compare_neighbors_returns_tfidf_dense_and_hybrid_lists(
 
     assert comparison.target.relative_path.endswith("fourier_neural_operator.md")
     assert comparison.tfidf_neighbors
+    assert comparison.dense_neighbors
+    assert comparison.hybrid_neighbors
+
+
+def test_compare_neighbors_can_use_unnormalized_vector_identity(
+    tmp_path: Path,
+) -> None:
+    corpus = copy_tiny_corpus(tmp_path)
+    index_corpus(corpus, project_dir=tmp_path, min_chars=40)
+    encoder = FakeEncoder()
+    build_embeddings(
+        project_dir=tmp_path,
+        model="unused",
+        object_type="document",
+        encoder=encoder,
+        normalize=False,
+    )
+
+    comparison = compare_neighbors(
+        "neural_operators/fourier_neural_operator.md",
+        project_dir=tmp_path,
+        model="unused",
+        encoder=encoder,
+        limit=3,
+        normalize=False,
+    )
+
     assert comparison.dense_neighbors
     assert comparison.hybrid_neighbors
 

@@ -146,6 +146,16 @@ CREATE TABLE IF NOT EXISTS vector_indexes (
   FOREIGN KEY(model_id) REFERENCES embedding_models(id)
 );
 
+CREATE TABLE IF NOT EXISTS cluster_label_overrides (
+  id TEXT PRIMARY KEY,
+  cluster_signature TEXT NOT NULL UNIQUE,
+  label TEXT NOT NULL,
+  source TEXT NOT NULL DEFAULT 'manual',
+  metadata_json TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
 CREATE VIRTUAL TABLE IF NOT EXISTS documents_fts USING fts5(
   document_id UNINDEXED,
   title,
@@ -191,3 +201,6 @@ CREATE INDEX IF NOT EXISTS idx_vectors_text_sha256
 
 CREATE INDEX IF NOT EXISTS idx_embedding_runs_model_started_at
   ON embedding_runs(model_id, started_at);
+
+CREATE INDEX IF NOT EXISTS idx_cluster_label_overrides_signature
+  ON cluster_label_overrides(cluster_signature);

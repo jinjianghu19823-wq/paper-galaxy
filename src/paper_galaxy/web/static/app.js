@@ -4,7 +4,9 @@ const API = {
   stats: "/api/stats",
   map: "/api/map",
   search: "/api/search",
-  documents: "/api/documents"
+  documents: "/api/documents",
+  clusters: "/api/clusters",
+  explainPair: "/api/explain/pair"
 };
 
 const THEME_KEY = "paper-galaxy:theme";
@@ -227,7 +229,7 @@ function renderMap() {
     els.mapSvg.hidden = true;
     const message = (payload.warnings && payload.warnings[0]) || "No active indexed documents found.";
     showEmptyState("No active documents", message, null);
-    renderLegend(points, payload.cluster_labels || {});
+    renderLegend(points, payload.cluster_labels || {}, payload.clusters || []);
     els.mapCaption.textContent = "0 active documents";
     if (state.graph) {
       state.graph.clear();
@@ -237,7 +239,7 @@ function renderMap() {
 
   els.mapEmpty.hidden = true;
   els.mapSvg.hidden = false;
-  renderLegend(points, payload.cluster_labels || {});
+  renderLegend(points, payload.cluster_labels || {}, payload.clusters || []);
   state.graph.setData(payload, { layoutKey: graphLayoutKey(payload) });
   state.graph.setFilter(state.filter);
   state.graph.setSelected(state.selectedId);
@@ -253,29 +255,75 @@ function updateMapCaption(visible, total) {
   els.mapCaption.textContent = warnings.length ? `${base} - ${warnings[0]}` : base;
 }
 
-function renderLegend(points, clusterLabels) {
+function renderLegend(points, clusterLabels, clusters) {
   const counts = new Map();
   for (const point of points) {
     counts.set(point.cluster_id, (counts.get(point.cluster_id) || 0) + 1);
   }
   els.clusterLegend.replaceChildren();
-  const ids = Object.keys(clusterLabels).sort((a, b) => Number(a) - Number(b));
+  const clusterRows = clusters && clusters.length
+    ? clusters.slice().sort((a, b) => Number(a.cluster_id) - Number(b.cluster_id))
+    : Object.keys(clusterLabels)
+      .sort((a, b) => Number(a) - Number(b))
+      .map((id) => ({
+        cluster_id: Number(id),
+        display_label: clusterLabels[id],
+        generated_label: clusterLabels[id],
+        source: "generated",
+        top_terms: [],
+        cluster_signature: ""
+      }));
+  const ids = clusterRows.map((cluster) => String(cluster.cluster_id));
   if (!ids.length) {
     appendText(els.clusterLegend, "p", "No clusters yet.", "muted");
     return;
   }
-  for (const id of ids) {
+  for (const cluster of clusterRows) {
+    const id = String(cluster.cluster_id);
     const row = document.createElement("div");
     row.className = "legend-item";
     const swatch = document.createElement("span");
     swatch.className = "swatch";
     swatch.style.background = window.PaperGalaxyGraph.clusterColor(Number(id));
+    const body = document.createElement("div");
+    body.className = "legend-body";
     const label = document.createElement("span");
-    label.textContent = clusterLabels[id];
-    const count = document.createElement("span");
-    count.className = "legend-count";
-    count.textContent = String(counts.get(Number(id)) || 0);
-    row.append(swatch, label, count);
+    label.className = "legend-label";
+    label.textContent = cluster.display_label || clusterLabels[id] || `Cluster ${id}`;
+    const meta = document.createElement("span");
+    meta.className = "legend-meta";
+    meta.textContent = `${cluster.source || "generated"} - ${counts.get(Number(id)) || 0} docs`;
+    body.append(label, meta);
+    const terms = Array.isArray(cluster.top_terms)
+      ? cluster.top_terms.map((item) => item.term).filter(Boolean).slice(0, 3)
+      : [];
+    if (terms.length) {
+      const termRow = document.createElement("div");
+      termRow.className = "chip-row";
+      for (const term of terms) {
+        appendText(termRow, "span", term, "chip");
+      }
+      body.append(termRow);
+    }
+    const actions = document.createElement("div");
+    actions.className = "legend-actions";
+    if (cluster.cluster_signature) {
+      const rename = document.createElement("button");
+      rename.type = "button";
+      rename.className = "tiny-button";
+      rename.textContent = "Rename";
+      rename.addEventListener("click", () => renameCluster(cluster, row));
+      actions.append(rename);
+      if (cluster.source === "manual") {
+        const reset = document.createElement("button");
+        reset.type = "button";
+        reset.className = "tiny-button";
+        reset.textContent = "Reset";
+        reset.addEventListener("click", () => resetClusterLabel(cluster.cluster_signature));
+        actions.append(reset);
+      }
+    }
+    row.append(swatch, body, actions);
     els.clusterLegend.append(row);
   }
 }
@@ -332,6 +380,7 @@ function renderInspector() {
     appendText(els.inspector, "div", metadata.local_path, "meta-row");
   }
   renderPinControl(metadata.document_id);
+  renderClusterInspector(point);
 
   const terms = point ? point.top_terms || [] : [];
   const termsSection = inspectorSection("Top terms");
@@ -351,18 +400,31 @@ function renderInspector() {
   const neighbors = point ? point.nearest_neighbors || [] : [];
   if (neighbors.length) {
     for (const neighbor of neighbors) {
+      const row = document.createElement("div");
+      row.className = "neighbor-row";
       const button = document.createElement("button");
       button.type = "button";
       button.className = "neighbor-button";
       button.addEventListener("click", () => selectDocument(neighbor.document_id));
       appendText(button, "span", neighbor.title, "neighbor-title");
       appendText(button, "span", `${neighbor.relative_path} - ${neighbor.score}`, "neighbor-path");
-      neighborsSection.append(button);
+      const why = document.createElement("button");
+      why.type = "button";
+      why.className = "why-button";
+      why.textContent = "Why?";
+      why.addEventListener("click", () => loadPairExplanation(metadata.document_id, neighbor.document_id));
+      row.append(button, why);
+      neighborsSection.append(row);
     }
   } else {
     appendText(neighborsSection, "p", "No nearest neighbors available.", "muted");
   }
   els.inspector.append(neighborsSection);
+
+  const pairSection = inspectorSection("Why nearby?");
+  pairSection.id = "pair-explanation";
+  appendText(pairSection, "p", "Choose Why? beside a neighbor.", "muted");
+  els.inspector.append(pairSection);
 
   const chunksSection = inspectorSection(`Chunks (${detail.chunk_count})`);
   const chunks = detail.chunks || [];
@@ -380,6 +442,173 @@ function renderInspector() {
     appendText(chunksSection, "p", "No chunk preview available.", "muted");
   }
   els.inspector.append(chunksSection);
+}
+
+function renderClusterInspector(point) {
+  if (!point) {
+    return;
+  }
+  const cluster = findCluster(point.cluster_signature);
+  const section = inspectorSection("Cluster");
+  const titleRow = document.createElement("div");
+  titleRow.className = "cluster-title-row";
+  appendText(titleRow, "strong", point.cluster_label || "Cluster");
+  appendText(titleRow, "span", cluster ? cluster.source : "generated", "source-pill");
+  section.append(titleRow);
+  if (cluster && cluster.source === "manual" && cluster.generated_label) {
+    appendText(section, "p", `Generated: ${cluster.generated_label}`, "muted");
+  }
+  appendText(section, "div", point.cluster_signature || "", "meta-row");
+  const actions = document.createElement("div");
+  actions.className = "cluster-actions";
+  const rename = document.createElement("button");
+  rename.type = "button";
+  rename.textContent = "Rename";
+  rename.addEventListener("click", () => renameCluster(cluster || point, section));
+  actions.append(rename);
+  if (cluster && cluster.source === "manual") {
+    const reset = document.createElement("button");
+    reset.type = "button";
+    reset.textContent = "Reset";
+    reset.addEventListener("click", () => resetClusterLabel(cluster.cluster_signature));
+    actions.append(reset);
+  }
+  section.append(actions);
+  els.inspector.append(section);
+}
+
+function renameCluster(cluster, host) {
+  const current = cluster.display_label || cluster.cluster_label || "";
+  const signature = cluster.cluster_signature;
+  if (!signature) {
+    return;
+  }
+  const existing = host.querySelector(".cluster-editor");
+  if (existing) {
+    existing.remove();
+  }
+  const form = document.createElement("form");
+  form.className = "cluster-editor";
+  const input = document.createElement("input");
+  input.type = "text";
+  input.value = current;
+  input.maxLength = 120;
+  input.setAttribute("aria-label", "Cluster label");
+  const error = document.createElement("p");
+  error.className = "cluster-editor-error";
+  const save = document.createElement("button");
+  save.type = "submit";
+  save.textContent = "Save";
+  const cancel = document.createElement("button");
+  cancel.type = "button";
+  cancel.textContent = "Cancel";
+  cancel.addEventListener("click", () => form.remove());
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const label = input.value.trim();
+    if (!label || label.length > 120) {
+      error.textContent = "Cluster label must be 1-120 characters.";
+      return;
+    }
+    await saveClusterLabel(signature, label);
+  });
+  const actions = document.createElement("div");
+  actions.className = "cluster-editor-actions";
+  actions.append(save, cancel);
+  form.append(input, actions, error);
+  host.append(form);
+  input.focus();
+  input.select();
+}
+
+async function saveClusterLabel(signature, label) {
+  await fetchJson(`${API.clusters}/${encodeURIComponent(signature)}/label`, {
+    method: "PUT",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({ label })
+  });
+  await loadMap();
+  if (state.selectedId) {
+    await selectDocument(state.selectedId);
+  }
+}
+
+async function resetClusterLabel(clusterSignature) {
+  await fetchJson(`${API.clusters}/${encodeURIComponent(clusterSignature)}/label`, {
+    method: "DELETE"
+  });
+  await loadMap();
+  if (state.selectedId) {
+    await selectDocument(state.selectedId);
+  }
+}
+
+async function loadPairExplanation(sourceId, targetId) {
+  const section = document.querySelector("#pair-explanation");
+  if (!section) {
+    return;
+  }
+  section.replaceChildren();
+  appendText(section, "h3", "Why nearby?");
+  appendText(section, "p", "Loading local explanation...", "muted");
+  const params = new URLSearchParams({
+    source: sourceId,
+    target: targetId,
+    term_limit: "8",
+    chunk_limit: "3"
+  });
+  try {
+    const payload = await fetchJson(`${API.explainPair}?${params.toString()}`);
+    renderPairExplanation(section, payload.explanation);
+  } catch (error) {
+    section.replaceChildren();
+    appendText(section, "h3", "Why nearby?");
+    appendText(section, "p", `Explanation failed: ${error.message}`, "muted");
+  }
+}
+
+function renderPairExplanation(section, explanation) {
+  section.replaceChildren();
+  appendText(section, "h3", "Why nearby?");
+  appendText(
+    section,
+    "p",
+    `${explanation.source.title} -> ${explanation.target.title}`,
+    "muted"
+  );
+  appendText(section, "div", `Lexical score ${explanation.lexical_score}`, "meta-row");
+  const terms = explanation.shared_terms || [];
+  if (terms.length) {
+    const chips = document.createElement("div");
+    chips.className = "chip-row";
+    for (const term of terms) {
+      appendText(chips, "span", term.term, "chip");
+    }
+    section.append(chips);
+  }
+  for (const match of explanation.chunk_matches || []) {
+    const block = document.createElement("div");
+    block.className = "pair-match";
+    appendText(
+      block,
+      "div",
+      `Chunks ${match.source_chunk_index} -> ${match.target_chunk_index} - ${match.score}`,
+      "chunk-meta"
+    );
+    appendText(block, "p", match.source_excerpt);
+    appendText(block, "p", match.target_excerpt);
+    section.append(block);
+  }
+  for (const warning of explanation.warnings || []) {
+    appendText(section, "p", warning, "muted");
+  }
+}
+
+function findCluster(clusterSignature) {
+  const clusters = state.map && state.map.clusters ? state.map.clusters : [];
+  return clusters.find((cluster) => cluster.cluster_signature === clusterSignature) || null;
 }
 
 function renderPinControl(documentId) {
@@ -479,10 +708,12 @@ function updateThemeToggle(theme) {
   );
 }
 
-async function fetchJson(url) {
+async function fetchJson(url, options = {}) {
   const response = await fetch(url, {
+    ...options,
     headers: {
-      Accept: "application/json"
+      Accept: "application/json",
+      ...(options.headers || {})
     }
   });
   let payload = null;

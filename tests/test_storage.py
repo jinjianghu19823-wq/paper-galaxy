@@ -3,6 +3,7 @@ from pathlib import Path
 
 from paper_galaxy.config import _validate_model
 from paper_galaxy.storage.migrations import initialize_database
+from paper_galaxy.storage.repository import Repository
 from paper_galaxy.storage.sqlite import connect_database, resolve_database_path
 
 
@@ -62,10 +63,11 @@ def test_schema_initializes_expected_tables(tmp_path: Path) -> None:
     assert "embedding_models" in tables
     assert "vectors" in tables
     assert "embedding_runs" in tables
+    assert "cluster_label_overrides" in tables
     assert "documents_fts" in tables
 
     assert version is not None
-    assert version["value"] == "3"
+    assert version["value"] == "4"
 
 
 def test_schema_upgrades_version_one_database_idempotently(tmp_path: Path) -> None:
@@ -85,6 +87,13 @@ def test_schema_upgrades_version_one_database_idempotently(tmp_path: Path) -> No
             WHERE type = 'table' AND name = 'extraction_reports'
             """
         ).fetchone()
+        override_table = connection.execute(
+            """
+            SELECT name
+            FROM sqlite_master
+            WHERE type = 'table' AND name = 'cluster_label_overrides'
+            """
+        ).fetchone()
         version = connection.execute(
             "SELECT value FROM schema_meta WHERE key = 'schema_version'"
         ).fetchone()
@@ -92,8 +101,42 @@ def test_schema_upgrades_version_one_database_idempotently(tmp_path: Path) -> No
         connection.close()
 
     assert report_table is not None
+    assert override_table is not None
     assert version is not None
-    assert version["value"] == "3"
+    assert version["value"] == "4"
+
+
+def test_cluster_label_override_repository_methods(tmp_path: Path) -> None:
+    connection = connect_database(tmp_path)
+    try:
+        initialize_database(connection)
+        repository = Repository(connection, resolve_database_path(tmp_path))
+        with connection:
+            created = repository.upsert_cluster_label_override(
+                cluster_signature="cluster_abc",
+                label="Neural Operators",
+                now="2026-01-01T00:00:00+00:00",
+            )
+            updated = repository.upsert_cluster_label_override(
+                cluster_signature="cluster_abc",
+                label="Operator Learning",
+                metadata={"note": "manual"},
+                now="2026-01-02T00:00:00+00:00",
+            )
+            labels = repository.get_cluster_label_overrides(["cluster_abc", "missing"])
+            rows = repository.list_cluster_label_overrides()
+            deleted = repository.delete_cluster_label_override("cluster_abc")
+            deleted_again = repository.delete_cluster_label_override("cluster_abc")
+    finally:
+        connection.close()
+
+    assert created["label"] == "Neural Operators"
+    assert updated["label"] == "Operator Learning"
+    assert updated["metadata"] == {"note": "manual"}
+    assert labels == {"cluster_abc": "Operator Learning"}
+    assert rows[0]["cluster_signature"] == "cluster_abc"
+    assert deleted is True
+    assert deleted_again is False
 
 
 def test_sqlite_build_supports_fts5(tmp_path: Path) -> None:

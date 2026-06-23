@@ -4,19 +4,22 @@ Paper Galaxy is a local-first research cartography tool for turning a personal
 research corpus into an interactive map of documents, clusters, and conceptual
 neighborhoods.
 
-Current status: Phase 5 optional semantic embeddings. This repository can scan a
+Current status: Phase 6 explainability and labeling. This repository can scan a
 local sample corpus, export a self-contained offline `galaxy.html`, index
 documents and chunks into local SQLite, rerun indexing incrementally, search
 indexed text with SQLite FTS5, and serve a local browser app with an
 Obsidian-inspired dynamic document graph for browsing the indexed corpus. It
 also records extraction quality reports, improves Markdown/LaTeX/PDF parsing,
 supports opt-in local OCR for image files, and can optionally store local dense
-document/chunk embeddings for semantic search and neighbor comparison.
+document/chunk embeddings for semantic search and neighbor comparison. Cluster
+labels are generated from inspectable local terms, can be manually renamed in
+SQLite, and document-neighbor explanations can show shared terms and matching
+chunk excerpts.
 
-Eventually, Paper Galaxy will let a user point the app at folders or a Zotero
-library, represent each document as a point in a 2D map, place similar documents
-near each other, label clusters, and explain why documents are neighbors. The
-planned pipeline is:
+Eventually, Paper Galaxy will let a user point the app at folders or later
+integrations, represent each document as a point in a 2D map, place similar
+documents near each other, label clusters, and explain why documents are
+neighbors. The planned pipeline is:
 
 ```text
 files -> extraction -> cleaning -> records -> vectors -> graph -> map -> clusters -> UI
@@ -24,7 +27,8 @@ files -> extraction -> cleaning -> records -> vectors -> graph -> map -> cluster
 
 Intentionally not implemented yet: UMAP as a required path, full TeX parsing,
 cloud OCR, mandatory OCR system services, React, Node build tooling, Zotero
-integration, desktop packaging, cloud sync, accounts, telemetry, and LLM chat.
+integration, desktop packaging, cloud sync, accounts, telemetry, LLM chat, and
+mandatory LLM labeling.
 
 Paper Galaxy is local-first by default. There is no account, no telemetry, no
 automatic upload, and no cloud dependency. Generated HTML is local and offline.
@@ -85,6 +89,10 @@ paper-galaxy embed --project-dir . --model /path/to/local/sentence-transformer-m
 paper-galaxy semantic-search "operator learning for PDEs" --project-dir . --model /path/to/local/sentence-transformer-model
 paper-galaxy compare-neighbors neural_operators/fourier_neural_operator.md --project-dir . --model /path/to/local/sentence-transformer-model
 paper-galaxy vector-stats --project-dir .
+paper-galaxy clusters --project-dir .
+paper-galaxy explain-pair neural_operators/fourier_neural_operator.md neural_operators/deep_operator_network.txt --project-dir .
+paper-galaxy rename-cluster CLUSTER_SIGNATURE "Neural Operators" --project-dir .
+paper-galaxy reset-cluster-label CLUSTER_SIGNATURE --project-dir .
 paper-galaxy serve --project-dir .
 paper-galaxy extract-preview examples/tiny_corpus/neural_operators/fourier_neural_operator.md
 ```
@@ -155,8 +163,18 @@ characters of extracted text. Chunk vectors use chunk text capped by
 searches stored document or chunk vectors. It does not build vectors or download
 models implicitly. `paper-galaxy compare-neighbors` shows three rankings for a
 document: TF-IDF cosine neighbors, dense embedding neighbors, and a configurable
-hybrid score. `paper-galaxy vector-stats` reports registered models, vector
+hybrid score. If vectors were built with `--no-normalize`, pass `--no-normalize`
+to `semantic-search` and `compare-neighbors` so they use the matching local
+model identity. `paper-galaxy vector-stats` reports registered models, vector
 counts, and the last embedding run.
+
+Phase 6 adds local explainability commands. `paper-galaxy clusters` lists
+generated cluster labels, stable cluster signatures, representative documents,
+and top evidence terms. `paper-galaxy rename-cluster` and
+`paper-galaxy reset-cluster-label` write or remove manual label overrides in the
+local SQLite database only. `paper-galaxy explain-pair SOURCE TARGET` explains
+why two indexed documents are nearby using shared TF-IDF terms and matching
+chunk excerpts. It does not use an LLM and does not print full extracted text.
 
 `paper-galaxy serve` starts the Phase 3 local web app on `127.0.0.1` by default.
 Install app dependencies with:
@@ -178,10 +196,11 @@ with no CDN assets. It does not upload documents, collect telemetry, or run
 indexing from the browser UI. Indexing remains a CLI command.
 
 The local app graph is dynamic in Phase 3.1. `/api/map` still provides the
-canonical active documents, TF-IDF nearest neighbors, cluster labels, and
-initial x/y coordinates. The browser then runs a dependency-free vanilla
-JavaScript force simulation so the map can move subtly, pan and zoom, fade
-unrelated nodes on hover, and keep semantic links attached while nodes move.
+canonical active documents, TF-IDF nearest neighbors, cluster labels, cluster
+signatures, explanation-ready cluster metadata, and initial x/y coordinates.
+The browser then runs a dependency-free vanilla JavaScript force simulation so
+the map can move subtly, pan and zoom, fade unrelated nodes on hover, and keep
+semantic links attached while nodes move.
 Users can drag nodes to pin manual positions, double-click or use the inspector
 to unpin, and use reset view or reset layout controls. Manual node positions
 and graph display settings are stored only in browser `localStorage`, keyed by
@@ -192,6 +211,8 @@ an explicit graph setting.
 
 ## Next Phase
 
-The next planned implementation phase is Phase 6: explainability and labeling.
-There is still no cloud dependency, Zotero integration, desktop packaging,
-account system, telemetry, LLM chat, or React/Node frontend in Phase 5.
+The next planned implementation phase is Phase 7: professionalization,
+packaging, stable map runs, export/import, and extension boundaries. There is
+still no cloud dependency, Zotero integration, desktop packaging, account
+system, telemetry, LLM chat, mandatory LLM labeling, or React/Node frontend in
+Phase 6.

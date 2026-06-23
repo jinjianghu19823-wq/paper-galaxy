@@ -10,7 +10,7 @@ exports into an interactive 2D research universe.
 
 - `src/paper_galaxy/`: Python package, CLI, scanner, extractors, pipeline,
   ML helpers, static exporters, chunking, SQLite storage, indexer, search,
-  optional embeddings, and local web app.
+  optional embeddings, explainability helpers, and local web app.
 - `tests/`: pytest coverage for imports and Phase 0/Phase 1/Phase 2 behavior.
 - `examples/tiny_corpus/`: synthetic local corpus for scan smoke tests.
 - `docs/`: roadmap, architecture, decisions, and privacy notes.
@@ -18,12 +18,13 @@ exports into an interactive 2D research universe.
 
 ## Current Phase
 
-This repository is in Phase 5: optional local semantic embeddings. It can export
+This repository is in Phase 6: explainability and labeling. It can export
 static offline HTML, persist document/chunk records and extraction reports in
 SQLite, search local FTS, serve a local read-only browser app, optionally run
-local image OCR, and optionally store local dense document/chunk vectors when
-the user explicitly runs embedding commands. Do not implement Phase 6 or later
-phases unless explicitly asked.
+local image OCR, optionally store local dense document/chunk vectors, generate
+inspectable cluster labels, store local manual cluster label overrides, and
+explain nearby documents with shared terms and chunk excerpts. Do not implement
+Phase 7 or later phases unless explicitly asked.
 
 ## Commands
 
@@ -41,6 +42,10 @@ phases unless explicitly asked.
 - `paper-galaxy semantic-search "operator learning for PDEs" --project-dir . --model /path/to/local/sentence-transformer-model`
 - `paper-galaxy compare-neighbors neural_operators/fourier_neural_operator.md --project-dir . --model /path/to/local/sentence-transformer-model`
 - `paper-galaxy vector-stats --project-dir .`
+- `paper-galaxy clusters --project-dir .`
+- `paper-galaxy explain-pair neural_operators/fourier_neural_operator.md neural_operators/deep_operator_network.txt --project-dir .`
+- `paper-galaxy rename-cluster CLUSTER_SIGNATURE "Neural Operators" --project-dir .`
+- `paper-galaxy reset-cluster-label CLUSTER_SIGNATURE --project-dir .`
 - `paper-galaxy serve --project-dir .`
 - `paper-galaxy extract-preview examples/tiny_corpus/neural_operators/fourier_neural_operator.md`
 
@@ -54,7 +59,11 @@ phases unless explicitly asked.
 - Do not implement future phases unless asked.
 - Do not add React, Node build tooling, desktop packaging, cloud sync, accounts,
   telemetry, cloud OCR, Zotero integration, LLM chat, cloud embedding APIs, or
-  other Phase 6+ features unless a future task explicitly asks for that phase.
+  other Phase 7+ features unless a future task explicitly asks for that phase.
+- Cluster labels and pair explanations must remain local and inspectable. Do
+  not add mandatory LLM labeling or remote explanation services.
+- Pair explanations may return short excerpts, but should not return full
+  extracted document text.
 - Optional embeddings must stay local-first. Do not allow hidden model
   downloads; require a local model path unless the user explicitly opts in with
   `--allow-model-download`.

@@ -60,6 +60,7 @@ class MapPoint:
     y: float
     cluster_id: int
     cluster_label: str
+    cluster_signature: str = ""
     nearest_neighbors: list[Neighbor] = field(default_factory=list)
     top_terms: list[str] = field(default_factory=list)
 

@@ -7,6 +7,7 @@ from typer.testing import CliRunner
 
 from paper_galaxy.cli import app
 from paper_galaxy.errors import MissingDependencyError
+from paper_galaxy.web.map_builder import build_map_payload
 
 
 def test_doctor_exits_successfully() -> None:
@@ -313,6 +314,19 @@ def test_phase_five_command_help_exits_successfully() -> None:
         assert result.exit_code == 0
 
 
+def test_phase_six_command_help_exits_successfully() -> None:
+    runner = CliRunner()
+
+    for command in (
+        "clusters",
+        "explain-pair",
+        "rename-cluster",
+        "reset-cluster-label",
+    ):
+        result = runner.invoke(app, [command, "--help"])
+        assert result.exit_code == 0
+
+
 def test_embed_rejects_remote_model_names_by_default(tmp_path: Path) -> None:
     runner = CliRunner()
 
@@ -340,3 +354,71 @@ def test_vector_stats_command_handles_empty_project(tmp_path: Path) -> None:
     assert result.exit_code == 0
     assert "Paper Galaxy Vector Stats" in result.output
     assert "Embedding models" in result.output
+
+
+def test_cluster_and_pair_cli_commands_on_tiny_corpus(tmp_path: Path) -> None:
+    runner = CliRunner()
+    index = runner.invoke(
+        app,
+        [
+            "index",
+            "examples/tiny_corpus",
+            "--project-dir",
+            str(tmp_path),
+            "--min-chars",
+            "40",
+        ],
+    )
+    payload = build_map_payload(project_dir=tmp_path)
+    signature = payload["clusters"][0]["cluster_signature"]
+
+    clusters = runner.invoke(app, ["clusters", "--project-dir", str(tmp_path)])
+    rename = runner.invoke(
+        app,
+        [
+            "rename-cluster",
+            str(signature),
+            "Neural Operators",
+            "--project-dir",
+            str(tmp_path),
+        ],
+    )
+    renamed_clusters = runner.invoke(
+        app,
+        ["clusters", "--project-dir", str(tmp_path)],
+    )
+    renamed_payload = build_map_payload(project_dir=tmp_path)
+    reset = runner.invoke(
+        app,
+        ["reset-cluster-label", str(signature), "--project-dir", str(tmp_path)],
+    )
+    explanation = runner.invoke(
+        app,
+        [
+            "explain-pair",
+            "neural_operators/fourier_neural_operator.md",
+            "neural_operators/deep_operator_network.txt",
+            "--project-dir",
+            str(tmp_path),
+            "--term-limit",
+            "4",
+            "--chunk-limit",
+            "1",
+        ],
+    )
+
+    assert index.exit_code == 0
+    assert clusters.exit_code == 0
+    assert "Paper Galaxy Clusters" in clusters.output
+    assert rename.exit_code == 0
+    assert renamed_clusters.exit_code == 0
+    assert any(
+        cluster["cluster_signature"] == signature
+        and cluster["display_label"] == "Neural Operators"
+        and cluster["source"] == "manual"
+        for cluster in renamed_payload["clusters"]
+    )
+    assert reset.exit_code == 0
+    assert explanation.exit_code == 0
+    assert "Lexical score" in explanation.output
+    assert "Shared Terms" in explanation.output

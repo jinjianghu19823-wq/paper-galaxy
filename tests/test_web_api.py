@@ -20,6 +20,7 @@ def test_health_and_missing_database_state(tmp_path: Path) -> None:
     health = client.get("/api/health")
     stats = client.get("/api/stats")
     map_response = client.get("/api/map")
+    clusters_response = client.get("/api/clusters")
 
     assert health.status_code == 200
     assert health.json()["database_exists"] is False
@@ -28,6 +29,7 @@ def test_health_and_missing_database_state(tmp_path: Path) -> None:
     assert "paper-galaxy index" in stats.json()["error"]["command"]
     assert map_response.status_code == 200
     assert map_response.json()["points"] == []
+    assert clusters_response.json()["clusters"] == []
     assert client.get("/api/vector-stats").json()["vector_stats"]["models"] == []
 
 
@@ -69,6 +71,8 @@ def test_indexed_database_endpoints_return_map_and_documents(
     assert len(map_data["documents"]) == 8
     assert len(map_data["points"]) == 8
     assert map_data["cluster_labels"]
+    assert map_data["clusters"]
+    assert all(point["cluster_signature"] for point in map_data["points"])
     assert documents["documents"]
     assert detail["metadata"]["document_id"] == first_document_id
     assert detail["chunk_count"] >= 1
@@ -114,6 +118,83 @@ def test_map_points_are_finite_and_neighbors_reference_returned_documents(
         assert point["document_id"] in document_ids
         for neighbor in point["nearest_neighbors"]:
             assert neighbor["document_id"] in document_ids
+
+
+def test_cluster_endpoints_rename_reset_and_reject_bad_labels(
+    tmp_path: Path,
+) -> None:
+    corpus = copy_tiny_corpus(tmp_path)
+    index_corpus(corpus, project_dir=tmp_path, min_chars=40)
+    client = TestClient(create_app(tmp_path, seed=11, neighbors=4))
+    map_data = client.get("/api/map").json()
+    signature = map_data["clusters"][0]["cluster_signature"]
+
+    bad_empty = client.put(f"/api/clusters/{signature}/label", json={"label": "  "})
+    bad_long = client.put(
+        f"/api/clusters/{signature}/label",
+        json={"label": "x" * 121},
+    )
+    renamed = client.put(
+        f"/api/clusters/{signature}/label",
+        json={"label": "Neural Operators"},
+    )
+    clusters = client.get("/api/clusters").json()
+    updated_map = client.get("/api/map").json()
+    reset = client.delete(f"/api/clusters/{signature}/label")
+    reset_clusters = client.get("/api/clusters").json()
+
+    assert bad_empty.status_code == 422
+    assert bad_long.status_code == 422
+    assert renamed.status_code == 200
+    assert any(
+        cluster["display_label"] == "Neural Operators" and cluster["source"] == "manual"
+        for cluster in clusters["clusters"]
+    )
+    assert any(
+        point["cluster_signature"] == signature
+        and point["cluster_label"] == "Neural Operators"
+        for point in updated_map["points"]
+    )
+    assert reset.status_code == 200
+    assert any(
+        cluster["cluster_signature"] == signature and cluster["source"] == "generated"
+        for cluster in reset_clusters["clusters"]
+    )
+
+
+def test_pair_explain_endpoint_handles_good_and_bad_document_ids(
+    tmp_path: Path,
+) -> None:
+    corpus = copy_tiny_corpus(tmp_path)
+    index_corpus(corpus, project_dir=tmp_path, min_chars=40)
+    client = TestClient(create_app(tmp_path))
+    map_data = client.get("/api/map").json()
+    point = next(point for point in map_data["points"] if point["nearest_neighbors"])
+    neighbor = point["nearest_neighbors"][0]
+
+    response = client.get(
+        "/api/explain/pair",
+        params={
+            "source": point["document_id"],
+            "target": neighbor["document_id"],
+            "term_limit": 5,
+            "chunk_limit": 2,
+        },
+    )
+    missing = client.get(
+        "/api/explain/pair",
+        params={"source": "missing", "target": neighbor["document_id"]},
+    )
+    invalid = client.get("/api/explain/pair", params={"source": point["document_id"]})
+
+    assert response.status_code == 200
+    payload = response.json()["explanation"]
+    assert payload["shared_terms"]
+    assert payload["chunk_matches"]
+    assert "source_excerpt" in payload["chunk_matches"][0]
+    assert missing.status_code == 404
+    assert missing.json()["error"]["code"] == "document_not_found"
+    assert invalid.status_code == 422
 
 
 def test_map_excludes_missing_and_unindexed_documents_and_search_can_include_missing(

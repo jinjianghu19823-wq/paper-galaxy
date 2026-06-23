@@ -6,7 +6,10 @@ import hashlib
 import json
 import re
 import sqlite3
+from collections.abc import Iterable, Mapping
+from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 from paper_galaxy.embeddings.models import EmbeddingModelRecord, VectorRecord
 from paper_galaxy.records import (
@@ -491,6 +494,96 @@ class Repository:
             ],
         }
 
+    def get_cluster_label_overrides(
+        self, cluster_signatures: Iterable[str]
+    ) -> dict[str, str]:
+        """Return manual labels keyed by deterministic cluster signature."""
+
+        signatures = tuple(sorted({signature for signature in cluster_signatures}))
+        if not signatures:
+            return {}
+        placeholders = ", ".join("?" for _ in signatures)
+        rows = self.connection.execute(
+            f"""
+            SELECT cluster_signature, label
+            FROM cluster_label_overrides
+            WHERE cluster_signature IN ({placeholders})
+            """,
+            signatures,
+        ).fetchall()
+        return {str(row["cluster_signature"]): str(row["label"]) for row in rows}
+
+    def list_cluster_label_overrides(self) -> list[dict[str, object]]:
+        """List locally stored cluster label overrides."""
+
+        rows = self.connection.execute(
+            """
+            SELECT *
+            FROM cluster_label_overrides
+            ORDER BY updated_at DESC, cluster_signature
+            """
+        ).fetchall()
+        return [_cluster_label_override_payload(row) for row in rows]
+
+    def upsert_cluster_label_override(
+        self,
+        *,
+        cluster_signature: str,
+        label: str,
+        source: str = "manual",
+        metadata: Mapping[str, Any] | None = None,
+        now: str | None = None,
+    ) -> dict[str, object]:
+        """Insert or update a local manual cluster label override."""
+
+        timestamp = now or _utc_now()
+        metadata_json = json.dumps(dict(metadata or {}), sort_keys=True)
+        override_id = _cluster_label_override_id(cluster_signature)
+        self.connection.execute(
+            """
+            INSERT INTO cluster_label_overrides(
+              id, cluster_signature, label, source, metadata_json, created_at,
+              updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(cluster_signature) DO UPDATE SET
+              label = excluded.label,
+              source = excluded.source,
+              metadata_json = excluded.metadata_json,
+              updated_at = excluded.updated_at
+            """,
+            (
+                override_id,
+                cluster_signature,
+                label,
+                source,
+                metadata_json,
+                timestamp,
+                timestamp,
+            ),
+        )
+        row = self.connection.execute(
+            """
+            SELECT *
+            FROM cluster_label_overrides
+            WHERE cluster_signature = ?
+            """,
+            (cluster_signature,),
+        ).fetchone()
+        return _cluster_label_override_payload(row)
+
+    def delete_cluster_label_override(self, cluster_signature: str) -> bool:
+        """Delete a local cluster label override if it exists."""
+
+        cursor = self.connection.execute(
+            """
+            DELETE FROM cluster_label_overrides
+            WHERE cluster_signature = ?
+            """,
+            (cluster_signature,),
+        )
+        return cursor.rowcount > 0
+
     def touch_document(self, document_id: str, now: str) -> None:
         self.connection.execute(
             """
@@ -932,6 +1025,21 @@ def _embedding_run_payload(row: sqlite3.Row | None) -> dict[str, object] | None:
     }
 
 
+def _cluster_label_override_payload(row: sqlite3.Row | None) -> dict[str, object]:
+    if row is None:
+        return {}
+    metadata = json.loads(str(row["metadata_json"]))
+    return {
+        "id": str(row["id"]),
+        "cluster_signature": str(row["cluster_signature"]),
+        "label": str(row["label"]),
+        "source": str(row["source"]),
+        "metadata": metadata if isinstance(metadata, dict) else {},
+        "created_at": str(row["created_at"]),
+        "updated_at": str(row["updated_at"]),
+    }
+
+
 def _extraction_report_from_row(row: sqlite3.Row) -> ExtractionReport:
     warnings_raw = json.loads(str(row["warnings_json"]))
     metadata_raw = json.loads(str(row["metadata_json"]))
@@ -958,6 +1066,15 @@ def _skipped_id(scan_run_id: str, relative_path: str, reason: str) -> str:
         f"{scan_run_id}\0{relative_path}\0{reason}".encode()
     ).hexdigest()
     return f"skip_{digest[:16]}"
+
+
+def _cluster_label_override_id(cluster_signature: str) -> str:
+    digest = hashlib.sha256(cluster_signature.encode("utf-8")).hexdigest()
+    return f"cluster_label_{digest[:16]}"
+
+
+def _utc_now() -> str:
+    return datetime.now(UTC).isoformat(timespec="seconds")
 
 
 def _safe_fts_query(query: str) -> str:

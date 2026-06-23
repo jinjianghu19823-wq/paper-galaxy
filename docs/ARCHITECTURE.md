@@ -36,6 +36,10 @@ source for nearest-neighbor search and proximity explanations.
 - `ml.cluster`: conservative k-means clustering.
 - `ml.neighbors`: nearest neighbors from TF-IDF cosine similarity.
 - `ml.labels`: cluster labels from top TF-IDF terms.
+- `explain.labels`: c-TF-IDF-style cluster labels, stable cluster signatures,
+  representative documents, and manual label validation.
+- `explain.pairs`: local pair explanations from shared terms and chunk matches.
+- `explain.clusters`: cluster explanation payload helpers.
 - `export.html`: self-contained offline HTML export.
 - `export.json`: optional JSON sidecar export without full source text.
 - `pipeline`: Phase 1 orchestration.
@@ -114,6 +118,8 @@ Schema overview:
 - `vectors`: normalized float32 document/chunk vectors as SQLite BLOBs.
 - `embedding_runs`: local embedding build run summaries.
 - `vector_indexes`: optional local vector index metadata.
+- `cluster_label_overrides`: local manual cluster display labels keyed by
+  deterministic cluster signatures.
 - `documents_fts`: FTS5 table for local search.
 
 Document status controls search visibility. `active` documents are returned by
@@ -159,7 +165,15 @@ API endpoints:
 - `GET /api/documents/{document_id}`: metadata, local path, chunk previews, and
   text preview.
 - `GET /api/map`: active document map points, cluster labels, nearest neighbors,
-  stats, and warnings.
+  cluster explanation metadata, stats, and warnings.
+- `GET /api/clusters`: generated/manual cluster labels, signatures, top terms,
+  representatives, sizes, and warnings.
+- `PUT /api/clusters/{cluster_signature}/label`: save a manual local label
+  override.
+- `DELETE /api/clusters/{cluster_signature}/label`: remove a manual local label
+  override.
+- `GET /api/explain/pair`: explain one document pair with shared terms and
+  chunk excerpts.
 
 Map generation reads active indexed records and extracted text from SQLite. It
 does not re-extract source files. It reuses the Phase 1 TF-IDF, layout,
@@ -278,6 +292,34 @@ compare-neighbors` computes TF-IDF neighbors from the inspectable baseline,
 dense neighbors from stored vectors, and hybrid neighbors with configurable
 weights. `/api/vector-stats` exposes model and vector counts to the local web
 app without loading embedding models.
+
+## Phase 6 Explainability And Labeling
+
+Phase 6 adds an explainability layer without adding remote calls or LLM
+labeling. Cluster labels are generated from active indexed documents using a
+c-TF-IDF-style term pass over actual local text. Generic academic filler terms
+are filtered, top evidence terms and representatives are exposed, and each
+cluster receives a deterministic signature from sorted active document IDs.
+
+Manual cluster labels are local display overrides. They are stored in
+`cluster_label_overrides` by cluster signature and change only the display
+label. Generated labels, top terms, representatives, and document membership
+remain available for inspection. Manual graph layout remains browser
+`localStorage`; only cluster label overrides are written to SQLite.
+
+Pair explanations answer "why nearby?" with a transparent baseline:
+
+```text
+source + target documents
+  -> TF-IDF shared term scores
+  -> chunk-level cosine matches
+  -> short source/target excerpts
+  -> JSON-safe explanation payload
+```
+
+The pair endpoint and CLI do not return full extracted document text. Dense pair
+evidence can be added later, but Phase 6 completion does not require loading
+embedding models.
 
 ## Future Data Model Sketch
 

@@ -200,3 +200,28 @@ Embedding generation remains a CLI command. The local web API exposes vector
 stats without loading models or generating embeddings. Semantic map switching
 can build on the stored vector layer later without adding cloud calls or a
 frontend build step.
+
+## ADR 0033: Phase 6 Labels Use Transparent Local Terms
+
+Phase 6 generated cluster labels use local c-TF-IDF-style evidence over active
+indexed documents. Labels are built from actual terms in the corpus, filter
+generic filler, and expose top terms plus representative documents. There is no
+mandatory LLM labeling.
+
+## ADR 0034: Cluster Signatures Come From Active Document IDs
+
+Manual label overrides are keyed by a deterministic hash of sorted active
+document IDs in the cluster. This keeps overrides tied to cluster membership
+without persisting graph coordinates or transient frontend layout.
+
+## ADR 0035: Manual Cluster Labels Are SQLite Display Overrides
+
+Manual labels are stored locally in SQLite and change only the display label.
+Generated labels and evidence remain inspectable, and removing an override
+returns the UI to generated labels.
+
+## ADR 0036: Pair Explanations Use Short Local Evidence
+
+"Why nearby?" explanations use shared TF-IDF terms and chunk-level text matches.
+They return short excerpts instead of full extracted documents, and dense pair
+evidence remains optional future work.

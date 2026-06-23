@@ -32,6 +32,7 @@ def compare_neighbors(
     limit: int = 10,
     dense_weight: float = 0.65,
     tfidf_weight: float = 0.35,
+    normalize: bool = True,
     encoder: EmbeddingEncoder | None = None,
 ) -> SimilarityComparisonResult:
     """Compare TF-IDF, dense, and hybrid neighbors for one active document."""
@@ -45,7 +46,7 @@ def compare_neighbors(
         name=selected_encoder.model_name,
         dimension=selected_encoder.dimension,
         distance=EMBEDDING_DISTANCE,
-        config={"normalize": True},
+        config={"normalize": normalize},
     )
     connection = connect_database(project_dir)
     try:

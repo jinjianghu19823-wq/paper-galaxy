@@ -7,7 +7,7 @@ from importlib.resources import files
 
 from paper_galaxy.errors import FTSUnavailableError
 
-SCHEMA_VERSION = "3"
+SCHEMA_VERSION = "4"
 
 
 def initialize_database(connection: sqlite3.Connection) -> None:

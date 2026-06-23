@@ -100,17 +100,23 @@ Non-goals: cloud embedding APIs by default, hidden model downloads, and replacin
 all explainable baselines. Phase 5 does not add LLM chat, cloud sync, accounts,
 Zotero integration, desktop packaging, or React/Node tooling.
 
-## Phase 6: Explainability And Labeling
+## Phase 6: Explainability And Labeling (implemented)
 
 Goal: make clusters and neighbors understandable.
 
-Deliverables: cluster labels from top terms or c-TF-IDF, manual cluster
-renaming, and "why nearby?" explanations based on shared keywords or chunks.
+Deliverables: c-TF-IDF-style generated cluster labels, stable cluster
+signatures, representative documents, manual cluster renaming in local SQLite,
+cluster metadata in `/api/map`, `/api/clusters`, and "why nearby?" explanations
+based on shared terms and matching chunks.
 
-Definition of done: map views expose the evidence behind proximity and cluster
-names can be corrected by the user.
+Definition of done: map views expose the evidence behind proximity, cluster
+names can be corrected by the user, the CLI exposes clusters and pair
+explanations, and tests cover labels, overrides, API routes, static assets, and
+Phase 5 normalization compatibility.
 
-Non-goals: hallucinated labels, mandatory LLM use, and opaque similarity scores.
+Non-goals: hallucinated labels, mandatory LLM use, opaque similarity scores,
+cloud labeling, desktop packaging, accounts, telemetry, Zotero, or React/Node
+tooling.
 
 ## Phase 7: Professionalization
 
