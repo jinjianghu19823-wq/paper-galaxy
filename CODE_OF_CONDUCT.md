@@ -1,5 +1,7 @@
 # Code of Conduct
 
+[English](CODE_OF_CONDUCT.md) | [简体中文](CODE_OF_CONDUCT.zh-CN.md)
+
 Paper Galaxy is a small research-tool project. Please help keep the project
 welcoming, careful, and useful.
 

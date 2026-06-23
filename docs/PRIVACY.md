@@ -1,5 +1,7 @@
 # Privacy
 
+[English](PRIVACY.md) | [简体中文](PRIVACY.zh-CN.md)
+
 Paper Galaxy is local-first by default.
 
 - User documents stay local by default.

@@ -1,5 +1,7 @@
 # Personal Cloud Library
 
+[English](README.md) | [简体中文](README.zh-CN.md)
+
 This directory describes a future opt-in personal cloud library for Paper
 Galaxy. It is design-only. No cloud runtime, hosted backend, account system,
 sync worker, storage SDK, payment code, or telemetry is implemented by these

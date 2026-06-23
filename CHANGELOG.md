@@ -1,5 +1,7 @@
 # Changelog
 
+[English](CHANGELOG.md) | [简体中文](CHANGELOG.zh-CN.md)
+
 ## Unreleased
 
 - Added public launch readiness scripts, community files, and GitHub Pages demo
@@ -9,6 +11,7 @@
 - Added an English/Simplified Chinese language toggle to the local web app.
 - Added future personal cloud library design docs without implementing cloud
   runtime functionality.
+- Added Simplified Chinese versions of the main public repository documents.
 
 ## 0.1.0
 

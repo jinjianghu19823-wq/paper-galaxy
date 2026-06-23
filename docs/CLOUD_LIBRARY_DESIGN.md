@@ -1,5 +1,7 @@
 # Personal Cloud Library Design
 
+[English](CLOUD_LIBRARY_DESIGN.md) | [简体中文](CLOUD_LIBRARY_DESIGN.zh-CN.md)
+
 The personal cloud library is a future, opt-in design only. It is not
 implemented in the current Paper Galaxy runtime.
 

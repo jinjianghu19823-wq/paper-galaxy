@@ -1,5 +1,7 @@
 # Security Policy
 
+[English](SECURITY.md) | [简体中文](SECURITY.zh-CN.md)
+
 Paper Galaxy currently has no formal supported release window.
 
 ## Reporting

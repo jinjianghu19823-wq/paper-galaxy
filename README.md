@@ -1,5 +1,7 @@
 # Paper Galaxy
 
+[English](README.md) | [简体中文](README.zh-CN.md)
+
 [![CI](https://img.shields.io/github/actions/workflow/status/jinjianghu19823-wq/paper-galaxy/ci.yml?branch=main&label=CI)](https://github.com/jinjianghu19823-wq/paper-galaxy/actions)
 ![Python](https://img.shields.io/badge/python-3.11%20%7C%203.12-86b7ff)
 ![License](https://img.shields.io/badge/license-MIT-f3bd5c)
@@ -306,9 +308,12 @@ loading, or React/Node frontend in the local app.
 Do not commit `.paper-galaxy/`, SQLite databases, generated HTML/JSON exports,
 backup zip files, vector indexes, downloaded model files, or secrets. Public
 issues should not include private document text. See [SECURITY.md](SECURITY.md)
-and [docs/PRIVACY.md](docs/PRIVACY.md).
+([中文](SECURITY.zh-CN.md)) and [docs/PRIVACY.md](docs/PRIVACY.md)
+([中文](docs/PRIVACY.zh-CN.md)).
 
 ## Roadmap And Contributing
 
 See [docs/ROADMAP.md](docs/ROADMAP.md) for phase boundaries and
-[CONTRIBUTING.md](CONTRIBUTING.md) for contribution guidance.
+[CONTRIBUTING.md](CONTRIBUTING.md) for contribution guidance. Chinese versions
+are available at [docs/ROADMAP.zh-CN.md](docs/ROADMAP.zh-CN.md) and
+[CONTRIBUTING.zh-CN.md](CONTRIBUTING.zh-CN.md).

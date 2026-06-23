@@ -1,5 +1,7 @@
 # Architectural Decisions
 
+[English](DECISIONS.md) | [简体中文](DECISIONS.zh-CN.md)
+
 ## ADR 0001: Python-First Backend
 
 Paper Galaxy starts as a Python-first project because the first useful work is

@@ -1,5 +1,7 @@
 # Release Checklist
 
+[English](RELEASE.md) | [简体中文](RELEASE.zh-CN.md)
+
 1. Update `CHANGELOG.md`.
 2. Verify `pyproject.toml` and `src/paper_galaxy/__init__.py` versions match.
 3. Remove generated artifacts:

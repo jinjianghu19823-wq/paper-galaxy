@@ -1,5 +1,7 @@
 # Backup And Restore
 
+[English](BACKUP_AND_RESTORE.md) | [简体中文](BACKUP_AND_RESTORE.zh-CN.md)
+
 Paper Galaxy backup bundles are local zip files. They contain a manifest,
 checksums, a README, project metadata when present, and the SQLite database only
 when the user confirms with `--yes`.

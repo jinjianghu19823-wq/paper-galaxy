@@ -1,5 +1,7 @@
 # Architecture
 
+[English](ARCHITECTURE.md) | [简体中文](ARCHITECTURE.zh-CN.md)
+
 Paper Galaxy is planned as a local-first Python application with optional
 heavier capabilities added phase by phase.
 

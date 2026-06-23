@@ -1,5 +1,7 @@
 # Roadmap
 
+[English](ROADMAP.md) | [简体中文](ROADMAP.zh-CN.md)
+
 Paper Galaxy should grow incrementally. Each phase must leave the repository in
 a runnable, tested state.
 

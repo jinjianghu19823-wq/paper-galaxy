@@ -1,5 +1,7 @@
 # Publishing Checklist
 
+[English](PUBLISHING_CHECKLIST.md) | [简体中文](PUBLISHING_CHECKLIST.zh-CN.md)
+
 Use this checklist before making `jinjianghu19823-wq/paper-galaxy` public.
 
 ## Local Checks

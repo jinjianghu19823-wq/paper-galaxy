@@ -1,5 +1,7 @@
 # Contributing
 
+[English](CONTRIBUTING.md) | [简体中文](CONTRIBUTING.zh-CN.md)
+
 Paper Galaxy is local-first. Contributions should preserve the default privacy
 boundary: no telemetry, no cloud calls, no accounts, no remote assets, and no
 hidden model downloads.

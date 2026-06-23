@@ -1,5 +1,7 @@
 # Install
 
+[English](INSTALL.md) | [简体中文](INSTALL.zh-CN.md)
+
 ## Try Before Installing
 
 Open the static public demo:
