@@ -11,6 +11,7 @@ const API = {
 };
 
 const THEME_KEY = "paper-galaxy:theme";
+const i18n = window.PaperGalaxyI18n.createI18n();
 
 const state = {
   health: null,
@@ -23,7 +24,8 @@ const state = {
   selectedId: null,
   selectedDetail: null,
   filter: "",
-  searchTimer: null
+  searchTimer: null,
+  lastSearchPayload: null
 };
 
 const els = {
@@ -32,6 +34,7 @@ const els = {
   missingCount: document.querySelector("#missing-count"),
   unindexedCount: document.querySelector("#unindexed-count"),
   lastScan: document.querySelector("#last-scan"),
+  languageToggle: document.querySelector("#language-toggle"),
   themeToggle: document.querySelector("#theme-toggle"),
   searchForm: document.querySelector("#search-form"),
   searchInput: document.querySelector("#search-input"),
@@ -63,10 +66,12 @@ const els = {
 document.addEventListener("DOMContentLoaded", init);
 
 async function init() {
+  i18n.apply();
+  updateLanguageToggle();
   initTheme();
   initGraph();
   bindEvents();
-  setInspectorMessage("Select a document point or search result.");
+  setInspectorMessage(t("inspector.default"));
   try {
     state.health = await fetchJson(API.health);
     state.config = await fetchJson(API.config);
@@ -75,7 +80,7 @@ async function init() {
     await loadMapRuns();
     await loadMap();
   } catch (error) {
-    showErrorState("Unable to load Paper Galaxy.", error.message);
+    showErrorState(t("map.loadFailed"), error.message);
   }
 }
 
@@ -112,6 +117,7 @@ function initGraph() {
 }
 
 function bindEvents() {
+  els.languageToggle.addEventListener("click", toggleLanguage);
   els.themeToggle.addEventListener("click", toggleTheme);
   els.searchForm.addEventListener("submit", (event) => {
     event.preventDefault();
@@ -134,15 +140,45 @@ function bindEvents() {
     if (state.graph) {
       state.graph.setSelected(null);
     }
-    setInspectorMessage("Select a document point or search result.");
+    setInspectorMessage(t("inspector.default"));
   });
   els.mapRunSelect.addEventListener("change", async () => {
     state.selectedRunId = els.mapRunSelect.value;
     state.selectedId = null;
     state.selectedDetail = null;
     await loadMap(state.selectedRunId);
-    setInspectorMessage("Select a document point or search result.");
+    setInspectorMessage(t("inspector.default"));
   });
+}
+
+function toggleLanguage() {
+  i18n.toggle();
+  i18n.apply();
+  updateLanguageToggle();
+  updateThemeToggle(document.documentElement.dataset.theme || "dark");
+  if (state.health) {
+    updateHealth(state.health);
+  }
+  if (state.stats) {
+    updateStats(state.stats);
+  }
+  renderMapRunSelect();
+  if (state.map) {
+    renderMap();
+  }
+  if (state.lastSearchPayload) {
+    renderSearchResults(state.lastSearchPayload, { remember: false });
+  }
+  if (state.selectedDetail) {
+    renderInspector();
+  } else {
+    setInspectorMessage(t("inspector.default"));
+  }
+}
+
+function updateLanguageToggle() {
+  els.languageToggle.textContent = t("language.toggle");
+  els.languageToggle.setAttribute("aria-label", t("language.aria"));
 }
 
 async function loadStats() {
@@ -186,6 +222,7 @@ async function loadMapRuns() {
 async function runSearch() {
   const query = els.searchInput.value.trim();
   if (!query) {
+    state.lastSearchPayload = null;
     clearSearchResults();
     return;
   }
@@ -198,8 +235,9 @@ async function runSearch() {
     const payload = await fetchJson(`${API.search}?${params.toString()}`);
     renderSearchResults(payload);
   } catch (error) {
+    state.lastSearchPayload = null;
     clearSearchResults();
-    appendText(els.searchResults, "div", `Search failed: ${error.message}`, "muted");
+    appendText(els.searchResults, "div", t("search.failed", { message: error.message }), "muted");
   }
 }
 
@@ -209,18 +247,18 @@ async function selectDocument(documentId) {
   if (state.graph) {
     state.graph.setSelected(documentId);
   }
-  setInspectorMessage("Loading document...");
+  setInspectorMessage(t("inspector.loading"));
   try {
     const detail = await fetchJson(`${API.documents}/${encodeURIComponent(documentId)}`);
     state.selectedDetail = detail;
     renderInspector();
   } catch (error) {
-    setInspectorMessage(`Document unavailable: ${error.message}`);
+    setInspectorMessage(t("inspector.unavailable", { message: error.message }));
   }
 }
 
 function updateHealth(health) {
-  const status = health.database_exists ? "local database connected" : "no database";
+  const status = health.database_exists ? t("health.connected") : t("health.noDatabase");
   els.projectStatus.textContent = `${status} - ${health.project_dir}`;
 }
 
@@ -228,19 +266,19 @@ function updateStats(stats) {
   els.activeCount.textContent = String(stats.active_documents);
   els.missingCount.textContent = String(stats.missing_documents);
   els.unindexedCount.textContent = String(stats.unindexed_documents);
-  els.lastScan.textContent = stats.last_scan_time || "none";
+  els.lastScan.textContent = stats.last_scan_time || t("health.none");
 }
 
 function updateMissingDatabase(error) {
-  els.projectStatus.textContent = "No Paper Galaxy database found";
+  els.projectStatus.textContent = t("missing.title");
   els.activeCount.textContent = "0";
   els.missingCount.textContent = "0";
   els.unindexedCount.textContent = "0";
-  els.lastScan.textContent = "none";
+  els.lastScan.textContent = t("health.none");
   showEmptyState(
-    "No Paper Galaxy database found",
-    "Run indexing from the command line before opening the graph.",
-    error ? error.command : "paper-galaxy index /path/to/corpus --project-dir /path/to/project"
+    t("missing.title"),
+    t("missing.body"),
+    error ? error.command : t("missing.command")
   );
 }
 
@@ -253,10 +291,10 @@ function renderMap() {
   const points = payload.points || [];
   if (!points.length) {
     els.mapSvg.hidden = true;
-    const message = (payload.warnings && payload.warnings[0]) || "No active indexed documents found.";
-    showEmptyState("No active documents", message, null);
+    const message = (payload.warnings && payload.warnings[0]) || t("map.noActiveMessage");
+    showEmptyState(t("map.noActiveTitle"), message, null);
     renderLegend(points, payload.cluster_labels || {}, payload.clusters || []);
-    els.mapCaption.textContent = "0 active documents";
+    els.mapCaption.textContent = t("graph.zeroActive");
     if (state.graph) {
       state.graph.clear();
     }
@@ -276,8 +314,10 @@ function updateMapCaption(visible, total) {
     return;
   }
   const warnings = state.map.warnings || [];
-  const mode = state.graph && state.graph.settings.animate ? "animated" : "paused";
-  const base = `${visible} of ${total} active documents - semantic TF-IDF links - ${mode}`;
+  const mode = state.graph && state.graph.settings.animate
+    ? t("graph.modeAnimated")
+    : t("graph.modePaused");
+  const base = t("graph.caption", { visible, total, mode });
   els.mapCaption.textContent = warnings.length ? `${base} - ${warnings[0]}` : base;
 }
 
@@ -301,7 +341,7 @@ function renderLegend(points, clusterLabels, clusters) {
       }));
   const ids = clusterRows.map((cluster) => String(cluster.cluster_id));
   if (!ids.length) {
-    appendText(els.clusterLegend, "p", "No clusters yet.", "muted");
+    appendText(els.clusterLegend, "p", t("clusters.empty"), "muted");
     return;
   }
   for (const cluster of clusterRows) {
@@ -315,10 +355,13 @@ function renderLegend(points, clusterLabels, clusters) {
     body.className = "legend-body";
     const label = document.createElement("span");
     label.className = "legend-label";
-    label.textContent = cluster.display_label || clusterLabels[id] || `Cluster ${id}`;
+    label.textContent = cluster.display_label || clusterLabels[id] || t("clusters.fallback", { id });
     const meta = document.createElement("span");
     meta.className = "legend-meta";
-    meta.textContent = `${cluster.source || "generated"} - ${counts.get(Number(id)) || 0} docs`;
+    meta.textContent = t("clusters.meta", {
+      source: sourceLabel(cluster.source || "generated"),
+      count: counts.get(Number(id)) || 0
+    });
     body.append(label, meta);
     const terms = Array.isArray(cluster.top_terms)
       ? cluster.top_terms.map((item) => item.term).filter(Boolean).slice(0, 3)
@@ -337,14 +380,14 @@ function renderLegend(points, clusterLabels, clusters) {
       const rename = document.createElement("button");
       rename.type = "button";
       rename.className = "tiny-button";
-      rename.textContent = "Rename";
+      rename.textContent = t("cluster.rename");
       rename.addEventListener("click", () => renameCluster(cluster, row));
       actions.append(rename);
       if (cluster.source === "manual") {
         const reset = document.createElement("button");
         reset.type = "button";
         reset.className = "tiny-button";
-        reset.textContent = "Reset";
+        reset.textContent = t("cluster.reset");
         reset.addEventListener("click", () => resetClusterLabel(cluster.cluster_signature));
         actions.append(reset);
       }
@@ -354,15 +397,18 @@ function renderLegend(points, clusterLabels, clusters) {
   }
 }
 
-function renderSearchResults(payload) {
+function renderSearchResults(payload, options = {}) {
   clearSearchResults();
+  if (options.remember !== false) {
+    state.lastSearchPayload = payload;
+  }
   if (!payload.database_exists) {
-    appendText(els.searchResults, "div", "No Paper Galaxy database found.", "muted");
+    appendText(els.searchResults, "div", t("search.noDatabase"), "muted");
     return;
   }
   const results = payload.results || [];
   if (!results.length) {
-    appendText(els.searchResults, "div", "No matching indexed documents found.", "muted");
+    appendText(els.searchResults, "div", t("search.noResults"), "muted");
     return;
   }
   for (const result of results) {
@@ -382,7 +428,7 @@ function renderSearchResults(payload) {
 function renderInspector() {
   const detail = state.selectedDetail;
   if (!detail || !detail.metadata) {
-    setInspectorMessage("Select a document point or search result.");
+    setInspectorMessage(t("inspector.default"));
     return;
   }
   const metadata = detail.metadata;
@@ -399,7 +445,11 @@ function renderInspector() {
   appendText(
     els.inspector,
     "div",
-    `${metadata.file_type || "file"} - ${metadata.status} - ${metadata.char_count} chars`,
+    t("inspector.documentMeta", {
+      type: metadata.file_type || t("inspector.fileFallback"),
+      status: metadata.status,
+      chars: metadata.char_count
+    }),
     "meta-row"
   );
   if (metadata.local_path) {
@@ -409,7 +459,7 @@ function renderInspector() {
   renderClusterInspector(point);
 
   const terms = point ? point.top_terms || [] : [];
-  const termsSection = inspectorSection("Top terms");
+  const termsSection = inspectorSection(t("inspector.topTerms"));
   if (terms.length) {
     const list = document.createElement("ul");
     list.className = "term-list";
@@ -418,11 +468,11 @@ function renderInspector() {
     }
     termsSection.append(list);
   } else {
-    appendText(termsSection, "p", "No terms available for this document.", "muted");
+    appendText(termsSection, "p", t("inspector.noTerms"), "muted");
   }
   els.inspector.append(termsSection);
 
-  const neighborsSection = inspectorSection("Nearest neighbors");
+  const neighborsSection = inspectorSection(t("inspector.neighbors"));
   const neighbors = point ? point.nearest_neighbors || [] : [];
   if (neighbors.length) {
     for (const neighbor of neighbors) {
@@ -437,35 +487,40 @@ function renderInspector() {
       const why = document.createElement("button");
       why.type = "button";
       why.className = "why-button";
-      why.textContent = "Why?";
+      why.textContent = t("inspector.whyButton");
       why.addEventListener("click", () => loadPairExplanation(metadata.document_id, neighbor.document_id));
       row.append(button, why);
       neighborsSection.append(row);
     }
   } else {
-    appendText(neighborsSection, "p", "No nearest neighbors available.", "muted");
+    appendText(neighborsSection, "p", t("inspector.noNeighbors"), "muted");
   }
   els.inspector.append(neighborsSection);
 
-  const pairSection = inspectorSection("Why nearby?");
+  const pairSection = inspectorSection(t("inspector.why"));
   pairSection.id = "pair-explanation";
-  appendText(pairSection, "p", "Choose Why? beside a neighbor.", "muted");
+  appendText(pairSection, "p", t("inspector.whyPrompt"), "muted");
   els.inspector.append(pairSection);
 
-  const chunksSection = inspectorSection(`Chunks (${detail.chunk_count})`);
+  const chunksSection = inspectorSection(t("inspector.chunks", { count: detail.chunk_count }));
   const chunks = detail.chunks || [];
   if (chunks.length) {
     for (const chunk of chunks) {
       const block = document.createElement("div");
       block.className = "chunk";
-      appendText(block, "div", `Chunk ${chunk.chunk_index} - ${chunk.char_count} chars`, "chunk-meta");
+      appendText(
+        block,
+        "div",
+        t("inspector.chunkMeta", { index: chunk.chunk_index, chars: chunk.char_count }),
+        "chunk-meta"
+      );
       appendText(block, "p", chunk.text);
       chunksSection.append(block);
     }
   } else if (detail.text_preview) {
     appendText(chunksSection, "p", detail.text_preview, "muted");
   } else {
-    appendText(chunksSection, "p", "No chunk preview available.", "muted");
+    appendText(chunksSection, "p", t("inspector.noChunk"), "muted");
   }
   els.inspector.append(chunksSection);
 }
@@ -475,14 +530,19 @@ function renderClusterInspector(point) {
     return;
   }
   const cluster = findCluster(point.cluster_signature);
-  const section = inspectorSection("Cluster");
+  const section = inspectorSection(t("inspector.cluster"));
   const titleRow = document.createElement("div");
   titleRow.className = "cluster-title-row";
   appendText(titleRow, "strong", point.cluster_label || "Cluster");
-  appendText(titleRow, "span", cluster ? cluster.source : "generated", "source-pill");
+  appendText(titleRow, "span", sourceLabel(cluster ? cluster.source : "generated"), "source-pill");
   section.append(titleRow);
   if (cluster && cluster.source === "manual" && cluster.generated_label) {
-    appendText(section, "p", `Generated: ${cluster.generated_label}`, "muted");
+    appendText(
+      section,
+      "p",
+      t("inspector.generatedLabel", { label: cluster.generated_label }),
+      "muted"
+    );
   }
   appendText(section, "div", point.cluster_signature || "", "meta-row");
   const actions = document.createElement("div");
@@ -490,13 +550,13 @@ function renderClusterInspector(point) {
   if (!state.selectedRunId) {
     const rename = document.createElement("button");
     rename.type = "button";
-    rename.textContent = "Rename";
+    rename.textContent = t("cluster.rename");
     rename.addEventListener("click", () => renameCluster(cluster || point, section));
     actions.append(rename);
     if (cluster && cluster.source === "manual") {
       const reset = document.createElement("button");
       reset.type = "button";
-      reset.textContent = "Reset";
+      reset.textContent = t("cluster.reset");
       reset.addEventListener("click", () => resetClusterLabel(cluster.cluster_signature));
       actions.append(reset);
     }
@@ -523,21 +583,21 @@ function renameCluster(cluster, host) {
   input.type = "text";
   input.value = current;
   input.maxLength = 120;
-  input.setAttribute("aria-label", "Cluster label");
+  input.setAttribute("aria-label", t("cluster.labelAria"));
   const error = document.createElement("p");
   error.className = "cluster-editor-error";
   const save = document.createElement("button");
   save.type = "submit";
-  save.textContent = "Save";
+  save.textContent = t("cluster.save");
   const cancel = document.createElement("button");
   cancel.type = "button";
-  cancel.textContent = "Cancel";
+  cancel.textContent = t("cluster.cancel");
   cancel.addEventListener("click", () => form.remove());
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
     const label = input.value.trim();
     if (!label || label.length > 120) {
-      error.textContent = "Cluster label must be 1-120 characters.";
+      error.textContent = t("cluster.labelError");
       return;
     }
     await saveClusterLabel(signature, label);
@@ -581,8 +641,8 @@ async function loadPairExplanation(sourceId, targetId) {
     return;
   }
   section.replaceChildren();
-  appendText(section, "h3", "Why nearby?");
-  appendText(section, "p", "Loading local explanation...", "muted");
+  appendText(section, "h3", t("inspector.why"));
+  appendText(section, "p", t("pair.loading"), "muted");
   const params = new URLSearchParams({
     source: sourceId,
     target: targetId,
@@ -594,21 +654,26 @@ async function loadPairExplanation(sourceId, targetId) {
     renderPairExplanation(section, payload.explanation);
   } catch (error) {
     section.replaceChildren();
-    appendText(section, "h3", "Why nearby?");
-    appendText(section, "p", `Explanation failed: ${error.message}`, "muted");
+    appendText(section, "h3", t("inspector.why"));
+    appendText(section, "p", t("pair.failed", { message: error.message }), "muted");
   }
 }
 
 function renderPairExplanation(section, explanation) {
   section.replaceChildren();
-  appendText(section, "h3", "Why nearby?");
+  appendText(section, "h3", t("inspector.why"));
   appendText(
     section,
     "p",
     `${explanation.source.title} -> ${explanation.target.title}`,
     "muted"
   );
-  appendText(section, "div", `Lexical score ${explanation.lexical_score}`, "meta-row");
+  appendText(
+    section,
+    "div",
+    t("pair.lexicalScore", { score: explanation.lexical_score }),
+    "meta-row"
+  );
   const terms = explanation.shared_terms || [];
   if (terms.length) {
     const chips = document.createElement("div");
@@ -624,7 +689,11 @@ function renderPairExplanation(section, explanation) {
     appendText(
       block,
       "div",
-      `Chunks ${match.source_chunk_index} -> ${match.target_chunk_index} - ${match.score}`,
+      t("pair.chunks", {
+        source: match.source_chunk_index,
+        target: match.target_chunk_index,
+        score: match.score
+      }),
       "chunk-meta"
     );
     appendText(block, "p", match.source_excerpt);
@@ -649,10 +718,10 @@ function renderPinControl(documentId) {
   const row = document.createElement("div");
   row.className = "pin-row";
   const status = document.createElement("span");
-  status.textContent = pinned ? "Pinned manual position" : "Free force layout";
+  status.textContent = pinned ? t("inspector.pinStatus") : t("inspector.freeStatus");
   const button = document.createElement("button");
   button.type = "button";
-  button.textContent = pinned ? "Unpin" : "Pin";
+  button.textContent = pinned ? t("inspector.unpin") : t("inspector.pin");
   button.addEventListener("click", () => {
     state.graph.togglePin(documentId);
     renderInspector();
@@ -679,7 +748,7 @@ function renderMapRunSelect() {
   els.mapRunSelect.replaceChildren();
   const liveOption = document.createElement("option");
   liveOption.value = "";
-  liveOption.textContent = "Live map";
+  liveOption.textContent = t("graph.liveMap");
   els.mapRunSelect.append(liveOption);
   for (const run of state.mapRuns) {
     const option = document.createElement("option");
@@ -750,8 +819,22 @@ function toggleTheme() {
 function updateThemeToggle(theme) {
   els.themeToggle.setAttribute(
     "aria-label",
-    theme === "dark" ? "Switch to light theme" : "Switch to dark theme"
+    theme === "dark" ? t("theme.aria.light") : t("theme.aria.dark")
   );
+}
+
+function sourceLabel(source) {
+  if (source === "manual") {
+    return t("clusters.manual");
+  }
+  if (source === "generated") {
+    return t("clusters.generated");
+  }
+  return source || t("clusters.generated");
+}
+
+function t(key, values = {}) {
+  return i18n.t(key, values);
 }
 
 async function fetchJson(url, options = {}) {

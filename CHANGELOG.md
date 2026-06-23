@@ -6,6 +6,7 @@
   workflow.
 - Added a static English and Simplified Chinese public demo site generated from
   the synthetic tiny corpus.
+- Added an English/Simplified Chinese language toggle to the local web app.
 - Added future personal cloud library design docs without implementing cloud
   runtime functionality.
 

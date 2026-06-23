@@ -6,6 +6,7 @@
     <title>Paper Galaxy</title>
     <link rel="stylesheet" href="/static/styles.css">
     <script src="/static/graph.js" defer></script>
+    <script src="/static/i18n.js" defer></script>
     <script src="/static/app.js" defer></script>
   </head>
   <body>
@@ -15,28 +16,36 @@
           <div class="brand-mark" aria-hidden="true"></div>
           <div>
             <h1>Paper Galaxy</h1>
-            <p id="project-status">Checking local database...</p>
+            <p id="project-status" data-i18n="app.checking">Checking local database...</p>
           </div>
         </div>
-        <div class="topbar-hint">Local graph workspace - index from CLI</div>
+        <div class="topbar-hint" data-i18n="topbar.hint">Local graph workspace - index from CLI</div>
         <div class="status-strip" aria-live="polite">
           <div>
-            <span class="metric-label">Active</span>
+            <span class="metric-label" data-i18n="metric.active">Active</span>
             <strong id="active-count">0</strong>
           </div>
           <div>
-            <span class="metric-label">Missing</span>
+            <span class="metric-label" data-i18n="metric.missing">Missing</span>
             <strong id="missing-count">0</strong>
           </div>
           <div>
-            <span class="metric-label">Unindexed</span>
+            <span class="metric-label" data-i18n="metric.unindexed">Unindexed</span>
             <strong id="unindexed-count">0</strong>
           </div>
           <div class="wide-metric">
-            <span class="metric-label">Last scan</span>
+            <span class="metric-label" data-i18n="metric.lastScan">Last scan</span>
             <strong id="last-scan">none</strong>
           </div>
         </div>
+        <button
+          id="language-toggle"
+          class="text-button"
+          type="button"
+          data-i18n="language.toggle"
+          data-i18n-aria="language.aria"
+          aria-label="Switch to Simplified Chinese"
+        >中文</button>
         <button id="theme-toggle" class="icon-button" type="button" aria-label="Toggle theme">
           <span aria-hidden="true">◐</span>
         </button>
@@ -45,34 +54,36 @@
       <main class="workspace">
         <aside class="sidebar" aria-label="Search and clusters">
           <section class="panel">
-            <h2>Search</h2>
+            <h2 data-i18n="search.title">Search</h2>
             <form id="search-form" class="search-form">
               <input
                 id="search-input"
                 name="q"
                 type="search"
                 placeholder="Search indexed text"
+                data-i18n-placeholder="search.placeholder"
                 autocomplete="off"
               >
-              <button type="submit">Search</button>
+              <button type="submit" data-i18n="search.submit">Search</button>
             </form>
             <label class="check-row">
               <input id="include-missing" type="checkbox">
-              <span>Include missing</span>
+              <span data-i18n="search.includeMissing">Include missing</span>
             </label>
             <div id="search-results" class="result-list"></div>
           </section>
 
           <section class="panel">
             <div class="panel-title-row">
-              <h2>Clusters</h2>
-              <span class="panel-kicker">groups</span>
+              <h2 data-i18n="clusters.title">Clusters</h2>
+              <span class="panel-kicker" data-i18n="clusters.kicker">groups</span>
             </div>
             <input
               id="point-filter"
               class="filter-input"
               type="search"
               placeholder="Filter visible points"
+              data-i18n-placeholder="clusters.filterPlaceholder"
               autocomplete="off"
             >
             <div id="cluster-legend" class="legend"></div>
@@ -80,51 +91,51 @@
 
           <section class="panel settings-panel">
             <div class="panel-title-row">
-              <h2>Forces</h2>
-              <span class="panel-kicker">local</span>
+              <h2 data-i18n="forces.title">Forces</h2>
+              <span class="panel-kicker" data-i18n="forces.kicker">local</span>
             </div>
             <label class="toggle-row">
               <input id="animate-toggle" type="checkbox" checked>
-              <span>Animate graph</span>
+              <span data-i18n="forces.animate">Animate graph</span>
             </label>
             <label class="toggle-row">
               <input id="arrows-toggle" type="checkbox">
-              <span>Show arrows</span>
+              <span data-i18n="forces.arrows">Show arrows</span>
             </label>
             <label class="range-row">
-              <span>Center</span>
+              <span data-i18n="forces.center">Center</span>
               <input id="center-force" type="range" min="0" max="20" step="1" value="7">
             </label>
             <label class="range-row">
-              <span>Repel</span>
+              <span data-i18n="forces.repel">Repel</span>
               <input id="repel-force" type="range" min="200" max="3600" step="100" value="1600">
             </label>
             <label class="range-row">
-              <span>Link force</span>
+              <span data-i18n="forces.linkForce">Link force</span>
               <input id="link-force" type="range" min="1" max="60" step="1" value="18">
             </label>
             <label class="range-row">
-              <span>Link distance</span>
+              <span data-i18n="forces.linkDistance">Link distance</span>
               <input id="link-distance" type="range" min="54" max="220" step="2" value="118">
             </label>
             <label class="range-row">
-              <span>Node size</span>
+              <span data-i18n="forces.nodeSize">Node size</span>
               <input id="node-size" type="range" min="4" max="13" step="1" value="7">
             </label>
             <label class="range-row">
-              <span>Link width</span>
+              <span data-i18n="forces.linkWidth">Link width</span>
               <input id="link-thickness" type="range" min="0.5" max="3" step="0.1" value="1.1">
             </label>
             <label class="range-row">
-              <span>Label mode</span>
+              <span data-i18n="forces.labelMode">Label mode</span>
               <select id="label-mode">
-                <option value="focus" selected>Focus labels only</option>
-                <option value="zoom">Show at high zoom</option>
-                <option value="always">Always show labels</option>
+                <option value="focus" selected data-i18n="forces.labelFocus">Focus labels only</option>
+                <option value="zoom" data-i18n="forces.labelZoom">Show at high zoom</option>
+                <option value="always" data-i18n="forces.labelAlways">Always show labels</option>
               </select>
             </label>
             <label class="range-row">
-              <span>Zoom labels</span>
+              <span data-i18n="forces.zoomLabels">Zoom labels</span>
               <input id="label-threshold" type="range" min="0.4" max="2.2" step="0.1" value="1.4">
             </label>
           </section>
@@ -133,23 +144,23 @@
         <section class="graph-stage" aria-label="Document graph">
           <div class="graph-titlebar">
             <div>
-              <h2>Document Graph</h2>
-              <p id="map-caption">Loading active indexed documents...</p>
+              <h2 data-i18n="graph.title">Document Graph</h2>
+              <p id="map-caption" data-i18n="graph.loading">Loading active indexed documents...</p>
             </div>
             <div class="graph-controls" aria-label="Graph controls">
               <select id="map-run-select" class="map-run-select" aria-label="Saved map run">
-                <option value="">Live map</option>
+                <option value="" data-i18n="graph.liveMap">Live map</option>
               </select>
-              <button id="reset-view" class="icon-button" type="button" aria-label="Reset view">
+              <button id="reset-view" class="icon-button" type="button" data-i18n-aria="graph.resetView" aria-label="Reset view">
                 <span aria-hidden="true">⌖</span>
               </button>
-              <button id="reset-layout" class="icon-button" type="button" aria-label="Reset layout">
+              <button id="reset-layout" class="icon-button" type="button" data-i18n-aria="graph.resetLayout" aria-label="Reset layout">
                 <span aria-hidden="true">↺</span>
               </button>
-              <button id="pause-graph" class="icon-button" type="button" aria-label="Pause animation">
+              <button id="pause-graph" class="icon-button" type="button" data-i18n-aria="graph.pause" aria-label="Pause animation">
                 <span aria-hidden="true">Ⅱ</span>
               </button>
-              <button id="reset-selection" class="icon-button" type="button" aria-label="Clear selection">
+              <button id="reset-selection" class="icon-button" type="button" data-i18n-aria="graph.clearSelection" aria-label="Clear selection">
                 <span aria-hidden="true">×</span>
               </button>
             </div>
@@ -160,14 +171,15 @@
             class="graph-svg"
             role="img"
             aria-label="Paper Galaxy document similarity graph"
+            data-i18n-aria="graph.aria"
           ></svg>
         </section>
 
         <aside class="inspector" aria-label="Document inspector">
           <section class="panel inspector-panel">
-            <h2>Inspector</h2>
+            <h2 data-i18n="inspector.title">Inspector</h2>
             <div id="inspector-content" class="inspector-content">
-              <p class="muted">Select a document point or search result.</p>
+              <p class="muted" data-i18n="inspector.default">Select a document point or search result.</p>
             </div>
           </section>
         </aside>

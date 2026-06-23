@@ -81,6 +81,7 @@ where = ["src"]
   "static/index.html",
   "static/app.js",
   "static/graph.js",
+  "static/i18n.js",
   "static/styles.css",
 ]
 

@@ -12,8 +12,9 @@ neighborhoods.
 Current status: Phase 7 professionalization. This repository can scan a
 local sample corpus, export a self-contained offline `galaxy.html`, index
 documents and chunks into local SQLite, rerun indexing incrementally, search
-indexed text with SQLite FTS5, and serve a local browser app with an
-Obsidian-inspired dynamic document graph for browsing the indexed corpus. It
+indexed text with SQLite FTS5, and serve a local English/Simplified Chinese
+browser app with an Obsidian-inspired dynamic document graph for browsing the
+indexed corpus. It
 also records extraction quality reports, improves Markdown/LaTeX/PDF parsing,
 supports opt-in local OCR for image files, and can optionally store local dense
 document/chunk embeddings for semantic search and neighbor comparison. Cluster

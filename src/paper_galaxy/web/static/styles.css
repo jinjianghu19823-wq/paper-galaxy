@@ -114,7 +114,8 @@ input[type="range"] {
 
 .topbar {
   display: grid;
-  grid-template-columns: minmax(230px, 1fr) auto auto auto;
+  grid-template-columns: minmax(230px, 1fr) auto auto auto auto;
+  grid-template-areas: "brand hint stats language theme";
   align-items: center;
   gap: 0.85rem;
   min-height: 62px;
@@ -129,10 +130,15 @@ input[type="range"] {
 }
 
 .brand {
+  grid-area: brand;
   display: flex;
   align-items: center;
   min-width: 0;
   gap: 0.7rem;
+}
+
+.brand > div {
+  min-width: 0;
 }
 
 .brand-mark {
@@ -187,12 +193,14 @@ input[type="range"] {
 }
 
 .topbar-hint {
+  grid-area: hint;
   color: var(--quiet);
   font-size: 0.74rem;
   white-space: nowrap;
 }
 
 .status-strip {
+  grid-area: stats;
   display: grid;
   grid-template-columns: repeat(4, auto);
   align-items: center;
@@ -231,11 +239,27 @@ input[type="range"] {
 }
 
 .icon-button {
+  justify-self: end;
   display: inline-grid;
   width: 32px;
   height: 32px;
   place-items: center;
   padding: 0;
+}
+
+.text-button {
+  grid-area: language;
+  justify-self: end;
+  display: inline-grid;
+  min-width: 42px;
+  height: 32px;
+  place-items: center;
+  padding: 0 0.54rem;
+  white-space: nowrap;
+}
+
+#theme-toggle {
+  grid-area: theme;
 }
 
 .workspace {
@@ -791,7 +815,10 @@ mark {
 
 @media (max-width: 1180px) {
   .topbar {
-    grid-template-columns: minmax(220px, 1fr) auto;
+    grid-template-areas:
+      "brand language theme"
+      "stats stats stats";
+    grid-template-columns: minmax(0, 1fr) auto auto;
   }
 
   .topbar-hint {
@@ -799,7 +826,6 @@ mark {
   }
 
   .status-strip {
-    grid-column: 1 / -1;
     width: 100%;
     grid-template-columns: repeat(4, minmax(0, 1fr));
   }
@@ -815,7 +841,10 @@ mark {
 
 @media (max-width: 760px) {
   .topbar {
-    grid-template-columns: 1fr auto;
+    grid-template-areas:
+      "brand language theme"
+      "stats stats stats";
+    grid-template-columns: minmax(0, 1fr) auto auto;
   }
 
   .status-strip {

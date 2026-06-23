@@ -7,13 +7,14 @@ def test_static_assets_exist() -> None:
     assert (STATIC_DIR / "index.html").exists()
     assert (STATIC_DIR / "app.js").exists()
     assert (STATIC_DIR / "graph.js").exists()
+    assert (STATIC_DIR / "i18n.js").exists()
     assert (STATIC_DIR / "styles.css").exists()
 
 
 def test_static_assets_have_no_external_network_references() -> None:
     combined = "\n".join(
         (STATIC_DIR / name).read_text(encoding="utf-8")
-        for name in ("index.html", "app.js", "graph.js", "styles.css")
+        for name in ("index.html", "app.js", "graph.js", "i18n.js", "styles.css")
     ).lower()
 
     forbidden = [
@@ -35,10 +36,18 @@ def test_static_html_references_only_local_assets() -> None:
 
     assert 'href="/static/styles.css"' in html
     assert 'src="/static/graph.js"' in html
+    assert 'src="/static/i18n.js"' in html
     assert 'src="/static/app.js"' in html
-    remaining_html = html.replace('src="/static/graph.js"', "").replace(
-        'src="/static/app.js"',
-        "",
+    remaining_html = (
+        html.replace('src="/static/graph.js"', "")
+        .replace(
+            'src="/static/i18n.js"',
+            "",
+        )
+        .replace(
+            'src="/static/app.js"',
+            "",
+        )
     )
     assert "src=" not in remaining_html
 
@@ -46,7 +55,7 @@ def test_static_html_references_only_local_assets() -> None:
 def test_static_graph_assets_include_dynamic_interaction_primitives() -> None:
     combined = "\n".join(
         (STATIC_DIR / name).read_text(encoding="utf-8")
-        for name in ("app.js", "graph.js")
+        for name in ("app.js", "graph.js", "i18n.js")
     )
 
     required_tokens = [
@@ -77,7 +86,9 @@ def test_graph_labels_default_to_focus_only() -> None:
     html = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
     graph_js = (STATIC_DIR / "graph.js").read_text(encoding="utf-8")
 
-    assert '<option value="focus" selected>Focus labels only</option>' in html
+    assert 'value="focus"' in html
+    assert "Focus labels only" in html
+    assert 'data-i18n="forces.labelFocus"' in html
     assert 'labelMode: "focus"' in graph_js
     assert 'this.settings.labelMode === "focus"' in graph_js
 
@@ -112,3 +123,20 @@ def test_graph_nodes_do_not_render_nested_pin_dots() -> None:
     assert "graph-node-pin" not in graph_js
     assert "graph-node-pin" not in styles
     assert "is-pinned" in graph_js
+
+
+def test_static_web_app_supports_simplified_chinese_locale() -> None:
+    html = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
+    app_js = (STATIC_DIR / "app.js").read_text(encoding="utf-8")
+    i18n_js = (STATIC_DIR / "i18n.js").read_text(encoding="utf-8")
+    pyproject = Path("pyproject.toml").read_text(encoding="utf-8")
+
+    assert 'id="language-toggle"' in html
+    assert 'data-i18n="search.title"' in html
+    assert 'data-i18n-placeholder="search.placeholder"' in html
+    assert "paper-galaxy:language" in i18n_js
+    assert '"zh-CN"' in i18n_js
+    assert "简体中文" in i18n_js
+    assert "切换到英文" in i18n_js
+    assert "toggleLanguage" in app_js
+    assert "static/i18n.js" in pyproject
