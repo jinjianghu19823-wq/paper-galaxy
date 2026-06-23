@@ -494,6 +494,12 @@ input[type="range"] {
   flex: 0 0 auto;
 }
 
+.map-run-select {
+  width: 178px;
+  min-height: 32px;
+  padding: 0.38rem 0.5rem;
+}
+
 .graph-svg {
   width: 100%;
   height: 100%;
@@ -833,6 +839,11 @@ mark {
   .graph-controls {
     width: 100%;
     justify-content: flex-end;
+    flex-wrap: wrap;
+  }
+
+  .map-run-select {
+    width: min(100%, 220px);
   }
 
   .graph-svg {

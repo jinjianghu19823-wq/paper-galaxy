@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 
 from paper_galaxy.embeddings.builder import build_embeddings
 from paper_galaxy.indexer import index_corpus
+from paper_galaxy.maps import build_and_store_map_run
 from paper_galaxy.storage.migrations import initialize_database
 from paper_galaxy.storage.sqlite import connect_database, resolve_database_path
 from paper_galaxy.web.server import create_app
@@ -118,6 +119,28 @@ def test_map_points_are_finite_and_neighbors_reference_returned_documents(
         assert point["document_id"] in document_ids
         for neighbor in point["nearest_neighbors"]:
             assert neighbor["document_id"] in document_ids
+
+
+def test_saved_map_run_api_endpoints(tmp_path: Path) -> None:
+    corpus = copy_tiny_corpus(tmp_path)
+    index_corpus(corpus, project_dir=tmp_path, min_chars=40)
+    saved = build_and_store_map_run(project_dir=tmp_path, name="API run")
+    run = saved["map_run"]
+    assert isinstance(run, dict)
+    client = TestClient(create_app(tmp_path))
+
+    runs = client.get("/api/map-runs").json()
+    saved_map = client.get("/api/map", params={"run_id": run["id"]}).json()
+    detail = client.get(f"/api/map-runs/{run['id']}").json()
+    missing = client.get("/api/map", params={"run_id": "missing"})
+
+    assert runs["database_exists"] is True
+    assert runs["map_runs"][0]["name"] == "API run"
+    assert saved_map["map_run"]["id"] == run["id"]
+    assert len(saved_map["points"]) == 8
+    assert detail["map_run"]["id"] == run["id"]
+    assert missing.status_code == 404
+    assert missing.json()["error"]["code"] == "map_run_not_found"
 
 
 def test_cluster_endpoints_rename_reset_and_reject_bad_labels(

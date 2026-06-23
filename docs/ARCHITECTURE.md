@@ -58,6 +58,11 @@ source for nearest-neighbor search and proximity explanations.
 - `embeddings.similarity`: TF-IDF, dense, and hybrid neighbor comparison.
 - `embeddings.index`: optional local vector index path and FAISS availability
   helpers.
+- `maps.runs`: persisted saved map run creation, lookup, and JSON export.
+- `validation`: project health checks for config, schema, FTS, counts, dangling
+  rows, optional dependencies, and map run consistency.
+- `backup.bundle`: local zip backup export/import with manifests and checksums.
+- `plugins`: static built-in local plugin metadata.
 - `web.server`: lazy FastAPI/Uvicorn app creation and local server startup.
 - `web.api`: read-only local JSON API routes.
 - `web.map_builder`: ephemeral map generation from active indexed documents.
@@ -120,6 +125,12 @@ Schema overview:
 - `vector_indexes`: optional local vector index metadata.
 - `cluster_label_overrides`: local manual cluster display labels keyed by
   deterministic cluster signatures.
+- `map_runs`: saved map run metadata, generation parameters, counts, warnings,
+  and document-set signatures.
+- `map_run_points`: saved initial point coordinates, cluster assignment, top
+  terms, and nearest-neighbor summaries.
+- `map_run_clusters`: saved cluster display metadata, terms, representatives,
+  and warnings.
 - `documents_fts`: FTS5 table for local search.
 
 Document status controls search visibility. `active` documents are returned by
@@ -166,6 +177,11 @@ API endpoints:
   text preview.
 - `GET /api/map`: active document map points, cluster labels, nearest neighbors,
   cluster explanation metadata, stats, and warnings.
+- `GET /api/map?run_id=...`: saved map run payload with persisted points and
+  clusters.
+- `GET /api/map-runs`: saved map run metadata list.
+- `GET /api/map-runs/{run_id}`: saved map run payload.
+- `DELETE /api/map-runs/{run_id}`: remove a saved map run.
 - `GET /api/clusters`: generated/manual cluster labels, signatures, top terms,
   representatives, sizes, and warnings.
 - `PUT /api/clusters/{cluster_signature}/label`: save a manual local label
@@ -320,6 +336,34 @@ source + target documents
 The pair endpoint and CLI do not return full extracted document text. Dense pair
 evidence can be added later, but Phase 6 completion does not require loading
 embedding models.
+
+## Phase 7 Professionalization
+
+Phase 7 keeps the application local-first while adding operational boundaries.
+
+Validation is implemented in `validation.validate_project`. It checks the
+configured project directory, schema version, required tables, FTS readability,
+core row counts, dangling chunks/texts/vectors/map points, optional dependency
+availability, saved map run count consistency, and stale cluster overrides when
+a live map can be generated. Reports contain counts and issues, not full
+extracted text.
+
+Saved map runs use the existing TF-IDF map builder as the canonical generator.
+`maps.runs.build_and_store_map_run` stores map metadata in `map_runs`, points in
+`map_run_points`, and cluster snapshots in `map_run_clusters`. Dense or hybrid
+saved map runs are rejected in Phase 7 rather than silently changing semantics.
+The web app can display a saved run through `run_id`, but browser movement and
+manual node positions remain localStorage-only UI state.
+
+Backup bundles are zip files with `manifest.json`, `checksums.sha256`,
+`README_EXPORT.txt`, optional `project.toml`, and an explicitly confirmed
+SQLite database export. They do not include source documents by default. Import
+validates the bundle, supports dry runs, and refuses to overwrite an existing
+metadata directory without `--force`.
+
+The plugin module is a static registry of built-in extractor boundaries. It is
+metadata only in Phase 7 and intentionally does not load third-party, remote, or
+user-provided code.
 
 ## Future Data Model Sketch
 

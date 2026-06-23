@@ -1,4 +1,4 @@
-"""Minimal schema initialization for Phase 2."""
+"""Minimal schema initialization for the local project database."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from importlib.resources import files
 
 from paper_galaxy.errors import FTSUnavailableError
 
-SCHEMA_VERSION = "4"
+SCHEMA_VERSION = "5"
 
 
 def initialize_database(connection: sqlite3.Connection) -> None:

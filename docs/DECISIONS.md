@@ -225,3 +225,34 @@ returns the UI to generated labels.
 "Why nearby?" explanations use shared TF-IDF terms and chunk-level text matches.
 They return short excerpts instead of full extracted documents, and dense pair
 evidence remains optional future work.
+
+## ADR 0037: Phase 7 Saved Map Runs Are SQLite Snapshots
+
+Phase 7 persists map run metadata, points, and clusters in SQLite schema v5.
+Saved map runs use the same TF-IDF map builder as the live map and store
+initial coordinates plus explanation metadata. Browser dragging and manual
+layout remain localStorage-only view state.
+
+## ADR 0038: Saved Map Runs Support TF-IDF Only In Phase 7
+
+Dense or hybrid saved map runs are rejected in Phase 7 instead of silently
+falling back. This keeps saved run semantics clear until a future phase defines
+stable dense-map provenance.
+
+## ADR 0039: Backup Bundles Exclude Source Documents By Default
+
+Project backup export writes a manifest, checksums, project metadata when
+present, and an explicitly confirmed SQLite database copy. It does not include
+source PDFs, notes, images, or extracted-text sidecars by default.
+
+## ADR 0040: Plugins Are Static Built-In Boundaries
+
+The Phase 7 plugin registry lists built-in local extractor capabilities. It
+does not load remote plugins, run user-provided plugin code, or add third-party
+extension discovery.
+
+## ADR 0041: Validation Reports Avoid Full Text
+
+`paper-galaxy validate-project` reports schema, count, consistency, dependency,
+and issue metadata. It does not include full extracted document text or chunk
+contents in console output or JSON reports.

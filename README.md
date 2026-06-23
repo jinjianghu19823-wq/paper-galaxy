@@ -4,7 +4,7 @@ Paper Galaxy is a local-first research cartography tool for turning a personal
 research corpus into an interactive map of documents, clusters, and conceptual
 neighborhoods.
 
-Current status: Phase 6 explainability and labeling. This repository can scan a
+Current status: Phase 7 professionalization. This repository can scan a
 local sample corpus, export a self-contained offline `galaxy.html`, index
 documents and chunks into local SQLite, rerun indexing incrementally, search
 indexed text with SQLite FTS5, and serve a local browser app with an
@@ -14,7 +14,9 @@ supports opt-in local OCR for image files, and can optionally store local dense
 document/chunk embeddings for semantic search and neighbor comparison. Cluster
 labels are generated from inspectable local terms, can be manually renamed in
 SQLite, and document-neighbor explanations can show shared terms and matching
-chunk excerpts.
+chunk excerpts. It also validates local projects, persists stable map runs,
+exports/imports local backup bundles, lists built-in plugin boundaries, and
+builds standard Python distributions.
 
 Eventually, Paper Galaxy will let a user point the app at folders or later
 integrations, represent each document as a point in a 2D map, place similar
@@ -93,6 +95,15 @@ paper-galaxy clusters --project-dir .
 paper-galaxy explain-pair neural_operators/fourier_neural_operator.md neural_operators/deep_operator_network.txt --project-dir .
 paper-galaxy rename-cluster CLUSTER_SIGNATURE "Neural Operators" --project-dir .
 paper-galaxy reset-cluster-label CLUSTER_SIGNATURE --project-dir .
+paper-galaxy validate-project --project-dir . --json-out validation.json
+paper-galaxy build-map-run --project-dir . --name "Tiny corpus map"
+paper-galaxy map-runs --project-dir .
+paper-galaxy show-map-run MAP_RUN_ID --project-dir .
+paper-galaxy export-map-run MAP_RUN_ID --project-dir . --out map-run.json
+paper-galaxy delete-map-run MAP_RUN_ID --project-dir . --yes
+paper-galaxy export-project --project-dir . --out paper-galaxy-backup.zip --yes
+paper-galaxy import-project paper-galaxy-backup.zip --project-dir /path/to/restore --dry-run
+paper-galaxy plugins
 paper-galaxy serve --project-dir .
 paper-galaxy extract-preview examples/tiny_corpus/neural_operators/fourier_neural_operator.md
 ```
@@ -209,10 +220,42 @@ Graph labels now default to focus-only labels to avoid overlap: selected,
 hovered, and direct-neighbor labels remain visible, while all-label display is
 an explicit graph setting.
 
+## Phase 7 Tools
+
+`paper-galaxy validate-project` checks the project config, SQLite schema,
+required tables, FTS table, document/vector/map-run counts, dangling rows, map
+run consistency, optional dependency availability, and stale cluster label
+overrides where feasible. It prints a status table and can write JSON without
+full extracted text.
+
+`paper-galaxy build-map-run` stores a deterministic snapshot of the current
+TF-IDF map in SQLite. `paper-galaxy map-runs`, `show-map-run`,
+`export-map-run`, and `delete-map-run` list, inspect, export, and remove those
+saved snapshots. The web app includes a small selector for "Live map" versus
+saved runs. Saved run coordinates are initial graph positions only; browser
+dragging and pinning still stay in localStorage and are not written to SQLite.
+
+`paper-galaxy export-project` writes a zip backup containing a manifest,
+checksums, project metadata when present, and the local SQLite database when
+confirmed with `--yes`. Source documents are not included by default.
+`paper-galaxy import-project` validates the bundle and refuses to overwrite an
+existing `.paper-galaxy/` directory unless `--force` is passed. Use `--dry-run`
+to inspect planned writes.
+
+`paper-galaxy plugins` lists built-in local extractor plugin boundaries. Phase
+7 exposes only static built-ins; there is no remote plugin loading.
+
+Packaging commands:
+
+```bash
+python -m build
+make validate-example
+make check
+```
+
 ## Next Phase
 
-The next planned implementation phase is Phase 7: professionalization,
-packaging, stable map runs, export/import, and extension boundaries. There is
+The next planned implementation phase is Phase 8 or later future work. There is
 still no cloud dependency, Zotero integration, desktop packaging, account
-system, telemetry, LLM chat, mandatory LLM labeling, or React/Node frontend in
-Phase 6.
+system, telemetry, LLM chat, mandatory LLM labeling, remote plugin loading, or
+React/Node frontend in Phase 7.

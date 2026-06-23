@@ -584,6 +584,257 @@ class Repository:
         )
         return cursor.rowcount > 0
 
+    def save_map_run(
+        self,
+        *,
+        run_id: str,
+        name: str,
+        status: str,
+        similarity_mode: str,
+        model_id: str | None,
+        seed: int,
+        requested_clusters: int | None,
+        requested_neighbors: int,
+        requested_limit: int,
+        document_count: int,
+        cluster_count: int,
+        document_set_signature: str,
+        warnings: Iterable[str],
+        metadata: Mapping[str, Any] | None,
+        points: Iterable[Mapping[str, Any]],
+        clusters: Iterable[Mapping[str, Any]],
+        now: str | None = None,
+    ) -> dict[str, object]:
+        """Persist a deterministic map snapshot without storing document text."""
+
+        timestamp = now or _utc_now()
+        metadata_json = json.dumps(dict(metadata or {}), sort_keys=True)
+        warnings_json = json.dumps([str(warning) for warning in warnings])
+        self.connection.execute(
+            """
+            INSERT INTO map_runs(
+              id, name, created_at, status, similarity_mode, model_id, seed,
+              requested_clusters, requested_neighbors, requested_limit,
+              document_count, cluster_count, document_set_signature,
+              warnings_json, metadata_json
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+              name = excluded.name,
+              status = excluded.status,
+              similarity_mode = excluded.similarity_mode,
+              model_id = excluded.model_id,
+              seed = excluded.seed,
+              requested_clusters = excluded.requested_clusters,
+              requested_neighbors = excluded.requested_neighbors,
+              requested_limit = excluded.requested_limit,
+              document_count = excluded.document_count,
+              cluster_count = excluded.cluster_count,
+              document_set_signature = excluded.document_set_signature,
+              warnings_json = excluded.warnings_json,
+              metadata_json = excluded.metadata_json
+            """,
+            (
+                run_id,
+                name,
+                timestamp,
+                status,
+                similarity_mode,
+                model_id,
+                seed,
+                requested_clusters,
+                requested_neighbors,
+                requested_limit,
+                document_count,
+                cluster_count,
+                document_set_signature,
+                warnings_json,
+                metadata_json,
+            ),
+        )
+        self.connection.execute(
+            "DELETE FROM map_run_points WHERE map_run_id = ?", (run_id,)
+        )
+        self.connection.executemany(
+            """
+            INSERT INTO map_run_points(
+              map_run_id, document_id, x, y, cluster_id, cluster_label,
+              cluster_signature, top_terms_json, nearest_neighbors_json
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            [
+                (
+                    run_id,
+                    str(point.get("document_id", "")),
+                    float(point.get("x", 0.0)),
+                    float(point.get("y", 0.0)),
+                    int(point.get("cluster_id", 0)),
+                    str(point.get("cluster_label", "")),
+                    str(point.get("cluster_signature", "")),
+                    json.dumps(_json_list(point.get("top_terms")), sort_keys=True),
+                    json.dumps(
+                        _json_list(point.get("nearest_neighbors")), sort_keys=True
+                    ),
+                )
+                for point in points
+            ],
+        )
+        self.connection.execute(
+            "DELETE FROM map_run_clusters WHERE map_run_id = ?", (run_id,)
+        )
+        self.connection.executemany(
+            """
+            INSERT INTO map_run_clusters(
+              map_run_id, cluster_id, cluster_signature, display_label,
+              generated_label, source, size, document_ids_json, top_terms_json,
+              representatives_json, warnings_json
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            [
+                (
+                    run_id,
+                    int(cluster.get("cluster_id", 0)),
+                    str(cluster.get("cluster_signature", "")),
+                    str(cluster.get("display_label", "")),
+                    str(cluster.get("generated_label", "")),
+                    str(cluster.get("source", "generated")),
+                    int(cluster.get("size", 0)),
+                    json.dumps(_json_list(cluster.get("document_ids")), sort_keys=True),
+                    json.dumps(_json_list(cluster.get("top_terms")), sort_keys=True),
+                    json.dumps(
+                        _json_list(cluster.get("representatives")), sort_keys=True
+                    ),
+                    json.dumps(_json_list(cluster.get("warnings")), sort_keys=True),
+                )
+                for cluster in clusters
+            ],
+        )
+        return self.get_map_run(run_id, include_payload=False) or {}
+
+    def list_map_runs(self) -> list[dict[str, object]]:
+        """List saved map runs newest first."""
+
+        rows = self.connection.execute(
+            """
+            SELECT *
+            FROM map_runs
+            ORDER BY created_at DESC, name
+            """
+        ).fetchall()
+        return [_map_run_payload(row) for row in rows]
+
+    def get_map_run(
+        self, run_id: str, *, include_payload: bool = True
+    ) -> dict[str, object] | None:
+        """Return a saved map run, optionally including points and clusters."""
+
+        row = self.connection.execute(
+            """
+            SELECT *
+            FROM map_runs
+            WHERE id = ?
+            """,
+            (run_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        payload = _map_run_payload(row)
+        if include_payload:
+            payload["points"] = self.list_map_run_points(run_id)
+            payload["clusters"] = self.list_map_run_clusters(run_id)
+        return payload
+
+    def list_map_run_points(self, run_id: str) -> list[dict[str, object]]:
+        """Return saved map points for one run in stable document order."""
+
+        rows = self.connection.execute(
+            """
+            SELECT *
+            FROM map_run_points
+            WHERE map_run_id = ?
+            ORDER BY document_id
+            """,
+            (run_id,),
+        ).fetchall()
+        return [_map_run_point_payload(row) for row in rows]
+
+    def list_map_run_clusters(self, run_id: str) -> list[dict[str, object]]:
+        """Return saved clusters for one map run."""
+
+        rows = self.connection.execute(
+            """
+            SELECT *
+            FROM map_run_clusters
+            WHERE map_run_id = ?
+            ORDER BY cluster_id, cluster_signature
+            """,
+            (run_id,),
+        ).fetchall()
+        return [_map_run_cluster_payload(row) for row in rows]
+
+    def delete_map_run(self, run_id: str) -> bool:
+        """Delete a saved map run and its child rows."""
+
+        cursor = self.connection.execute(
+            """
+            DELETE FROM map_runs
+            WHERE id = ?
+            """,
+            (run_id,),
+        )
+        return cursor.rowcount > 0
+
+    def count_rows(self, table_name: str) -> int:
+        """Return a table row count for known internal tables."""
+
+        if table_name not in _KNOWN_COUNT_TABLES:
+            raise ValueError(f"Unsupported table name: {table_name}")
+        return _scalar_int(self.connection, f"SELECT COUNT(*) FROM {table_name}")
+
+    def dangling_row_counts(self) -> dict[str, int]:
+        """Return cheap referential-integrity checks for validation."""
+
+        return {
+            "chunks_without_documents": _scalar_int(
+                self.connection,
+                """
+                SELECT COUNT(*)
+                FROM chunks c
+                LEFT JOIN documents d ON d.id = c.document_id
+                WHERE d.id IS NULL
+                """,
+            ),
+            "texts_without_documents": _scalar_int(
+                self.connection,
+                """
+                SELECT COUNT(*)
+                FROM document_texts dt
+                LEFT JOIN documents d ON d.id = dt.document_id
+                WHERE d.id IS NULL
+                """,
+            ),
+            "vectors_without_documents": _scalar_int(
+                self.connection,
+                """
+                SELECT COUNT(*)
+                FROM vectors v
+                LEFT JOIN documents d ON d.id = v.object_id
+                WHERE v.object_type = 'document' AND d.id IS NULL
+                """,
+            ),
+            "map_points_without_documents": _scalar_int(
+                self.connection,
+                """
+                SELECT COUNT(*)
+                FROM map_run_points p
+                LEFT JOIN documents d ON d.id = p.document_id
+                WHERE d.id IS NULL
+                """,
+            ),
+        }
+
     def touch_document(self, document_id: str, now: str) -> None:
         self.connection.execute(
             """
@@ -935,6 +1186,24 @@ class Repository:
         )
 
 
+_KNOWN_COUNT_TABLES = {
+    "documents",
+    "document_texts",
+    "chunks",
+    "scan_runs",
+    "skipped_files",
+    "extraction_reports",
+    "embedding_models",
+    "vectors",
+    "embedding_runs",
+    "vector_indexes",
+    "cluster_label_overrides",
+    "map_runs",
+    "map_run_points",
+    "map_run_clusters",
+}
+
+
 def _document_from_row(row: sqlite3.Row) -> IndexedDocument:
     return IndexedDocument(
         id=str(row["id"]),
@@ -1040,6 +1309,60 @@ def _cluster_label_override_payload(row: sqlite3.Row | None) -> dict[str, object
     }
 
 
+def _map_run_payload(row: sqlite3.Row) -> dict[str, object]:
+    warnings = json.loads(str(row["warnings_json"]))
+    metadata = json.loads(str(row["metadata_json"]))
+    return {
+        "id": str(row["id"]),
+        "name": str(row["name"]),
+        "created_at": str(row["created_at"]),
+        "status": str(row["status"]),
+        "similarity_mode": str(row["similarity_mode"]),
+        "model_id": str(row["model_id"]) if row["model_id"] is not None else None,
+        "seed": int(row["seed"]),
+        "requested_clusters": (
+            int(row["requested_clusters"])
+            if row["requested_clusters"] is not None
+            else None
+        ),
+        "requested_neighbors": int(row["requested_neighbors"]),
+        "requested_limit": int(row["requested_limit"]),
+        "document_count": int(row["document_count"]),
+        "cluster_count": int(row["cluster_count"]),
+        "document_set_signature": str(row["document_set_signature"]),
+        "warnings": warnings if isinstance(warnings, list) else [],
+        "metadata": metadata if isinstance(metadata, dict) else {},
+    }
+
+
+def _map_run_point_payload(row: sqlite3.Row) -> dict[str, object]:
+    return {
+        "document_id": str(row["document_id"]),
+        "x": float(row["x"]),
+        "y": float(row["y"]),
+        "cluster_id": int(row["cluster_id"]),
+        "cluster_label": str(row["cluster_label"]),
+        "cluster_signature": str(row["cluster_signature"]),
+        "top_terms": _json_list(json.loads(str(row["top_terms_json"]))),
+        "nearest_neighbors": _json_list(json.loads(str(row["nearest_neighbors_json"]))),
+    }
+
+
+def _map_run_cluster_payload(row: sqlite3.Row) -> dict[str, object]:
+    return {
+        "cluster_id": int(row["cluster_id"]),
+        "cluster_signature": str(row["cluster_signature"]),
+        "display_label": str(row["display_label"]),
+        "generated_label": str(row["generated_label"]),
+        "source": str(row["source"]),
+        "size": int(row["size"]),
+        "document_ids": _json_list(json.loads(str(row["document_ids_json"]))),
+        "top_terms": _json_list(json.loads(str(row["top_terms_json"]))),
+        "representatives": _json_list(json.loads(str(row["representatives_json"]))),
+        "warnings": _json_list(json.loads(str(row["warnings_json"]))),
+    }
+
+
 def _extraction_report_from_row(row: sqlite3.Row) -> ExtractionReport:
     warnings_raw = json.loads(str(row["warnings_json"]))
     metadata_raw = json.loads(str(row["metadata_json"]))
@@ -1071,6 +1394,14 @@ def _skipped_id(scan_run_id: str, relative_path: str, reason: str) -> str:
 def _cluster_label_override_id(cluster_signature: str) -> str:
     digest = hashlib.sha256(cluster_signature.encode("utf-8")).hexdigest()
     return f"cluster_label_{digest[:16]}"
+
+
+def _json_list(value: object) -> list[object]:
+    return value if isinstance(value, list) else []
+
+
+def _json_object(value: object) -> dict[str, object]:
+    return value if isinstance(value, dict) else {}
 
 
 def _utc_now() -> str:

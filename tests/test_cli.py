@@ -19,6 +19,7 @@ def test_doctor_exits_successfully() -> None:
     assert "Paper Galaxy version" in result.output
     assert "Status: Phase 0 scaffold is ready." in result.output
     assert "Serve command: Phase 3 local web app is available." in result.output
+    assert "Professionalization commands: Phase 7" in result.output
 
 
 def test_init_creates_project_metadata(tmp_path: Path) -> None:
@@ -327,6 +328,24 @@ def test_phase_six_command_help_exits_successfully() -> None:
         assert result.exit_code == 0
 
 
+def test_phase_seven_command_help_exits_successfully() -> None:
+    runner = CliRunner()
+
+    for command in (
+        "validate-project",
+        "build-map-run",
+        "map-runs",
+        "show-map-run",
+        "delete-map-run",
+        "export-map-run",
+        "export-project",
+        "import-project",
+        "plugins",
+    ):
+        result = runner.invoke(app, [command, "--help"])
+        assert result.exit_code == 0
+
+
 def test_embed_rejects_remote_model_names_by_default(tmp_path: Path) -> None:
     runner = CliRunner()
 
@@ -422,3 +441,86 @@ def test_cluster_and_pair_cli_commands_on_tiny_corpus(tmp_path: Path) -> None:
     assert explanation.exit_code == 0
     assert "Lexical score" in explanation.output
     assert "Shared Terms" in explanation.output
+
+
+def test_phase_seven_cli_commands_on_tiny_corpus(tmp_path: Path) -> None:
+    runner = CliRunner()
+    index = runner.invoke(
+        app,
+        [
+            "index",
+            "examples/tiny_corpus",
+            "--project-dir",
+            str(tmp_path),
+            "--min-chars",
+            "40",
+        ],
+    )
+    validate = runner.invoke(
+        app,
+        [
+            "validate-project",
+            "--project-dir",
+            str(tmp_path),
+            "--json-out",
+            str(tmp_path / "validation.json"),
+        ],
+    )
+    build = runner.invoke(
+        app,
+        [
+            "build-map-run",
+            "--project-dir",
+            str(tmp_path),
+            "--name",
+            "CLI run",
+            "--json-out",
+            str(tmp_path / "map-run.json"),
+        ],
+    )
+    runs = runner.invoke(app, ["map-runs", "--project-dir", str(tmp_path), "--json"])
+    run_payload = json.loads(runs.output)
+    run_id = run_payload["map_runs"][0]["id"]
+    show = runner.invoke(
+        app,
+        ["show-map-run", run_id, "--project-dir", str(tmp_path)],
+    )
+    export_run = runner.invoke(
+        app,
+        [
+            "export-map-run",
+            run_id,
+            "--project-dir",
+            str(tmp_path),
+            "--out",
+            str(tmp_path / "exported-map-run.json"),
+        ],
+    )
+    export_project = runner.invoke(
+        app,
+        [
+            "export-project",
+            "--project-dir",
+            str(tmp_path),
+            "--out",
+            str(tmp_path / "backup.zip"),
+            "--yes",
+        ],
+    )
+    plugins = runner.invoke(app, ["plugins", "--json"])
+
+    assert index.exit_code == 0
+    assert validate.exit_code == 0
+    assert (tmp_path / "validation.json").exists()
+    assert build.exit_code == 0
+    assert (tmp_path / "map-run.json").exists()
+    assert runs.exit_code == 0
+    assert run_payload["map_runs"][0]["name"] == "CLI run"
+    assert show.exit_code == 0
+    assert "Documents: 8" in show.output
+    assert export_run.exit_code == 0
+    assert (tmp_path / "exported-map-run.json").exists()
+    assert export_project.exit_code == 0
+    assert (tmp_path / "backup.zip").exists()
+    assert plugins.exit_code == 0
+    assert "extractor.markdown" in plugins.output

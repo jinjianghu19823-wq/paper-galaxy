@@ -17,6 +17,15 @@ Paper Galaxy is local-first by default.
 - Phase 6 pair explanations expose shared terms and short chunk excerpts in the
   local CLI or browser app. These excerpts may still contain sensitive source
   text, but they are not uploaded by Paper Galaxy.
+- Phase 7 stores saved map run metadata, point coordinates, cluster labels,
+  top terms, and nearest-neighbor summaries locally in SQLite. Saved runs do not
+  store full source documents or chunk text.
+- Phase 7 validation reports contain counts, schema status, warnings, and
+  errors, not full extracted text.
+- Phase 7 backup export includes the local SQLite database only when the user
+  confirms with `--yes`. Source documents are not included by default.
+- Phase 7 plugin metadata is static and local; there is no remote plugin
+  loading or extension marketplace.
 - Missing and unindexed records may preserve previously extracted local text and
   chunks so the local index can recover document history without rescanning
   unavailable content.

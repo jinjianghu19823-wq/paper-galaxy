@@ -64,10 +64,13 @@ def test_schema_initializes_expected_tables(tmp_path: Path) -> None:
     assert "vectors" in tables
     assert "embedding_runs" in tables
     assert "cluster_label_overrides" in tables
+    assert "map_runs" in tables
+    assert "map_run_points" in tables
+    assert "map_run_clusters" in tables
     assert "documents_fts" in tables
 
     assert version is not None
-    assert version["value"] == "4"
+    assert version["value"] == "5"
 
 
 def test_schema_upgrades_version_one_database_idempotently(tmp_path: Path) -> None:
@@ -94,6 +97,13 @@ def test_schema_upgrades_version_one_database_idempotently(tmp_path: Path) -> No
             WHERE type = 'table' AND name = 'cluster_label_overrides'
             """
         ).fetchone()
+        map_runs_table = connection.execute(
+            """
+            SELECT name
+            FROM sqlite_master
+            WHERE type = 'table' AND name = 'map_runs'
+            """
+        ).fetchone()
         version = connection.execute(
             "SELECT value FROM schema_meta WHERE key = 'schema_version'"
         ).fetchone()
@@ -102,8 +112,9 @@ def test_schema_upgrades_version_one_database_idempotently(tmp_path: Path) -> No
 
     assert report_table is not None
     assert override_table is not None
+    assert map_runs_table is not None
     assert version is not None
-    assert version["value"] == "4"
+    assert version["value"] == "5"
 
 
 def test_cluster_label_override_repository_methods(tmp_path: Path) -> None:
@@ -137,6 +148,86 @@ def test_cluster_label_override_repository_methods(tmp_path: Path) -> None:
     assert rows[0]["cluster_signature"] == "cluster_abc"
     assert deleted is True
     assert deleted_again is False
+
+
+def test_map_run_repository_methods(tmp_path: Path) -> None:
+    connection = connect_database(tmp_path)
+    try:
+        initialize_database(connection)
+        repository = Repository(connection, resolve_database_path(tmp_path))
+        with connection:
+            repository.upsert_corpus(
+                "corpus", str(tmp_path), "2026-01-01T00:00:00+00:00"
+            )
+            connection.execute(
+                """
+                INSERT INTO documents(
+                  id, corpus_id, path, relative_path, file_type, title, sha256,
+                  size_bytes, mtime_ns, char_count, status, first_seen_at,
+                  last_seen_at, updated_at
+                )
+                VALUES (
+                  'doc_1', 'corpus', 'doc.md', 'doc.md', '.md', 'Doc', 'sha',
+                  1, 1, 10, 'active', '2026-01-01T00:00:00+00:00',
+                  '2026-01-01T00:00:00+00:00', '2026-01-01T00:00:00+00:00'
+                )
+                """
+            )
+            created = repository.save_map_run(
+                run_id="map_run_test",
+                name="Test Run",
+                status="completed",
+                similarity_mode="tfidf",
+                model_id=None,
+                seed=7,
+                requested_clusters=None,
+                requested_neighbors=3,
+                requested_limit=20,
+                document_count=1,
+                cluster_count=1,
+                document_set_signature="abc",
+                warnings=[],
+                metadata={"phase": 7},
+                points=[
+                    {
+                        "document_id": "doc_1",
+                        "x": 1.0,
+                        "y": 2.0,
+                        "cluster_id": 0,
+                        "cluster_label": "Operators",
+                        "cluster_signature": "cluster_0",
+                        "top_terms": ["operator"],
+                        "nearest_neighbors": [],
+                    }
+                ],
+                clusters=[
+                    {
+                        "cluster_id": 0,
+                        "cluster_signature": "cluster_0",
+                        "display_label": "Operators",
+                        "generated_label": "Operators",
+                        "source": "generated",
+                        "size": 1,
+                        "document_ids": ["doc_1"],
+                        "top_terms": [{"term": "operator", "score": 1.0}],
+                        "representatives": [],
+                        "warnings": [],
+                    }
+                ],
+                now="2026-01-01T00:00:00+00:00",
+            )
+            rows = repository.list_map_runs()
+            full = repository.get_map_run("map_run_test")
+            deleted = repository.delete_map_run("map_run_test")
+    finally:
+        connection.close()
+
+    assert created["id"] == "map_run_test"
+    assert rows[0]["name"] == "Test Run"
+    assert full is not None
+    assert full["points"][0]["top_terms"] == ["operator"]
+    assert full["clusters"][0]["display_label"] == "Operators"
+    assert deleted is True
 
 
 def test_sqlite_build_supports_fts5(tmp_path: Path) -> None:

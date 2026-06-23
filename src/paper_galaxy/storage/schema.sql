@@ -156,6 +156,56 @@ CREATE TABLE IF NOT EXISTS cluster_label_overrides (
   updated_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS map_runs (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  status TEXT NOT NULL,
+  similarity_mode TEXT NOT NULL,
+  model_id TEXT,
+  seed INTEGER NOT NULL,
+  requested_clusters INTEGER,
+  requested_neighbors INTEGER NOT NULL,
+  requested_limit INTEGER NOT NULL,
+  document_count INTEGER NOT NULL,
+  cluster_count INTEGER NOT NULL,
+  document_set_signature TEXT NOT NULL,
+  warnings_json TEXT NOT NULL DEFAULT '[]',
+  metadata_json TEXT NOT NULL DEFAULT '{}',
+  FOREIGN KEY(model_id) REFERENCES embedding_models(id)
+);
+
+CREATE TABLE IF NOT EXISTS map_run_points (
+  map_run_id TEXT NOT NULL,
+  document_id TEXT NOT NULL,
+  x REAL NOT NULL,
+  y REAL NOT NULL,
+  cluster_id INTEGER NOT NULL,
+  cluster_label TEXT NOT NULL,
+  cluster_signature TEXT NOT NULL,
+  top_terms_json TEXT NOT NULL DEFAULT '[]',
+  nearest_neighbors_json TEXT NOT NULL DEFAULT '[]',
+  PRIMARY KEY(map_run_id, document_id),
+  FOREIGN KEY(map_run_id) REFERENCES map_runs(id) ON DELETE CASCADE,
+  FOREIGN KEY(document_id) REFERENCES documents(id)
+);
+
+CREATE TABLE IF NOT EXISTS map_run_clusters (
+  map_run_id TEXT NOT NULL,
+  cluster_id INTEGER NOT NULL,
+  cluster_signature TEXT NOT NULL,
+  display_label TEXT NOT NULL,
+  generated_label TEXT NOT NULL,
+  source TEXT NOT NULL,
+  size INTEGER NOT NULL,
+  document_ids_json TEXT NOT NULL DEFAULT '[]',
+  top_terms_json TEXT NOT NULL DEFAULT '[]',
+  representatives_json TEXT NOT NULL DEFAULT '[]',
+  warnings_json TEXT NOT NULL DEFAULT '[]',
+  PRIMARY KEY(map_run_id, cluster_id),
+  FOREIGN KEY(map_run_id) REFERENCES map_runs(id) ON DELETE CASCADE
+);
+
 CREATE VIRTUAL TABLE IF NOT EXISTS documents_fts USING fts5(
   document_id UNINDEXED,
   title,
@@ -204,3 +254,15 @@ CREATE INDEX IF NOT EXISTS idx_embedding_runs_model_started_at
 
 CREATE INDEX IF NOT EXISTS idx_cluster_label_overrides_signature
   ON cluster_label_overrides(cluster_signature);
+
+CREATE INDEX IF NOT EXISTS idx_map_runs_created_at
+  ON map_runs(created_at);
+
+CREATE INDEX IF NOT EXISTS idx_map_runs_document_set_signature
+  ON map_runs(document_set_signature);
+
+CREATE INDEX IF NOT EXISTS idx_map_run_points_document_id
+  ON map_run_points(document_id);
+
+CREATE INDEX IF NOT EXISTS idx_map_run_clusters_signature
+  ON map_run_clusters(cluster_signature);

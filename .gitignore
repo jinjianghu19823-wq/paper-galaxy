@@ -21,3 +21,9 @@ data/
 *.sqlite3
 *.faiss
 *.index
+galaxy.html
+galaxy.json
+extraction-report.json
+validation.json
+map-run*.json
+paper-galaxy-backup*.zip

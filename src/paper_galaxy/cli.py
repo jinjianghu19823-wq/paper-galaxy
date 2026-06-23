@@ -9,6 +9,7 @@ import typer
 from rich.table import Table
 
 from paper_galaxy import __version__
+from paper_galaxy.backup import export_project, import_project
 from paper_galaxy.embeddings.builder import build_embeddings
 from paper_galaxy.embeddings.models import NeighborResult
 from paper_galaxy.embeddings.search import (
@@ -28,12 +29,23 @@ from paper_galaxy.explain.pairs import explain_pair
 from paper_galaxy.extract import extract_file
 from paper_galaxy.indexer import index_corpus
 from paper_galaxy.logging import get_console
+from paper_galaxy.maps import (
+    build_and_store_map_run,
+    export_map_run,
+    persisted_map_payload,
+)
 from paper_galaxy.paths import project_config_path
 from paper_galaxy.pipeline import build_galaxy
+from paper_galaxy.plugins import get_plugin_registry
 from paper_galaxy.search import get_database_stats, search_index
 from paper_galaxy.storage.migrations import initialize_database
 from paper_galaxy.storage.repository import Repository
 from paper_galaxy.storage.sqlite import connect_database, resolve_database_path
+from paper_galaxy.validation import (
+    validate_project,
+    validation_exit_code,
+    write_validation_report,
+)
 from paper_galaxy.web.map_builder import build_map_payload
 
 app = typer.Typer(
@@ -87,6 +99,10 @@ def doctor() -> None:
     console.print("Embedding commands: Phase 5 optional local vectors are available.")
     console.print(
         "Explainability commands: Phase 6 labels and pair evidence are available."
+    )
+    console.print(
+        "Professionalization commands: Phase 7 validation, map runs, backups, "
+        "and plugins are available."
     )
 
 
@@ -1048,6 +1064,376 @@ def reset_cluster_label_command(
     get_console().print(f"{status} {cluster_signature}.")
 
 
+@app.command("validate-project")
+def validate_project_command(
+    project_dir: Annotated[
+        Path,
+        typer.Option(
+            "--project-dir", help="Project directory containing .paper-galaxy."
+        ),
+    ] = Path("."),
+    json_out: Annotated[
+        Path | None,
+        typer.Option("--json-out", help="Optional JSON validation report path."),
+    ] = None,
+    strict: Annotated[
+        bool,
+        typer.Option("--strict", help="Exit nonzero on warnings as well as errors."),
+    ] = False,
+) -> None:
+    """Validate local project metadata, database, indexes, and map runs."""
+
+    console = get_console()
+    report = validate_project(project_dir.expanduser().resolve())
+    table = Table(title="Paper Galaxy Project Validation")
+    table.add_column("Check", style="bold")
+    table.add_column("Value", overflow="fold")
+    table.add_row("Status", str(report["status"]))
+    table.add_row("Project dir", str(report["project_dir"]))
+    table.add_row("Database", str(report["database_path"]))
+    table.add_row("Schema", str(report.get("schema_version") or "missing"))
+    counts = report.get("counts")
+    if isinstance(counts, dict):
+        for key in ("documents", "chunks", "extraction_reports", "vectors", "map_runs"):
+            table.add_row(key.replace("_", " ").title(), str(counts.get(key, 0)))
+    console.print(table)
+
+    issues = report.get("issues")
+    issue_rows = issues if isinstance(issues, list) else []
+    if issue_rows:
+        issue_table = Table(title="Validation Issues")
+        issue_table.add_column("Severity")
+        issue_table.add_column("Code")
+        issue_table.add_column("Message", overflow="fold")
+        for issue in issue_rows:
+            if isinstance(issue, dict):
+                issue_table.add_row(
+                    str(issue.get("severity", "")),
+                    str(issue.get("code", "")),
+                    str(issue.get("message", "")),
+                )
+        console.print(issue_table)
+    if json_out is not None:
+        path = write_validation_report(report, json_out)
+        console.print(f"Wrote validation JSON to {path}.")
+    raise typer.Exit(validation_exit_code(report, strict=strict))
+
+
+@app.command("build-map-run")
+def build_map_run_command(
+    project_dir: Annotated[
+        Path,
+        typer.Option(
+            "--project-dir", help="Project directory containing .paper-galaxy."
+        ),
+    ] = Path("."),
+    name: Annotated[
+        str | None,
+        typer.Option("--name", help="Human-readable saved map name."),
+    ] = None,
+    seed: Annotated[
+        int,
+        typer.Option("--seed", help="Random seed for deterministic layout."),
+    ] = 42,
+    clusters: Annotated[
+        int | None,
+        typer.Option("--clusters", help="Optional cluster count."),
+    ] = None,
+    neighbors: Annotated[
+        int,
+        typer.Option("--neighbors", help="Nearest neighbors per document."),
+    ] = 5,
+    limit: Annotated[
+        int,
+        typer.Option("--limit", help="Maximum active documents to map."),
+    ] = 1000,
+    similarity_mode: Annotated[
+        str,
+        typer.Option("--similarity-mode", help="Saved map similarity mode."),
+    ] = "tfidf",
+    model_id: Annotated[
+        str | None,
+        typer.Option("--model-id", help="Reserved for future dense map runs."),
+    ] = None,
+    force_name: Annotated[
+        bool,
+        typer.Option(
+            "--force-name",
+            help="Reserved for future duplicate-name enforcement.",
+        ),
+    ] = False,
+    json_out: Annotated[
+        Path | None,
+        typer.Option("--json-out", help="Optional saved map run JSON export."),
+    ] = None,
+) -> None:
+    """Build and persist a saved local map run."""
+
+    console = get_console()
+    del force_name
+    try:
+        payload = build_and_store_map_run(
+            project_dir=project_dir.expanduser().resolve(),
+            name=name,
+            seed=seed,
+            clusters=clusters,
+            neighbors=neighbors,
+            limit=limit,
+            similarity_mode=similarity_mode,
+            model_id=model_id,
+        )
+    except (MissingDependencyError, ValueError) as exc:
+        console.print(str(exc), markup=False)
+        raise typer.Exit(1) from exc
+    run = payload["map_run"]
+    if isinstance(run, dict):
+        table = _map_run_table([run], title="Saved Map Run")
+        console.print(table)
+        if json_out is not None:
+            output = export_map_run(
+                project_dir=project_dir.expanduser().resolve(),
+                run_id=str(run["id"]),
+                output_path=json_out,
+            )
+            console.print(f"Wrote saved map run JSON to {output}.")
+
+
+@app.command("map-runs")
+def map_runs_command(
+    project_dir: Annotated[
+        Path,
+        typer.Option(
+            "--project-dir", help="Project directory containing .paper-galaxy."
+        ),
+    ] = Path("."),
+    json_output: Annotated[
+        bool,
+        typer.Option("--json", help="Print JSON instead of a table."),
+    ] = False,
+) -> None:
+    """List saved local map runs."""
+
+    repository = _open_repository(project_dir.expanduser().resolve())
+    try:
+        runs = repository.list_map_runs()
+    finally:
+        repository.connection.close()
+    if json_output:
+        get_console().print_json(data={"map_runs": runs})
+    else:
+        get_console().print(_map_run_table(runs))
+
+
+@app.command("show-map-run")
+def show_map_run_command(
+    run_id: Annotated[str, typer.Argument(help="Saved map run id.")],
+    project_dir: Annotated[
+        Path,
+        typer.Option(
+            "--project-dir", help="Project directory containing .paper-galaxy."
+        ),
+    ] = Path("."),
+    json_output: Annotated[
+        bool,
+        typer.Option("--json", help="Print JSON instead of a table."),
+    ] = False,
+) -> None:
+    """Show saved map run metadata and counts."""
+
+    try:
+        payload = persisted_map_payload(
+            project_dir=project_dir.expanduser().resolve(), run_id=run_id
+        )
+    except ValueError as exc:
+        get_console().print(str(exc))
+        raise typer.Exit(1) from exc
+    if json_output:
+        get_console().print_json(data=payload)
+        return
+    run = payload.get("map_run")
+    table = _map_run_table([run] if isinstance(run, dict) else [], title="Map Run")
+    get_console().print(table)
+    documents = _object_list(payload.get("documents"))
+    points = _object_list(payload.get("points"))
+    clusters = _object_list(payload.get("clusters"))
+    get_console().print(
+        f"Documents: {len(documents)}; Points: {len(points)}; Clusters: {len(clusters)}"
+    )
+
+
+@app.command("delete-map-run")
+def delete_map_run_command(
+    run_id: Annotated[str, typer.Argument(help="Saved map run id.")],
+    project_dir: Annotated[
+        Path,
+        typer.Option(
+            "--project-dir", help="Project directory containing .paper-galaxy."
+        ),
+    ] = Path("."),
+    yes: Annotated[
+        bool,
+        typer.Option("--yes", "-y", help="Delete without an interactive prompt."),
+    ] = False,
+) -> None:
+    """Delete a saved map run."""
+
+    if not yes and not typer.confirm(f"Delete saved map run {run_id}?"):
+        get_console().print("Cancelled.")
+        return
+    repository = _open_repository(project_dir.expanduser().resolve())
+    try:
+        with repository.connection:
+            deleted = repository.delete_map_run(run_id)
+    finally:
+        repository.connection.close()
+    get_console().print("Deleted." if deleted else "No saved map run found.")
+
+
+@app.command("export-map-run")
+def export_map_run_command(
+    run_id: Annotated[str, typer.Argument(help="Saved map run id.")],
+    out: Annotated[
+        Path,
+        typer.Option("--out", help="Output JSON path for the saved map run."),
+    ] = Path("map-run.json"),
+    project_dir: Annotated[
+        Path,
+        typer.Option(
+            "--project-dir", help="Project directory containing .paper-galaxy."
+        ),
+    ] = Path("."),
+) -> None:
+    """Export a saved map run as JSON without document text."""
+
+    try:
+        output = export_map_run(
+            project_dir=project_dir.expanduser().resolve(),
+            run_id=run_id,
+            output_path=out,
+        )
+    except ValueError as exc:
+        get_console().print(str(exc))
+        raise typer.Exit(1) from exc
+    get_console().print(f"Wrote saved map run JSON to {output}.")
+
+
+@app.command("export-project")
+def export_project_command(
+    out: Annotated[
+        Path,
+        typer.Option("--out", help="Output zip backup path."),
+    ] = Path("paper-galaxy-backup.zip"),
+    project_dir: Annotated[
+        Path,
+        typer.Option(
+            "--project-dir", help="Project directory containing .paper-galaxy."
+        ),
+    ] = Path("."),
+    include_db: Annotated[
+        bool,
+        typer.Option("--include-db/--no-include-db", help="Include the SQLite DB."),
+    ] = True,
+    include_vector_indexes: Annotated[
+        bool,
+        typer.Option("--include-vector-indexes", help="Include local vector indexes."),
+    ] = False,
+    include_source_files: Annotated[
+        bool,
+        typer.Option("--include-source-files", help="Reserved; not available yet."),
+    ] = False,
+    yes: Annotated[
+        bool,
+        typer.Option("--yes", "-y", help="Confirm exporting the local SQLite DB."),
+    ] = False,
+) -> None:
+    """Export local project metadata and database into a zip backup."""
+
+    try:
+        result = export_project(
+            project_dir=project_dir.expanduser().resolve(),
+            output_path=out,
+            include_db=include_db,
+            include_vector_indexes=include_vector_indexes,
+            include_source_files=include_source_files,
+            yes=yes,
+        )
+    except (PermissionError, ValueError) as exc:
+        get_console().print(str(exc))
+        raise typer.Exit(1) from exc
+    get_console().print(f"Wrote project backup to {result['output_path']}.")
+
+
+@app.command("import-project")
+def import_project_command(
+    backup: Annotated[Path, typer.Argument(help="Paper Galaxy backup zip.")],
+    project_dir: Annotated[
+        Path,
+        typer.Option("--project-dir", help="Target project directory."),
+    ] = Path("."),
+    force: Annotated[
+        bool,
+        typer.Option("--force", "-f", help="Overwrite .paper-galaxy if present."),
+    ] = False,
+    dry_run: Annotated[
+        bool,
+        typer.Option("--dry-run", help="Inspect planned writes without importing."),
+    ] = False,
+    validate_checksums: Annotated[
+        bool,
+        typer.Option(
+            "--validate-checksums/--no-validate-checksums",
+            help="Validate bundle checksums before import.",
+        ),
+    ] = True,
+) -> None:
+    """Import a local project backup into a target project directory."""
+
+    try:
+        result = import_project(
+            backup_path=backup,
+            project_dir=project_dir.expanduser().resolve(),
+            force=force,
+            dry_run=dry_run,
+            validate_checksums=validate_checksums,
+        )
+    except (FileNotFoundError, FileExistsError, ValueError) as exc:
+        get_console().print(str(exc))
+        raise typer.Exit(1) from exc
+    action = "Would write" if dry_run else "Imported"
+    get_console().print(f"{action}: {', '.join(result['writes']) or 'no files'}.")
+
+
+@app.command("plugins")
+def plugins_command(
+    json_output: Annotated[
+        bool,
+        typer.Option("--json", help="Print JSON instead of a table."),
+    ] = False,
+) -> None:
+    """List built-in local plugin boundaries."""
+
+    plugins = get_plugin_registry().list_payloads()
+    if json_output:
+        get_console().print_json(data={"plugins": plugins})
+        return
+    table = Table(title="Paper Galaxy Built-in Plugins")
+    table.add_column("ID")
+    table.add_column("Kind")
+    table.add_column("Default")
+    table.add_column("Local")
+    table.add_column("Extensions", overflow="fold")
+    for plugin in plugins:
+        extensions = _object_list(plugin.get("file_extensions"))
+        table.add_row(
+            str(plugin["id"]),
+            str(plugin["kind"]),
+            "yes" if plugin["enabled_by_default"] else "no",
+            "yes" if plugin["local_only"] else "no",
+            ", ".join(str(item) for item in extensions),
+        )
+    get_console().print(table)
+
+
 @app.command("explain-pair")
 def explain_pair_command(
     source: Annotated[
@@ -1241,6 +1627,32 @@ def _neighbors_table(title: str, neighbors: list[NeighborResult]) -> Table:
             f"{neighbor.score:.4f}",
         )
     return table
+
+
+def _map_run_table(
+    runs: list[dict[str, object]], *, title: str = "Paper Galaxy Saved Map Runs"
+) -> Table:
+    table = Table(title=title)
+    table.add_column("ID", overflow="fold")
+    table.add_column("Name", overflow="fold")
+    table.add_column("Created")
+    table.add_column("Mode")
+    table.add_column("Docs", justify="right")
+    table.add_column("Clusters", justify="right")
+    for run in runs:
+        table.add_row(
+            str(run.get("id", "")),
+            str(run.get("name", "")),
+            str(run.get("created_at", "")),
+            str(run.get("similarity_mode", "")),
+            str(run.get("document_count", "")),
+            str(run.get("cluster_count", "")),
+        )
+    return table
+
+
+def _object_list(value: object) -> list[object]:
+    return value if isinstance(value, list) else []
 
 
 def _open_repository(project_dir: Path) -> Repository:

@@ -12,6 +12,7 @@ from paper_galaxy.embeddings.search import vector_stats as embedding_vector_stat
 from paper_galaxy.errors import MissingDependencyError
 from paper_galaxy.explain.labels import validate_manual_label
 from paper_galaxy.explain.pairs import explain_pair, pair_explanation_payload
+from paper_galaxy.maps import persisted_map_payload
 from paper_galaxy.records import (
     DatabaseStats,
     IndexedChunk,
@@ -209,6 +210,7 @@ def register_api_routes(app: Any, config: WebAppConfig) -> None:
         seed: int | None = None,
         clusters: int | None = None,
         neighbors: int | None = None,
+        run_id: str | None = None,
     ) -> Any:
         missing = _missing_database_payload(config)
         if missing is not None:
@@ -221,6 +223,26 @@ def register_api_routes(app: Any, config: WebAppConfig) -> None:
                 "stats": None,
                 **missing,
             }
+        if run_id:
+            try:
+                return {
+                    "database_exists": True,
+                    **persisted_map_payload(
+                        project_dir=config.project_dir,
+                        run_id=run_id,
+                    ),
+                }
+            except ValueError as exc:
+                return JSONResponse(
+                    status_code=404,
+                    content={
+                        "database_exists": True,
+                        "error": {
+                            "code": "map_run_not_found",
+                            "message": str(exc),
+                        },
+                    },
+                )
         try:
             payload = build_map_payload(
                 project_dir=config.project_dir,
@@ -252,6 +274,58 @@ def register_api_routes(app: Any, config: WebAppConfig) -> None:
                 },
             )
         return {"database_exists": True, **payload}
+
+    @app.get("/api/map-runs")
+    def map_runs() -> dict[str, object]:
+        missing = _missing_database_payload(config)
+        if missing is not None:
+            return {"database_exists": False, "map_runs": [], **missing}
+        repository = _repository(config.project_dir)
+        try:
+            runs = repository.list_map_runs()
+        finally:
+            repository.connection.close()
+        return {"database_exists": True, "map_runs": runs, "warnings": []}
+
+    @app.get("/api/map-runs/{run_id}")
+    def map_run_detail(run_id: str) -> Any:
+        missing = _missing_database_payload(config)
+        if missing is not None:
+            return JSONResponse(status_code=404, content=missing)
+        try:
+            return {
+                "database_exists": True,
+                **persisted_map_payload(project_dir=config.project_dir, run_id=run_id),
+            }
+        except ValueError as exc:
+            return JSONResponse(
+                status_code=404,
+                content={
+                    "database_exists": True,
+                    "error": {
+                        "code": "map_run_not_found",
+                        "message": str(exc),
+                    },
+                },
+            )
+
+    @app.delete("/api/map-runs/{run_id}")
+    def delete_map_run(run_id: str) -> dict[str, object]:
+        missing = _missing_database_payload(config)
+        if missing is not None:
+            return {"database_exists": False, "deleted": False, **missing}
+        repository = _repository(config.project_dir)
+        try:
+            with repository.connection:
+                deleted = repository.delete_map_run(run_id)
+        finally:
+            repository.connection.close()
+        return {
+            "database_exists": True,
+            "map_run_id": run_id,
+            "deleted": deleted,
+            "warnings": [],
+        }
 
     @app.get("/api/clusters")
     def cluster_data(

@@ -3,6 +3,7 @@ const API = {
   config: "/api/config",
   stats: "/api/stats",
   map: "/api/map",
+  mapRuns: "/api/map-runs",
   search: "/api/search",
   documents: "/api/documents",
   clusters: "/api/clusters",
@@ -16,6 +17,8 @@ const state = {
   config: null,
   stats: null,
   map: null,
+  mapRuns: [],
+  selectedRunId: "",
   graph: null,
   selectedId: null,
   selectedDetail: null,
@@ -36,6 +39,7 @@ const els = {
   searchResults: document.querySelector("#search-results"),
   pointFilter: document.querySelector("#point-filter"),
   clusterLegend: document.querySelector("#cluster-legend"),
+  mapRunSelect: document.querySelector("#map-run-select"),
   mapCaption: document.querySelector("#map-caption"),
   mapEmpty: document.querySelector("#map-empty"),
   mapSvg: document.querySelector("#map-svg"),
@@ -68,6 +72,7 @@ async function init() {
     state.config = await fetchJson(API.config);
     updateHealth(state.health);
     await loadStats();
+    await loadMapRuns();
     await loadMap();
   } catch (error) {
     showErrorState("Unable to load Paper Galaxy.", error.message);
@@ -131,6 +136,13 @@ function bindEvents() {
     }
     setInspectorMessage("Select a document point or search result.");
   });
+  els.mapRunSelect.addEventListener("change", async () => {
+    state.selectedRunId = els.mapRunSelect.value;
+    state.selectedId = null;
+    state.selectedDetail = null;
+    await loadMap(state.selectedRunId);
+    setInspectorMessage("Select a document point or search result.");
+  });
 }
 
 async function loadStats() {
@@ -144,8 +156,11 @@ async function loadStats() {
   updateStats(payload.stats);
 }
 
-async function loadMap() {
-  const payload = await fetchJson(API.map);
+async function loadMap(runId = "") {
+  const url = runId
+    ? `${API.map}?${new URLSearchParams({ run_id: runId }).toString()}`
+    : API.map;
+  const payload = await fetchJson(url);
   state.map = payload;
   if (!payload.database_exists) {
     updateMissingDatabase(payload.error);
@@ -155,6 +170,17 @@ async function loadMap() {
     return;
   }
   renderMap();
+}
+
+async function loadMapRuns() {
+  try {
+    const payload = await fetchJson(API.mapRuns);
+    state.mapRuns = payload.database_exists ? payload.map_runs || [] : [];
+    renderMapRunSelect();
+  } catch {
+    state.mapRuns = [];
+    renderMapRunSelect();
+  }
 }
 
 async function runSearch() {
@@ -307,7 +333,7 @@ function renderLegend(points, clusterLabels, clusters) {
     }
     const actions = document.createElement("div");
     actions.className = "legend-actions";
-    if (cluster.cluster_signature) {
+    if (cluster.cluster_signature && !state.selectedRunId) {
       const rename = document.createElement("button");
       rename.type = "button";
       rename.className = "tiny-button";
@@ -461,19 +487,23 @@ function renderClusterInspector(point) {
   appendText(section, "div", point.cluster_signature || "", "meta-row");
   const actions = document.createElement("div");
   actions.className = "cluster-actions";
-  const rename = document.createElement("button");
-  rename.type = "button";
-  rename.textContent = "Rename";
-  rename.addEventListener("click", () => renameCluster(cluster || point, section));
-  actions.append(rename);
-  if (cluster && cluster.source === "manual") {
-    const reset = document.createElement("button");
-    reset.type = "button";
-    reset.textContent = "Reset";
-    reset.addEventListener("click", () => resetClusterLabel(cluster.cluster_signature));
-    actions.append(reset);
+  if (!state.selectedRunId) {
+    const rename = document.createElement("button");
+    rename.type = "button";
+    rename.textContent = "Rename";
+    rename.addEventListener("click", () => renameCluster(cluster || point, section));
+    actions.append(rename);
+    if (cluster && cluster.source === "manual") {
+      const reset = document.createElement("button");
+      reset.type = "button";
+      reset.textContent = "Reset";
+      reset.addEventListener("click", () => resetClusterLabel(cluster.cluster_signature));
+      actions.append(reset);
+    }
   }
-  section.append(actions);
+  if (actions.children.length) {
+    section.append(actions);
+  }
   els.inspector.append(section);
 }
 
@@ -529,7 +559,7 @@ async function saveClusterLabel(signature, label) {
     },
     body: JSON.stringify({ label })
   });
-  await loadMap();
+  await loadMap(state.selectedRunId);
   if (state.selectedId) {
     await selectDocument(state.selectedId);
   }
@@ -539,7 +569,7 @@ async function resetClusterLabel(clusterSignature) {
   await fetchJson(`${API.clusters}/${encodeURIComponent(clusterSignature)}/label`, {
     method: "DELETE"
   });
-  await loadMap();
+  await loadMap(state.selectedRunId);
   if (state.selectedId) {
     await selectDocument(state.selectedId);
   }
@@ -633,6 +663,7 @@ function renderPinControl(documentId) {
 
 function graphLayoutKey(payload) {
   const config = state.config || {};
+  const runId = payload.map_run && payload.map_run.id ? payload.map_run.id : "live";
   const identity =
     config.database_path ||
     (state.health && state.health.database_path) ||
@@ -641,7 +672,22 @@ function graphLayoutKey(payload) {
   const points = payload.points || [];
   const seed = config.seed === null || config.seed === undefined ? "default" : config.seed;
   const limit = config.map_limit === null || config.map_limit === undefined ? "default" : config.map_limit;
-  return `${identity}|seed:${seed}|limit:${limit}|docs:${points.length}`;
+  return `${identity}|run:${runId}|seed:${seed}|limit:${limit}|docs:${points.length}`;
+}
+
+function renderMapRunSelect() {
+  els.mapRunSelect.replaceChildren();
+  const liveOption = document.createElement("option");
+  liveOption.value = "";
+  liveOption.textContent = "Live map";
+  els.mapRunSelect.append(liveOption);
+  for (const run of state.mapRuns) {
+    const option = document.createElement("option");
+    option.value = run.id;
+    option.textContent = `${run.name} (${run.document_count} docs)`;
+    els.mapRunSelect.append(option);
+  }
+  els.mapRunSelect.value = state.selectedRunId;
 }
 
 function showEmptyState(title, body, command) {

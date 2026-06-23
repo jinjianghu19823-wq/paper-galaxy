@@ -118,15 +118,24 @@ Non-goals: hallucinated labels, mandatory LLM use, opaque similarity scores,
 cloud labeling, desktop packaging, accounts, telemetry, Zotero, or React/Node
 tooling.
 
-## Phase 7: Professionalization
+## Phase 7: Professionalization (implemented)
 
 Goal: make Paper Galaxy stable and extensible.
 
-Deliverables: packaging, optional desktop shell, stable map runs, export/import,
-and plugin architecture.
+Deliverables: Python packaging metadata, build checks, project validation,
+stable saved TF-IDF map runs, local backup export/import, static built-in plugin
+boundaries, and documentation for install/release/backup workflows.
 
-Definition of done: users can install, run, back up, and extend the app with
-clear compatibility boundaries.
+Definition of done: users can build the package, validate a local project,
+persist and inspect map snapshots, export/import project state, list built-in
+extractor boundaries, and run the previous Phase 0-6 checks.
 
-Non-goals: cloud dependency by default, telemetry, and locking user data into a
-proprietary format.
+Non-goals: desktop packaging, cloud dependency, telemetry, accounts, cloud
+sync, Zotero integration, LLM chat, mandatory LLM labeling, remote plugin
+loading, React/Node tooling, and locking user data into a proprietary format.
+
+## Phase 8+: Future Work
+
+Future phases may improve extraction, map stability, import/export formats, or
+desktop packaging only when explicitly requested. Phase 8+ remains outside the
+current implementation boundary.
