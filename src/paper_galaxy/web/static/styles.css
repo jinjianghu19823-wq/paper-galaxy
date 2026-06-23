@@ -548,17 +548,6 @@ input[type="range"] {
   stroke: rgba(255, 255, 255, 0.88);
 }
 
-.graph-node-pin {
-  display: none;
-  fill: var(--surface);
-  stroke: var(--accent-strong);
-  stroke-width: 1.5px;
-}
-
-.graph-node-pin.is-visible {
-  display: block;
-}
-
 .graph-label {
   pointer-events: none;
   fill: var(--ink);

@@ -272,7 +272,6 @@
           searchText: this.searchText(point, document),
           element: null,
           circle: null,
-          pinMarker: null,
           label: null
         };
         this.nodes.push(node);
@@ -367,15 +366,11 @@
           class: "graph-node-core",
           fill: clusterColor(node.clusterId)
         });
-        const pinMarker = svgEl("circle", {
-          class: "graph-node-pin",
-          r: "3.2"
-        });
         const title = svgEl("title");
         title.textContent = node.document
           ? `${node.document.title}\n${node.point.cluster_label}`
           : node.id;
-        group.append(circle, pinMarker, title);
+        group.append(circle, title);
         group.addEventListener("pointerenter", () => this.setHovered(node.id));
         group.addEventListener("pointerleave", () => {
           if (!this.dragging) {
@@ -397,7 +392,6 @@
 
         node.element = group;
         node.circle = circle;
-        node.pinMarker = pinMarker;
         node.label = label;
         nodeLayer.append(group);
         labelLayer.append(label);
@@ -759,7 +753,7 @@
       }
 
       for (const node of this.nodes) {
-        if (!node.element || !node.circle || !node.pinMarker || !node.label) {
+        if (!node.element || !node.circle || !node.label) {
           continue;
         }
         const screen = this.worldToScreen(node.x, node.y);
@@ -772,9 +766,6 @@
         const radius =
           this.settings.nodeSize * (isSelected ? 1.38 : isHovered ? 1.48 : isNeighbor ? 1.16 : 1);
         node.circle.setAttribute("r", String(radius));
-        node.pinMarker.setAttribute("cx", String(radius * 0.72));
-        node.pinMarker.setAttribute("cy", String(-radius * 0.72));
-        node.pinMarker.classList.toggle("is-visible", node.fixed);
 
         const showLabel =
           node.visible &&

@@ -96,3 +96,13 @@ def test_graph_labels_keep_focus_context_visible() -> None:
     ]
     for token in required_tokens:
         assert token in graph_js
+
+
+def test_graph_nodes_do_not_render_nested_pin_dots() -> None:
+    graph_js = (STATIC_DIR / "graph.js").read_text(encoding="utf-8")
+    styles = (STATIC_DIR / "styles.css").read_text(encoding="utf-8")
+
+    assert "pinMarker" not in graph_js
+    assert "graph-node-pin" not in graph_js
+    assert "graph-node-pin" not in styles
+    assert "is-pinned" in graph_js
