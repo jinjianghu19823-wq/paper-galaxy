@@ -264,6 +264,17 @@ def _check_site(root: Path) -> list[ReadinessCheck]:
     gitignore = (root / ".gitignore").read_text(encoding="utf-8")
     if "site_dist/" not in gitignore:
         blockers.append(".gitignore missing site_dist/")
+    workflow_path = root / ".github" / "workflows" / "pages.yml"
+    if workflow_path.exists():
+        workflow = workflow_path.read_text(encoding="utf-8")
+        required_workflow_tokens = (
+            "github.repository_visibility != 'public'",
+            "github.repository_visibility == 'public'",
+            "enablement: true",
+        )
+        for token in required_workflow_tokens:
+            if token not in workflow:
+                blockers.append(f"pages workflow missing {token}")
     if not blockers and (root / "site_dist").exists():
         blockers.extend(
             f"demo-site:{issue.code}:{issue.message}"

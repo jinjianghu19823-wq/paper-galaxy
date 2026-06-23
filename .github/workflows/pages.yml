@@ -38,14 +38,25 @@ jobs:
       - name: Check demo site
         run: python scripts/check_demo_site.py --dist site_dist
 
+      - name: Skip Pages deploy for private repositories
+        if: ${{ github.repository_visibility != 'public' }}
+        run: |
+          echo "Demo site build passed."
+          echo "Pages deploy is skipped until the repository is public."
+
       - name: Configure Pages
+        if: ${{ github.repository_visibility == 'public' }}
         uses: actions/configure-pages@v5
+        with:
+          enablement: true
 
       - name: Upload Pages artifact
+        if: ${{ github.repository_visibility == 'public' }}
         uses: actions/upload-pages-artifact@v3
         with:
           path: site_dist
 
       - name: Deploy Pages
+        if: ${{ github.repository_visibility == 'public' }}
         id: deployment
         uses: actions/deploy-pages@v4

@@ -36,11 +36,16 @@ make launch-check
 
 ## GitHub Pages
 
-1. Open repository settings.
-2. Go to Pages.
-3. Set Source to GitHub Actions.
-4. Push to `main` or run the Pages workflow manually.
-5. Verify the expected URL:
+The Pages workflow always builds and checks the static site. It only deploys
+when the repository visibility is public, so private-repository pushes can
+verify the site without publishing it.
+
+1. Make the repository public after the readiness checks pass.
+2. Open repository settings.
+3. Go to Pages.
+4. Set Source to GitHub Actions if it is not already enabled.
+5. Push to `main` or run the Pages workflow manually.
+6. Verify the expected URL:
    `https://jinjianghu19823-wq.github.io/paper-galaxy/`.
 
 ## Make The Repository Public

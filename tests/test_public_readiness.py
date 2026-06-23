@@ -123,7 +123,24 @@ version = "0.1.0"
     ):
         path = root / relative
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text("name: placeholder\n", encoding="utf-8")
+        if path.name == "pages.yml":
+            path.write_text(
+                """
+name: Pages
+jobs:
+  deploy:
+    steps:
+      - if: ${{ github.repository_visibility != 'public' }}
+        run: echo skipped
+      - if: ${{ github.repository_visibility == 'public' }}
+        uses: actions/configure-pages@v5
+        with:
+          enablement: true
+""",
+                encoding="utf-8",
+            )
+        else:
+            path.write_text("name: placeholder\n", encoding="utf-8")
 
     for base in (root / "site", root / "site_dist"):
         _write_minimal_site(base)
