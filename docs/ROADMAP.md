@@ -83,19 +83,22 @@ mandatory system services such as GROBID, Tesseract, or Poppler. Phase 4 also
 does not add dense embeddings, Zotero integration, cloud sync, accounts,
 desktop packaging, or React/Node tooling.
 
-## Phase 5: Semantic Embeddings
+## Phase 5: Semantic Embeddings (implemented)
 
 Goal: add dense semantic similarity while keeping the baseline inspectable.
 
 Deliverables: optional Sentence Transformer document embeddings, chunk
-embeddings, local nearest-neighbor index, and hybrid similarity using dense
-embeddings plus TF-IDF.
+embeddings, local SQLite vector storage, semantic search, vector stats, and
+hybrid similarity using dense embeddings plus TF-IDF.
 
 Definition of done: semantic mode is optional, local, documented, and compared
-against the TF-IDF baseline.
+against the TF-IDF baseline. Remote model names are rejected by default to avoid
+hidden downloads; users must provide a local model path or explicitly pass
+`--allow-model-download`.
 
 Non-goals: cloud embedding APIs by default, hidden model downloads, and replacing
-all explainable baselines.
+all explainable baselines. Phase 5 does not add LLM chat, cloud sync, accounts,
+Zotero integration, desktop packaging, or React/Node tooling.
 
 ## Phase 6: Explainability And Labeling
 

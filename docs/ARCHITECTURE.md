@@ -47,14 +47,21 @@ source for nearest-neighbor search and proximity explanations.
 - `storage.repository`: explicit parameterized SQL operations.
 - `indexer`: Phase 2 incremental indexing orchestration.
 - `search`: local FTS search and database stats wrappers.
+- `embeddings.codec`: float32 vector normalization and SQLite BLOB encoding.
+- `embeddings.sentence_transformers`: strict lazy Sentence Transformers loader.
+- `embeddings.builder`: local document/chunk embedding build orchestration.
+- `embeddings.search`: SQLite-backed semantic search and vector stats.
+- `embeddings.similarity`: TF-IDF, dense, and hybrid neighbor comparison.
+- `embeddings.index`: optional local vector index path and FAISS availability
+  helpers.
 - `web.server`: lazy FastAPI/Uvicorn app creation and local server startup.
 - `web.api`: read-only local JSON API routes.
 - `web.map_builder`: ephemeral map generation from active indexed documents.
 - `web.static`: static HTML/CSS/vanilla JavaScript browser UI, including the
   Phase 3.1 dependency-free force graph renderer.
 
-Future modules may add graph construction, better layout stability, semantic
-embedding records, and a richer local UI.
+Future modules may add graph construction, better layout stability, richer
+semantic map controls, and a richer local UI.
 
 ## Phase 1 Static Export
 
@@ -103,6 +110,10 @@ Schema overview:
 - `skipped_files`: per-run skipped files and reasons.
 - `extraction_reports`: per-run extraction method, status, warnings, character
   counts, and compact metadata.
+- `embedding_models`: registered optional local embedding model identities.
+- `vectors`: normalized float32 document/chunk vectors as SQLite BLOBs.
+- `embedding_runs`: local embedding build run summaries.
+- `vector_indexes`: optional local vector index metadata.
 - `documents_fts`: FTS5 table for local search.
 
 Document status controls search visibility. `active` documents are returned by
@@ -142,6 +153,7 @@ API endpoints:
   existence.
 - `GET /api/config`: read-only runtime app configuration.
 - `GET /api/stats`: Phase 2 database counts.
+- `GET /api/vector-stats`: Phase 5 embedding model and vector counts.
 - `GET /api/search`: local SQLite FTS search.
 - `GET /api/documents`: document metadata lists.
 - `GET /api/documents/{document_id}`: metadata, local path, chunk previews, and
@@ -229,11 +241,48 @@ focus-only by default: selected, hovered, and direct-neighbor labels are visible
 High-zoom or always-on labels are explicit UI settings and use a simple budget
 plus bounding-box collision skip to reduce overlap.
 
+## Phase 5 Semantic Embeddings
+
+Phase 5 adds an optional local dense-vector layer without replacing the TF-IDF
+baseline. The normal install remains `.[dev,ml,pdf,app]`; embedding commands
+require the optional `embeddings` extra.
+
+The embedding flow is:
+
+```text
+paper-galaxy embed
+  -> load explicit local Sentence Transformer model path
+  -> read active documents/chunks from SQLite
+  -> construct transparent embedding text
+  -> encode batches locally
+  -> normalize vectors for cosine similarity
+  -> store float32 BLOB vectors with text hashes
+  -> record embedding run counts
+```
+
+Model loading is intentionally strict. `--model PATH_OR_NAME` loads a local path
+when it exists. A non-local name is refused by default with an explanation that
+remote or cached model names are disabled to avoid hidden downloads. Only
+`--allow-model-download` lets Sentence Transformers resolve or download a model
+name.
+
+Document embedding text repeats the title three times, includes the
+corpus-relative path once, and appends the first configured slice of extracted
+text. Chunk embeddings use chunk text directly. Missing and unindexed documents
+are not embedded by default.
+
+`paper-galaxy semantic-search` embeds the query locally and computes cosine
+similarity against stored vectors in SQLite. It does not build vectors
+implicitly and does not require FAISS for correctness. `paper-galaxy
+compare-neighbors` computes TF-IDF neighbors from the inspectable baseline,
+dense neighbors from stored vectors, and hybrid neighbors with configurable
+weights. `/api/vector-stats` exposes model and vector counts to the local web
+app without loading embedding models.
+
 ## Future Data Model Sketch
 
 - `documents`: one row per source document.
 - `chunks`: text chunks associated with documents.
-- `vectors`: vector records for documents or chunks.
 - `clusters`: cluster metadata and labels.
 - `document_clusters`: many-to-many document to cluster assignments.
 - `edges`: similarity graph edges with scores and provenance.

@@ -1,7 +1,10 @@
-.PHONY: install-dev test lint format typecheck check doctor
+.PHONY: install-dev install-embeddings test lint format typecheck check doctor
 
 install-dev:
 	python -m pip install -e ".[dev,ml,pdf,app]"
+
+install-embeddings:
+	python -m pip install -e ".[dev,ml,pdf,app,embeddings]"
 
 test:
 	python -m pytest

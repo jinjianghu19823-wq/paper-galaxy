@@ -4,13 +4,14 @@ Paper Galaxy is a local-first research cartography tool for turning a personal
 research corpus into an interactive map of documents, clusters, and conceptual
 neighborhoods.
 
-Current status: Phase 4 better extraction quality. This repository can scan a
+Current status: Phase 5 optional semantic embeddings. This repository can scan a
 local sample corpus, export a self-contained offline `galaxy.html`, index
 documents and chunks into local SQLite, rerun indexing incrementally, search
 indexed text with SQLite FTS5, and serve a local browser app with an
 Obsidian-inspired dynamic document graph for browsing the indexed corpus. It
 also records extraction quality reports, improves Markdown/LaTeX/PDF parsing,
-and supports opt-in local OCR for image files.
+supports opt-in local OCR for image files, and can optionally store local dense
+document/chunk embeddings for semantic search and neighbor comparison.
 
 Eventually, Paper Galaxy will let a user point the app at folders or a Zotero
 library, represent each document as a point in a 2D map, place similar documents
@@ -21,10 +22,9 @@ planned pipeline is:
 files -> extraction -> cleaning -> records -> vectors -> graph -> map -> clusters -> UI
 ```
 
-Intentionally not implemented yet: dense embeddings, UMAP as a required path,
-full TeX parsing, cloud OCR, mandatory OCR system services, React, Node build
-tooling, Zotero integration, desktop packaging, cloud sync, accounts, telemetry,
-and LLM chat.
+Intentionally not implemented yet: UMAP as a required path, full TeX parsing,
+cloud OCR, mandatory OCR system services, React, Node build tooling, Zotero
+integration, desktop packaging, cloud sync, accounts, telemetry, and LLM chat.
 
 Paper Galaxy is local-first by default. There is no account, no telemetry, no
 automatic upload, and no cloud dependency. Generated HTML is local and offline.
@@ -47,6 +47,16 @@ python -m pip install -e ".[dev,ml,pdf,app,ocr]"
 
 OCR remains local and opt-in. The `ocr` extra installs Python wrappers only; a
 user-installed local Tesseract binary may still be required for OCR to run.
+
+Optional semantic embedding support can be installed separately:
+
+```bash
+python -m pip install -e ".[dev,ml,pdf,app,embeddings]"
+```
+
+Embedding commands remain local-first and explicit. `paper-galaxy embed` refuses
+remote model names by default to avoid hidden downloads; pass a local Sentence
+Transformer model path, or explicitly opt in with `--allow-model-download`.
 
 If `uv` is available, it can be used as a faster local environment helper:
 
@@ -71,6 +81,10 @@ paper-galaxy index examples/tiny_corpus --project-dir . --min-chars 40
 paper-galaxy index examples/tiny_corpus --project-dir . --min-chars 40 --extraction-report-json extraction-report.json
 paper-galaxy search "neural operator" --project-dir .
 paper-galaxy db-stats --project-dir .
+paper-galaxy embed --project-dir . --model /path/to/local/sentence-transformer-model
+paper-galaxy semantic-search "operator learning for PDEs" --project-dir . --model /path/to/local/sentence-transformer-model
+paper-galaxy compare-neighbors neural_operators/fourier_neural_operator.md --project-dir . --model /path/to/local/sentence-transformer-model
+paper-galaxy vector-stats --project-dir .
 paper-galaxy serve --project-dir .
 paper-galaxy extract-preview examples/tiny_corpus/neural_operators/fourier_neural_operator.md
 ```
@@ -129,6 +143,21 @@ paths, and extracted text. Search returns active documents by default.
 them active again. `paper-galaxy db-stats` reports local database counts.
 Database files live under `.paper-galaxy/` and are gitignored.
 
+`paper-galaxy embed` is the Phase 5 local semantic layer. It reads active
+indexed documents and chunks, constructs transparent embedding text, stores
+normalized float32 vectors in SQLite, and skips unchanged vectors using the
+exact embedded text hash unless `--force` is set. Document vectors use the title
+three times, the corpus-relative path once, and the first `--max-document-chars`
+characters of extracted text. Chunk vectors use chunk text capped by
+`--max-chunk-chars`.
+
+`paper-galaxy semantic-search` embeds the query locally with the same model and
+searches stored document or chunk vectors. It does not build vectors or download
+models implicitly. `paper-galaxy compare-neighbors` shows three rankings for a
+document: TF-IDF cosine neighbors, dense embedding neighbors, and a configurable
+hybrid score. `paper-galaxy vector-stats` reports registered models, vector
+counts, and the last embedding run.
+
 `paper-galaxy serve` starts the Phase 3 local web app on `127.0.0.1` by default.
 Install app dependencies with:
 
@@ -163,6 +192,6 @@ an explicit graph setting.
 
 ## Next Phase
 
-The next planned implementation phase is Phase 5: optional semantic embeddings.
-There is still no cloud dependency, dense embeddings, Zotero integration,
-desktop packaging, account system, telemetry, or React/Node frontend in Phase 4.
+The next planned implementation phase is Phase 6: explainability and labeling.
+There is still no cloud dependency, Zotero integration, desktop packaging,
+account system, telemetry, LLM chat, or React/Node frontend in Phase 5.

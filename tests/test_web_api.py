@@ -5,10 +5,12 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
+from paper_galaxy.embeddings.builder import build_embeddings
 from paper_galaxy.indexer import index_corpus
 from paper_galaxy.storage.migrations import initialize_database
 from paper_galaxy.storage.sqlite import connect_database, resolve_database_path
 from paper_galaxy.web.server import create_app
+from tests.test_embedding_builder_search import FakeEncoder
 from tests.test_indexer import copy_tiny_corpus, fetch_document
 
 
@@ -26,6 +28,7 @@ def test_health_and_missing_database_state(tmp_path: Path) -> None:
     assert "paper-galaxy index" in stats.json()["error"]["command"]
     assert map_response.status_code == 200
     assert map_response.json()["points"] == []
+    assert client.get("/api/vector-stats").json()["vector_stats"]["models"] == []
 
 
 def test_existing_empty_database_returns_empty_state(tmp_path: Path) -> None:
@@ -70,6 +73,25 @@ def test_indexed_database_endpoints_return_map_and_documents(
     assert detail["metadata"]["document_id"] == first_document_id
     assert detail["chunk_count"] >= 1
     assert detail["chunks"]
+
+
+def test_vector_stats_endpoint_reports_existing_vectors(tmp_path: Path) -> None:
+    corpus = copy_tiny_corpus(tmp_path)
+    index_corpus(corpus, project_dir=tmp_path, min_chars=40)
+    build_embeddings(
+        project_dir=tmp_path,
+        model="unused",
+        object_type="document",
+        limit=2,
+        encoder=FakeEncoder(),
+    )
+    client = TestClient(create_app(tmp_path))
+
+    payload = client.get("/api/vector-stats").json()
+
+    assert payload["database_exists"] is True
+    assert payload["vector_stats"]["models"]
+    assert payload["vector_stats"]["vector_counts"][0]["vector_count"] == 2
 
 
 def test_map_points_are_finite_and_neighbors_reference_returned_documents(

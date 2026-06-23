@@ -174,3 +174,29 @@ inspectable focus context.
 The extraction and graph-label improvements do not add React, Node, npm, Vite,
 remote assets, or a frontend build step. Static HTML/CSS/vanilla JavaScript
 remains the browser surface.
+
+## ADR 0029: Phase 5 Embeddings Are Optional And Local
+
+Dense embeddings live behind the optional `embeddings` extra. The default
+development/app install remains useful with TF-IDF, SQLite FTS, and the local
+web app even when Sentence Transformers and FAISS are unavailable.
+
+## ADR 0030: No Hidden Model Downloads
+
+Sentence Transformers can resolve or download remote model names. Phase 5
+rejects non-local model names by default and requires either a local model path
+or an explicit `--allow-model-download` opt-in. Tests use fake encoders and do
+not download models.
+
+## ADR 0031: Store Vectors As SQLite Float32 BLOBs
+
+Phase 5 stores normalized float32 document/chunk vectors in SQLite with explicit
+dimension, dtype, model ID, object ID, and embedded-text SHA-256 metadata. JSON
+is used for compact metadata, not vector payloads.
+
+## ADR 0032: Semantic Workflows Stay CLI-Driven
+
+Embedding generation remains a CLI command. The local web API exposes vector
+stats without loading models or generating embeddings. Semantic map switching
+can build on the stored vector layer later without adding cloud calls or a
+frontend build step.

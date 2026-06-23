@@ -7,11 +7,11 @@ from importlib.resources import files
 
 from paper_galaxy.errors import FTSUnavailableError
 
-SCHEMA_VERSION = "2"
+SCHEMA_VERSION = "3"
 
 
 def initialize_database(connection: sqlite3.Connection) -> None:
-    """Create the Phase 2 schema idempotently."""
+    """Create the local project schema idempotently."""
 
     schema = (
         files("paper_galaxy.storage").joinpath("schema.sql").read_text(encoding="utf-8")

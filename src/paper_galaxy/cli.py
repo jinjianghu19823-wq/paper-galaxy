@@ -1,7 +1,5 @@
 """Command-line interface for Paper Galaxy."""
 
-from __future__ import annotations
-
 import importlib.util
 import sys
 from pathlib import Path
@@ -11,6 +9,15 @@ import typer
 from rich.table import Table
 
 from paper_galaxy import __version__
+from paper_galaxy.embeddings.builder import build_embeddings
+from paper_galaxy.embeddings.models import NeighborResult
+from paper_galaxy.embeddings.search import (
+    NoVectorsFoundError,
+    semantic_search,
+    vector_stats,
+)
+from paper_galaxy.embeddings.sentence_transformers import ModelDownloadDisabledError
+from paper_galaxy.embeddings.similarity import compare_neighbors
 from paper_galaxy.errors import (
     DatabaseNotFoundError,
     FTSUnavailableError,
@@ -71,6 +78,7 @@ def doctor() -> None:
     console.print("Index/search commands: Phase 2 local database is available.")
     console.print("Serve command: Phase 3 local web app is available.")
     console.print("Extraction reports: Phase 4 extraction diagnostics are available.")
+    console.print("Embedding commands: Phase 5 optional local vectors are available.")
 
 
 @app.command("init")
@@ -124,7 +132,11 @@ def scan(
     ] = Path("galaxy.html"),
     force: Annotated[
         bool,
-        typer.Option("--force", "-f", help="Overwrite an existing output file."),
+        typer.Option(
+            "--force",
+            "-f",
+            help="Overwrite an existing output file.",
+        ),
     ] = False,
     max_documents: Annotated[
         int | None,
@@ -177,7 +189,10 @@ def scan(
     ] = None,
     verbose: Annotated[
         bool,
-        typer.Option("--verbose", help="Print more extraction details."),
+        typer.Option(
+            "--verbose",
+            help="Print more extraction details.",
+        ),
     ] = False,
 ) -> None:
     """Build a self-contained static HTML galaxy from a local corpus."""
@@ -303,7 +318,10 @@ def index_command(
     ] = 200,
     verbose: Annotated[
         bool,
-        typer.Option("--verbose", help="Reserved for more detailed indexing output."),
+        typer.Option(
+            "--verbose",
+            help="Reserved for more detailed indexing output.",
+        ),
     ] = False,
 ) -> None:
     """Index a local corpus into the project's SQLite database."""
@@ -373,7 +391,10 @@ def extract_preview_command(
     ],
     ocr: Annotated[
         bool,
-        typer.Option("--ocr/--no-ocr", help="Run optional local OCR for image files."),
+        typer.Option(
+            "--ocr/--no-ocr",
+            help="Run optional local OCR for image files.",
+        ),
     ] = False,
     ocr_language: Annotated[
         str,
@@ -381,7 +402,10 @@ def extract_preview_command(
     ] = "eng",
     include_metadata: Annotated[
         bool,
-        typer.Option("--include-metadata", help="Print extractor metadata."),
+        typer.Option(
+            "--include-metadata",
+            help="Print extractor metadata.",
+        ),
     ] = False,
     max_chars: Annotated[
         int,
@@ -535,6 +559,342 @@ def db_stats_command(
     console.print(table)
 
 
+@app.command("embed")
+def embed_command(
+    project_dir: Annotated[
+        Path,
+        typer.Option(
+            "--project-dir", help="Project directory containing .paper-galaxy."
+        ),
+    ] = Path("."),
+    model: Annotated[
+        str,
+        typer.Option(
+            "--model",
+            help="Local Sentence Transformer model path, or remote name with opt-in.",
+        ),
+    ] = "",
+    allow_model_download: Annotated[
+        bool,
+        typer.Option(
+            "--allow-model-download/--no-allow-model-download",
+            help="Allow Sentence Transformers to resolve or download a model name.",
+        ),
+    ] = False,
+    object_type: Annotated[
+        str,
+        typer.Option("--object-type", help="document, chunk, or both."),
+    ] = "both",
+    limit: Annotated[
+        int | None,
+        typer.Option("--limit", help="Optional cap per selected object type."),
+    ] = None,
+    force: Annotated[
+        bool,
+        typer.Option(
+            "--force",
+            "-f",
+            help="Recompute vectors even if text is unchanged.",
+        ),
+    ] = False,
+    batch_size: Annotated[
+        int,
+        typer.Option("--batch-size", help="Embedding batch size."),
+    ] = 32,
+    max_document_chars: Annotated[
+        int,
+        typer.Option("--max-document-chars", help="Document text cap for embeddings."),
+    ] = 8000,
+    max_chunk_chars: Annotated[
+        int,
+        typer.Option("--max-chunk-chars", help="Chunk text cap for embeddings."),
+    ] = 2000,
+    normalize: Annotated[
+        bool,
+        typer.Option(
+            "--normalize/--no-normalize",
+            help="Store normalized vectors for cosine similarity.",
+        ),
+    ] = True,
+) -> None:
+    """Generate optional local document/chunk embeddings."""
+
+    console = get_console()
+    if not model.strip():
+        console.print("--model is required.")
+        raise typer.Exit(1)
+    if object_type not in {"document", "chunk", "both"}:
+        console.print("--object-type must be document, chunk, or both.")
+        raise typer.Exit(1)
+    if batch_size <= 0:
+        console.print("--batch-size must be positive.")
+        raise typer.Exit(1)
+    try:
+        summary = build_embeddings(
+            project_dir=project_dir.expanduser().resolve(),
+            model=model,
+            allow_model_download=allow_model_download,
+            object_type=object_type,
+            limit=limit,
+            force=force,
+            batch_size=batch_size,
+            max_document_chars=max_document_chars,
+            max_chunk_chars=max_chunk_chars,
+            normalize=normalize,
+        )
+    except ModelDownloadDisabledError as exc:
+        console.print(str(exc), markup=False)
+        raise typer.Exit(1) from exc
+    except MissingDependencyError as exc:
+        _print_embeddings_dependency_error()
+        raise typer.Exit(1) from exc
+
+    table = Table(title="Paper Galaxy Embedding Summary")
+    table.add_column("Metric", style="bold")
+    table.add_column("Value", overflow="fold")
+    table.add_row("Model ID", summary.model_id)
+    table.add_row("Model name/path", summary.model_name)
+    table.add_row("Provider", summary.provider)
+    table.add_row("Dimension", str(summary.dimension))
+    table.add_row("Database path", str(summary.database_path))
+    table.add_row("Documents seen", str(summary.documents_seen))
+    table.add_row("Documents embedded", str(summary.documents_embedded))
+    table.add_row("Documents unchanged", str(summary.documents_unchanged))
+    table.add_row("Chunks seen", str(summary.chunks_seen))
+    table.add_row("Chunks embedded", str(summary.chunks_embedded))
+    table.add_row("Chunks unchanged", str(summary.chunks_unchanged))
+    table.add_row("Errors", str(summary.errors))
+    console.print(table)
+
+
+@app.command("semantic-search")
+def semantic_search_command(
+    query: Annotated[
+        str,
+        typer.Argument(help="Semantic query for stored local vectors."),
+    ],
+    project_dir: Annotated[
+        Path,
+        typer.Option(
+            "--project-dir", help="Project directory containing .paper-galaxy."
+        ),
+    ] = Path("."),
+    model: Annotated[
+        str,
+        typer.Option(
+            "--model",
+            help="Local Sentence Transformer model path, or remote name with opt-in.",
+        ),
+    ] = "",
+    allow_model_download: Annotated[
+        bool,
+        typer.Option(
+            "--allow-model-download/--no-allow-model-download",
+            help="Allow Sentence Transformers to resolve or download a model name.",
+        ),
+    ] = False,
+    object_type: Annotated[
+        str,
+        typer.Option("--object-type", help="document or chunk."),
+    ] = "document",
+    limit: Annotated[
+        int,
+        typer.Option("--limit", help="Maximum results."),
+    ] = 10,
+    include_missing: Annotated[
+        bool,
+        typer.Option(
+            "--include-missing/--no-include-missing",
+            help="Include missing documents for document search.",
+        ),
+    ] = False,
+    show_chunks: Annotated[
+        bool,
+        typer.Option(
+            "--show-chunks",
+            help="Show chunk indexes when available.",
+        ),
+    ] = False,
+) -> None:
+    """Search stored local vectors with a local query embedding."""
+
+    console = get_console()
+    if not model.strip():
+        console.print("--model is required.")
+        raise typer.Exit(1)
+    if object_type not in {"document", "chunk"}:
+        console.print("--object-type must be document or chunk.")
+        raise typer.Exit(1)
+    try:
+        results = semantic_search(
+            query,
+            project_dir=project_dir.expanduser().resolve(),
+            model=model,
+            allow_model_download=allow_model_download,
+            object_type=object_type,
+            limit=limit,
+            include_missing=include_missing,
+        )
+    except ModelDownloadDisabledError as exc:
+        console.print(str(exc), markup=False)
+        raise typer.Exit(1) from exc
+    except MissingDependencyError as exc:
+        _print_embeddings_dependency_error()
+        raise typer.Exit(1) from exc
+    except NoVectorsFoundError as exc:
+        console.print(str(exc))
+        raise typer.Exit(1) from exc
+
+    table = Table(title=f"Paper Galaxy Semantic Search: {query}")
+    table.add_column("#", justify="right")
+    table.add_column("Title")
+    table.add_column("Relative path", overflow="fold")
+    if object_type == "chunk" or show_chunks:
+        table.add_column("Chunk", justify="right")
+    table.add_column("Score", justify="right")
+    table.add_column("Snippet", overflow="fold")
+    for result in results:
+        row = [
+            str(result.rank),
+            result.title,
+            result.relative_path,
+        ]
+        if object_type == "chunk" or show_chunks:
+            row.append("" if result.chunk_index is None else str(result.chunk_index))
+        row.extend([f"{result.score:.4f}", result.snippet])
+        table.add_row(*row)
+    console.print(table)
+    if not results:
+        console.print("No semantic matches found.")
+
+
+@app.command("compare-neighbors")
+def compare_neighbors_command(
+    document_id_or_path: Annotated[
+        str,
+        typer.Argument(help="Document ID or corpus-relative path."),
+    ],
+    project_dir: Annotated[
+        Path,
+        typer.Option(
+            "--project-dir", help="Project directory containing .paper-galaxy."
+        ),
+    ] = Path("."),
+    model: Annotated[
+        str,
+        typer.Option(
+            "--model",
+            help="Local Sentence Transformer model path, or remote name with opt-in.",
+        ),
+    ] = "",
+    allow_model_download: Annotated[
+        bool,
+        typer.Option(
+            "--allow-model-download/--no-allow-model-download",
+            help="Allow Sentence Transformers to resolve or download a model name.",
+        ),
+    ] = False,
+    limit: Annotated[
+        int,
+        typer.Option("--limit", help="Maximum neighbors per ranking."),
+    ] = 10,
+    dense_weight: Annotated[
+        float,
+        typer.Option("--dense-weight", help="Dense cosine weight for hybrid scores."),
+    ] = 0.65,
+    tfidf_weight: Annotated[
+        float,
+        typer.Option("--tfidf-weight", help="TF-IDF cosine weight for hybrid scores."),
+    ] = 0.35,
+) -> None:
+    """Compare TF-IDF, dense, and hybrid nearest neighbors."""
+
+    console = get_console()
+    if not model.strip():
+        console.print("--model is required.")
+        raise typer.Exit(1)
+    try:
+        comparison = compare_neighbors(
+            document_id_or_path,
+            project_dir=project_dir.expanduser().resolve(),
+            model=model,
+            allow_model_download=allow_model_download,
+            limit=limit,
+            dense_weight=dense_weight,
+            tfidf_weight=tfidf_weight,
+        )
+    except ModelDownloadDisabledError as exc:
+        console.print(str(exc), markup=False)
+        raise typer.Exit(1) from exc
+    except MissingDependencyError as exc:
+        if exc.dependency == "sentence-transformers":
+            _print_embeddings_dependency_error()
+        else:
+            console.print(str(exc))
+        raise typer.Exit(1) from exc
+    except NoVectorsFoundError as exc:
+        console.print(str(exc))
+        raise typer.Exit(1) from exc
+    except ValueError as exc:
+        console.print(str(exc))
+        raise typer.Exit(1) from exc
+
+    console.print(f"Target: {comparison.target.title}")
+    console.print(f"Path: {comparison.target.relative_path}")
+    console.print(f"Hybrid weights: dense={dense_weight:.2f}, tfidf={tfidf_weight:.2f}")
+    console.print(_neighbors_table("TF-IDF Neighbors", comparison.tfidf_neighbors))
+    console.print(_neighbors_table("Dense Neighbors", comparison.dense_neighbors))
+    console.print(_neighbors_table("Hybrid Neighbors", comparison.hybrid_neighbors))
+
+
+@app.command("vector-stats")
+def vector_stats_command(
+    project_dir: Annotated[
+        Path,
+        typer.Option(
+            "--project-dir", help="Project directory containing .paper-galaxy."
+        ),
+    ] = Path("."),
+) -> None:
+    """Show local embedding model and vector statistics."""
+
+    stats = vector_stats(project_dir.expanduser().resolve())
+    models = stats.get("models")
+    vector_counts = stats.get("vector_counts")
+    model_rows = models if isinstance(models, list) else []
+    vector_count_rows = vector_counts if isinstance(vector_counts, list) else []
+    table = Table(title="Paper Galaxy Vector Stats")
+    table.add_column("Metric", style="bold")
+    table.add_column("Value", overflow="fold")
+    table.add_row("Database path", str(stats["database_path"]))
+    table.add_row("Embedding models", str(len(model_rows)))
+    table.add_row("Vector groups", str(len(vector_count_rows)))
+    last_run = stats.get("last_run")
+    if isinstance(last_run, dict):
+        table.add_row("Last embedding run", str(last_run["id"]))
+        table.add_row("Last run status", str(last_run["status"]))
+    else:
+        table.add_row("Last embedding run", "none")
+    get_console().print(table)
+
+    counts_table = Table(title="Vectors By Model/Object")
+    counts_table.add_column("Model")
+    counts_table.add_column("Object type")
+    counts_table.add_column("Dimension", justify="right")
+    counts_table.add_column("Vectors", justify="right")
+    counts_table.add_column("Updated")
+    for row in vector_count_rows:
+        if isinstance(row, dict):
+            counts_table.add_row(
+                str(row["model_name"]),
+                str(row["object_type"]),
+                str(row["dimension"]),
+                str(row["vector_count"]),
+                str(row["last_vector_at"]),
+            )
+    get_console().print(counts_table)
+
+
 @app.command("serve")
 def serve_command(
     project_dir: Annotated[
@@ -553,7 +913,10 @@ def serve_command(
     ] = 8765,
     reload: Annotated[
         bool,
-        typer.Option("--reload", help="Enable Uvicorn reload mode for development."),
+        typer.Option(
+            "--reload",
+            help="Enable Uvicorn reload mode for development.",
+        ),
     ] = False,
     open_browser: Annotated[
         bool,
@@ -604,6 +967,30 @@ def serve_command(
             markup=False,
         )
         raise typer.Exit(1) from None
+
+
+def _print_embeddings_dependency_error() -> None:
+    get_console().print(
+        "Missing optional dependency for Phase 5 embeddings. Install with: "
+        'python -m pip install -e ".[dev,ml,pdf,app,embeddings]"',
+        markup=False,
+    )
+
+
+def _neighbors_table(title: str, neighbors: list[NeighborResult]) -> Table:
+    table = Table(title=title)
+    table.add_column("#", justify="right")
+    table.add_column("Title")
+    table.add_column("Relative path", overflow="fold")
+    table.add_column("Score", justify="right")
+    for neighbor in neighbors:
+        table.add_row(
+            str(neighbor.rank),
+            neighbor.title,
+            neighbor.relative_path,
+            f"{neighbor.score:.4f}",
+        )
+    return table
 
 
 def _default_project_toml(project_dir: Path) -> str:

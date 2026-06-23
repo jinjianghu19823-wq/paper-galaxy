@@ -303,3 +303,40 @@ def test_serve_reports_missing_app_dependency(monkeypatch: object) -> None:
     assert result.exit_code == 1
     assert "Missing optional dependency for Phase 3 app" in result.output
     assert 'python -m pip install -e ".[dev,ml,pdf,app]"' in result.output
+
+
+def test_phase_five_command_help_exits_successfully() -> None:
+    runner = CliRunner()
+
+    for command in ("embed", "semantic-search", "compare-neighbors", "vector-stats"):
+        result = runner.invoke(app, [command, "--help"])
+        assert result.exit_code == 0
+
+
+def test_embed_rejects_remote_model_names_by_default(tmp_path: Path) -> None:
+    runner = CliRunner()
+
+    result = runner.invoke(
+        app,
+        [
+            "embed",
+            "--project-dir",
+            str(tmp_path),
+            "--model",
+            "sentence-transformers/all-MiniLM-L6-v2",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "hidden downloads" in result.output
+    assert "--allow-model-download" in result.output
+
+
+def test_vector_stats_command_handles_empty_project(tmp_path: Path) -> None:
+    runner = CliRunner()
+
+    result = runner.invoke(app, ["vector-stats", "--project-dir", str(tmp_path)])
+
+    assert result.exit_code == 0
+    assert "Paper Galaxy Vector Stats" in result.output
+    assert "Embedding models" in result.output

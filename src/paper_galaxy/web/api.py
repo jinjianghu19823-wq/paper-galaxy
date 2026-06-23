@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from paper_galaxy import __version__
+from paper_galaxy.embeddings.search import vector_stats as embedding_vector_stats
 from paper_galaxy.errors import MissingDependencyError
 from paper_galaxy.records import (
     DatabaseStats,
@@ -75,6 +76,26 @@ def register_api_routes(app: Any, config: WebAppConfig) -> None:
         return {
             "database_exists": True,
             "stats": _stats_payload(get_database_stats(project_dir=config.project_dir)),
+            "warnings": [],
+        }
+
+    @app.get("/api/vector-stats")
+    def vector_stats() -> dict[str, object]:
+        missing = _missing_database_payload(config)
+        if missing is not None:
+            return {
+                "database_exists": False,
+                "vector_stats": {
+                    "models": [],
+                    "vector_counts": [],
+                    "last_run": None,
+                    "vector_indexes": [],
+                },
+                **missing,
+            }
+        return {
+            "database_exists": True,
+            "vector_stats": embedding_vector_stats(config.project_dir),
             "warnings": [],
         }
 

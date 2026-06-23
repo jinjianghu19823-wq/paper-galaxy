@@ -91,6 +91,61 @@ CREATE TABLE IF NOT EXISTS extraction_reports (
   FOREIGN KEY(corpus_id) REFERENCES corpora(id)
 );
 
+CREATE TABLE IF NOT EXISTS embedding_models (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  provider TEXT NOT NULL,
+  dimension INTEGER NOT NULL,
+  distance TEXT NOT NULL,
+  config_json TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL,
+  UNIQUE(name, provider, dimension, distance, config_json)
+);
+
+CREATE TABLE IF NOT EXISTS vectors (
+  id TEXT PRIMARY KEY,
+  model_id TEXT NOT NULL,
+  object_type TEXT NOT NULL,
+  object_id TEXT NOT NULL,
+  text_sha256 TEXT NOT NULL,
+  dimension INTEGER NOT NULL,
+  dtype TEXT NOT NULL,
+  vector BLOB NOT NULL,
+  metadata_json TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY(model_id) REFERENCES embedding_models(id),
+  UNIQUE(model_id, object_type, object_id)
+);
+
+CREATE TABLE IF NOT EXISTS embedding_runs (
+  id TEXT PRIMARY KEY,
+  model_id TEXT NOT NULL,
+  started_at TEXT NOT NULL,
+  finished_at TEXT,
+  status TEXT NOT NULL,
+  documents_seen INTEGER NOT NULL DEFAULT 0,
+  documents_embedded INTEGER NOT NULL DEFAULT 0,
+  documents_unchanged INTEGER NOT NULL DEFAULT 0,
+  chunks_seen INTEGER NOT NULL DEFAULT 0,
+  chunks_embedded INTEGER NOT NULL DEFAULT 0,
+  chunks_unchanged INTEGER NOT NULL DEFAULT 0,
+  errors INTEGER NOT NULL DEFAULT 0,
+  config_json TEXT NOT NULL DEFAULT '{}',
+  FOREIGN KEY(model_id) REFERENCES embedding_models(id)
+);
+
+CREATE TABLE IF NOT EXISTS vector_indexes (
+  id TEXT PRIMARY KEY,
+  model_id TEXT NOT NULL,
+  object_type TEXT NOT NULL,
+  index_path TEXT NOT NULL,
+  vector_count INTEGER NOT NULL,
+  created_at TEXT NOT NULL,
+  metadata_json TEXT NOT NULL DEFAULT '{}',
+  FOREIGN KEY(model_id) REFERENCES embedding_models(id)
+);
+
 CREATE VIRTUAL TABLE IF NOT EXISTS documents_fts USING fts5(
   document_id UNINDEXED,
   title,
@@ -124,3 +179,15 @@ CREATE INDEX IF NOT EXISTS idx_extraction_reports_status
 
 CREATE INDEX IF NOT EXISTS idx_extraction_reports_corpus_relative_path
   ON extraction_reports(corpus_id, relative_path);
+
+CREATE INDEX IF NOT EXISTS idx_vectors_model_object_type
+  ON vectors(model_id, object_type);
+
+CREATE INDEX IF NOT EXISTS idx_vectors_object
+  ON vectors(object_type, object_id);
+
+CREATE INDEX IF NOT EXISTS idx_vectors_text_sha256
+  ON vectors(text_sha256);
+
+CREATE INDEX IF NOT EXISTS idx_embedding_runs_model_started_at
+  ON embedding_runs(model_id, started_at);

@@ -11,6 +11,8 @@ Paper Galaxy is local-first by default.
   `.paper-galaxy/paper_galaxy.sqlite3` by default.
 - Phase 4 stores compact extraction reports locally in SQLite and can write an
   optional local JSON sidecar. These reports omit full extracted text.
+- Phase 5 can store optional dense document/chunk vectors locally in SQLite.
+  Vectors are generated only when the user runs `paper-galaxy embed`.
 - Missing and unindexed records may preserve previously extracted local text and
   chunks so the local index can recover document history without rescanning
   unavailable content.
@@ -26,6 +28,9 @@ Paper Galaxy is local-first by default.
 - Optional OCR runs locally only. It may require user-installed local OCR
   binaries such as Tesseract, but Paper Galaxy does not upload images,
   extracted text, OCR output, or extraction reports to a remote service.
+- Optional embeddings run locally only. Remote Sentence Transformer model names
+  are rejected by default to avoid hidden downloads; using
+  `--allow-model-download` is an explicit user opt-in to model resolution.
 - Choosing a non-loopback host may expose the app to other devices on the local
   network.
 - `.paper-galaxy/` is local project state and is gitignored.

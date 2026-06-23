@@ -59,10 +59,13 @@ def test_schema_initializes_expected_tables(tmp_path: Path) -> None:
     assert "chunks" in tables
     assert "scan_runs" in tables
     assert "extraction_reports" in tables
+    assert "embedding_models" in tables
+    assert "vectors" in tables
+    assert "embedding_runs" in tables
     assert "documents_fts" in tables
 
     assert version is not None
-    assert version["value"] == "2"
+    assert version["value"] == "3"
 
 
 def test_schema_upgrades_version_one_database_idempotently(tmp_path: Path) -> None:
@@ -90,7 +93,7 @@ def test_schema_upgrades_version_one_database_idempotently(tmp_path: Path) -> No
 
     assert report_table is not None
     assert version is not None
-    assert version["value"] == "2"
+    assert version["value"] == "3"
 
 
 def test_sqlite_build_supports_fts5(tmp_path: Path) -> None:

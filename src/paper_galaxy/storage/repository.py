@@ -8,6 +8,7 @@ import re
 import sqlite3
 from pathlib import Path
 
+from paper_galaxy.embeddings.models import EmbeddingModelRecord, VectorRecord
 from paper_galaxy.records import (
     DatabaseStats,
     ExtractionReport,
@@ -194,6 +195,301 @@ class Repository:
             "SELECT COUNT(*) FROM chunks WHERE document_id = ?",
             (document_id,),
         )
+
+    def list_chunks_with_documents(
+        self,
+        *,
+        statuses: set[str] | None = None,
+        limit: int = 1000,
+    ) -> list[tuple[IndexedDocument, IndexedChunk]]:
+        status_sql, status_params = _status_filter(statuses, table_alias="d")
+        rows = self.connection.execute(
+            f"""
+            SELECT
+              d.id AS document_id,
+              d.corpus_id AS document_corpus_id,
+              d.path AS document_path,
+              d.relative_path AS document_relative_path,
+              d.file_type AS document_file_type,
+              d.title AS document_title,
+              d.sha256 AS document_sha256,
+              d.size_bytes AS document_size_bytes,
+              d.mtime_ns AS document_mtime_ns,
+              d.char_count AS document_char_count,
+              d.status AS document_status,
+              d.first_seen_at AS document_first_seen_at,
+              d.last_seen_at AS document_last_seen_at,
+              d.updated_at AS document_updated_at,
+              c.id AS chunk_id,
+              c.document_id AS chunk_document_id,
+              c.chunk_index AS chunk_index,
+              c.text AS chunk_text,
+              c.char_count AS chunk_char_count
+            FROM chunks c
+            JOIN documents d ON d.id = c.document_id
+            {status_sql}
+            ORDER BY d.relative_path, c.chunk_index
+            LIMIT ?
+            """,
+            (*status_params, max(0, limit)),
+        ).fetchall()
+        return [
+            (
+                _document_from_prefix(row, "document_"),
+                IndexedChunk(
+                    id=str(row["chunk_id"]),
+                    document_id=str(row["chunk_document_id"]),
+                    chunk_index=int(row["chunk_index"]),
+                    text=str(row["chunk_text"]),
+                    char_count=int(row["chunk_char_count"]),
+                ),
+            )
+            for row in rows
+        ]
+
+    def get_document_by_id_or_relative_path(
+        self, document_id_or_path: str
+    ) -> IndexedDocument | None:
+        row = self.connection.execute(
+            """
+            SELECT *
+            FROM documents
+            WHERE id = ? OR relative_path = ?
+            ORDER BY CASE WHEN id = ? THEN 0 ELSE 1 END
+            LIMIT 1
+            """,
+            (document_id_or_path, document_id_or_path, document_id_or_path),
+        ).fetchone()
+        return _document_from_row(row) if row is not None else None
+
+    def upsert_embedding_model(self, model: EmbeddingModelRecord) -> None:
+        self.connection.execute(
+            """
+            INSERT INTO embedding_models(
+              id, name, provider, dimension, distance, config_json, created_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+              name = excluded.name,
+              provider = excluded.provider,
+              dimension = excluded.dimension,
+              distance = excluded.distance,
+              config_json = excluded.config_json
+            """,
+            (
+                model.id,
+                model.name,
+                model.provider,
+                model.dimension,
+                model.distance,
+                json.dumps(model.config, sort_keys=True),
+                model.created_at,
+            ),
+        )
+
+    def get_embedding_model(self, model_id: str) -> EmbeddingModelRecord | None:
+        row = self.connection.execute(
+            """
+            SELECT *
+            FROM embedding_models
+            WHERE id = ?
+            """,
+            (model_id,),
+        ).fetchone()
+        return _embedding_model_from_row(row) if row is not None else None
+
+    def create_embedding_run(
+        self, run_id: str, model_id: str, *, started_at: str, config: dict[str, object]
+    ) -> None:
+        self.connection.execute(
+            """
+            INSERT INTO embedding_runs(id, model_id, started_at, status, config_json)
+            VALUES (?, ?, ?, 'running', ?)
+            """,
+            (run_id, model_id, started_at, json.dumps(config, sort_keys=True)),
+        )
+
+    def finish_embedding_run(
+        self,
+        run_id: str,
+        *,
+        finished_at: str,
+        status: str,
+        documents_seen: int,
+        documents_embedded: int,
+        documents_unchanged: int,
+        chunks_seen: int,
+        chunks_embedded: int,
+        chunks_unchanged: int,
+        errors: int = 0,
+    ) -> None:
+        self.connection.execute(
+            """
+            UPDATE embedding_runs
+            SET finished_at = ?,
+                status = ?,
+                documents_seen = ?,
+                documents_embedded = ?,
+                documents_unchanged = ?,
+                chunks_seen = ?,
+                chunks_embedded = ?,
+                chunks_unchanged = ?,
+                errors = ?
+            WHERE id = ?
+            """,
+            (
+                finished_at,
+                status,
+                documents_seen,
+                documents_embedded,
+                documents_unchanged,
+                chunks_seen,
+                chunks_embedded,
+                chunks_unchanged,
+                errors,
+                run_id,
+            ),
+        )
+
+    def upsert_vector(self, vector: VectorRecord) -> None:
+        self.connection.execute(
+            """
+            INSERT INTO vectors(
+              id, model_id, object_type, object_id, text_sha256, dimension, dtype,
+              vector, metadata_json, created_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(model_id, object_type, object_id) DO UPDATE SET
+              id = excluded.id,
+              text_sha256 = excluded.text_sha256,
+              dimension = excluded.dimension,
+              dtype = excluded.dtype,
+              vector = excluded.vector,
+              metadata_json = excluded.metadata_json,
+              updated_at = excluded.updated_at
+            """,
+            (
+                vector.id,
+                vector.model_id,
+                vector.object_type,
+                vector.object_id,
+                vector.text_sha256,
+                vector.dimension,
+                vector.dtype,
+                vector.vector,
+                json.dumps(vector.metadata, sort_keys=True),
+                vector.created_at,
+                vector.updated_at,
+            ),
+        )
+
+    def get_vector(
+        self, model_id: str, object_type: str, object_id: str
+    ) -> VectorRecord | None:
+        row = self.connection.execute(
+            """
+            SELECT *
+            FROM vectors
+            WHERE model_id = ? AND object_type = ? AND object_id = ?
+            """,
+            (model_id, object_type, object_id),
+        ).fetchone()
+        return _vector_from_row(row) if row is not None else None
+
+    def list_vectors(self, model_id: str, object_type: str) -> list[VectorRecord]:
+        rows = self.connection.execute(
+            """
+            SELECT *
+            FROM vectors
+            WHERE model_id = ? AND object_type = ?
+            ORDER BY object_id
+            """,
+            (model_id, object_type),
+        ).fetchall()
+        return [_vector_from_row(row) for row in rows]
+
+    def vector_stats(self) -> dict[str, object]:
+        model_rows = self.connection.execute(
+            """
+            SELECT *
+            FROM embedding_models
+            ORDER BY created_at, name
+            """
+        ).fetchall()
+        count_rows = self.connection.execute(
+            """
+            SELECT
+              v.model_id,
+              m.name AS model_name,
+              m.provider,
+              m.dimension,
+              v.object_type,
+              COUNT(*) AS vector_count,
+              MIN(v.created_at) AS first_vector_at,
+              MAX(v.updated_at) AS last_vector_at
+            FROM vectors v
+            JOIN embedding_models m ON m.id = v.model_id
+            GROUP BY v.model_id, v.object_type
+            ORDER BY m.name, v.object_type
+            """
+        ).fetchall()
+        last_run = self.connection.execute(
+            """
+            SELECT r.*, m.name AS model_name
+            FROM embedding_runs r
+            LEFT JOIN embedding_models m ON m.id = r.model_id
+            ORDER BY r.started_at DESC
+            LIMIT 1
+            """
+        ).fetchone()
+        index_rows = self.connection.execute(
+            """
+            SELECT *
+            FROM vector_indexes
+            ORDER BY created_at, index_path
+            """
+        ).fetchall()
+        return {
+            "database_path": str(self.database_path),
+            "models": [
+                {
+                    "id": str(row["id"]),
+                    "name": str(row["name"]),
+                    "provider": str(row["provider"]),
+                    "dimension": int(row["dimension"]),
+                    "distance": str(row["distance"]),
+                    "config": json.loads(str(row["config_json"])),
+                    "created_at": str(row["created_at"]),
+                }
+                for row in model_rows
+            ],
+            "vector_counts": [
+                {
+                    "model_id": str(row["model_id"]),
+                    "model_name": str(row["model_name"]),
+                    "provider": str(row["provider"]),
+                    "dimension": int(row["dimension"]),
+                    "object_type": str(row["object_type"]),
+                    "vector_count": int(row["vector_count"]),
+                    "first_vector_at": str(row["first_vector_at"]),
+                    "last_vector_at": str(row["last_vector_at"]),
+                }
+                for row in count_rows
+            ],
+            "last_run": _embedding_run_payload(last_run),
+            "vector_indexes": [
+                {
+                    "id": str(row["id"]),
+                    "model_id": str(row["model_id"]),
+                    "object_type": str(row["object_type"]),
+                    "index_path": str(row["index_path"]),
+                    "vector_count": int(row["vector_count"]),
+                    "created_at": str(row["created_at"]),
+                    "metadata": json.loads(str(row["metadata_json"])),
+                }
+                for row in index_rows
+            ],
+        }
 
     def touch_document(self, document_id: str, now: str) -> None:
         self.connection.execute(
@@ -563,6 +859,77 @@ def _document_from_row(row: sqlite3.Row) -> IndexedDocument:
         last_seen_at=str(row["last_seen_at"]),
         updated_at=str(row["updated_at"]),
     )
+
+
+def _document_from_prefix(row: sqlite3.Row, prefix: str) -> IndexedDocument:
+    return IndexedDocument(
+        id=str(row[f"{prefix}id"]),
+        corpus_id=str(row[f"{prefix}corpus_id"]),
+        path=str(row[f"{prefix}path"]),
+        relative_path=str(row[f"{prefix}relative_path"]),
+        file_type=str(row[f"{prefix}file_type"]),
+        title=str(row[f"{prefix}title"]),
+        sha256=str(row[f"{prefix}sha256"]),
+        size_bytes=int(row[f"{prefix}size_bytes"]),
+        mtime_ns=int(row[f"{prefix}mtime_ns"]),
+        char_count=int(row[f"{prefix}char_count"]),
+        status=str(row[f"{prefix}status"]),
+        first_seen_at=str(row[f"{prefix}first_seen_at"]),
+        last_seen_at=str(row[f"{prefix}last_seen_at"]),
+        updated_at=str(row[f"{prefix}updated_at"]),
+    )
+
+
+def _embedding_model_from_row(row: sqlite3.Row) -> EmbeddingModelRecord:
+    config = json.loads(str(row["config_json"]))
+    return EmbeddingModelRecord(
+        id=str(row["id"]),
+        name=str(row["name"]),
+        provider=str(row["provider"]),
+        dimension=int(row["dimension"]),
+        distance=str(row["distance"]),
+        config=config if isinstance(config, dict) else {},
+        created_at=str(row["created_at"]),
+    )
+
+
+def _vector_from_row(row: sqlite3.Row) -> VectorRecord:
+    metadata = json.loads(str(row["metadata_json"]))
+    return VectorRecord(
+        id=str(row["id"]),
+        model_id=str(row["model_id"]),
+        object_type=str(row["object_type"]),
+        object_id=str(row["object_id"]),
+        text_sha256=str(row["text_sha256"]),
+        dimension=int(row["dimension"]),
+        dtype=str(row["dtype"]),
+        vector=bytes(row["vector"]),
+        metadata=metadata if isinstance(metadata, dict) else {},
+        created_at=str(row["created_at"]),
+        updated_at=str(row["updated_at"]),
+    )
+
+
+def _embedding_run_payload(row: sqlite3.Row | None) -> dict[str, object] | None:
+    if row is None:
+        return None
+    config = json.loads(str(row["config_json"]))
+    return {
+        "id": str(row["id"]),
+        "model_id": str(row["model_id"]),
+        "model_name": str(row["model_name"] or ""),
+        "started_at": str(row["started_at"]),
+        "finished_at": str(row["finished_at"]) if row["finished_at"] else None,
+        "status": str(row["status"]),
+        "documents_seen": int(row["documents_seen"]),
+        "documents_embedded": int(row["documents_embedded"]),
+        "documents_unchanged": int(row["documents_unchanged"]),
+        "chunks_seen": int(row["chunks_seen"]),
+        "chunks_embedded": int(row["chunks_embedded"]),
+        "chunks_unchanged": int(row["chunks_unchanged"]),
+        "errors": int(row["errors"]),
+        "config": config if isinstance(config, dict) else {},
+    }
 
 
 def _extraction_report_from_row(row: sqlite3.Row) -> ExtractionReport:
