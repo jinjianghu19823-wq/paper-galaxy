@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Demo | Paper Galaxy</title>
+    <meta name="description" content="Try a static synthetic Paper Galaxy graph demo.">
+    <link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+    <link rel="stylesheet" href="../assets/styles.css">
+  </head>
+  <body>
+    <header class="site-header">
+      <a class="brand" href="../"><img class="brand-mark" src="../assets/favicon.svg" alt=""><span>Paper Galaxy</span></a>
+      <nav class="site-nav" aria-label="Main navigation">
+        <a href="../install/">Install</a>
+        <a href="../privacy/">Privacy</a>
+        <a href="../cloud-library/">Cloud design</a>
+        <a href="https://github.com/jinjianghu19823-wq/paper-galaxy">GitHub</a>
+        <a class="lang-link" href="../zh-cn/demo/">简体中文</a>
+      </nav>
+    </header>
+
+    <main class="section demo-page">
+      <h1>Static graph demo</h1>
+      <p class="lead">This page loads a generated JSON map from the synthetic tiny corpus. The real app runs locally against your own SQLite project.</p>
+      <section class="demo-shell" aria-label="Interactive graph demo">
+        <div class="demo-note">Synthetic static demo. No backend, account, telemetry, or document upload.</div>
+        <div class="demo-topbar"><span>Document graph</span><span>Click nodes or neighbors</span></div>
+        <div class="demo-layout">
+          <aside class="legend-panel">
+            <h3>Cluster legend</h3>
+            <div data-legend></div>
+          </aside>
+          <section class="graph-stage">
+            <svg class="graph-canvas" data-graph-canvas viewBox="0 0 1000 700" role="img" aria-label="Synthetic Paper Galaxy document graph"></svg>
+          </section>
+          <aside>
+            <div class="inspector" data-inspector></div>
+            <div class="why-panel" data-why></div>
+          </aside>
+        </div>
+      </section>
+    </main>
+
+    <footer class="site-footer">Static demo generated from `examples/tiny_corpus`.</footer>
+    <script src="../assets/demo.js" defer></script>
+    <script src="../assets/graph-demo.js" data-map-src="../data/tiny-map.json" defer></script>
+  </body>
+</html>

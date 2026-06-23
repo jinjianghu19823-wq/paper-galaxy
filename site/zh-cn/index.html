@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Paper Galaxy | 本地优先的研究图谱</title>
+    <meta name="description" content="Paper Galaxy 将本地研究资料映射成可解释的文档图谱，默认无账号、无遥测、无上传。">
+    <link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+    <link rel="stylesheet" href="../assets/styles.css">
+  </head>
+  <body>
+    <header class="site-header">
+      <a class="brand" href="./" aria-label="Paper Galaxy 首页">
+        <img class="brand-mark" src="../assets/favicon.svg" alt="">
+        <span>Paper Galaxy</span>
+      </a>
+      <nav class="site-nav" aria-label="主导航">
+        <a href="demo/">演示</a>
+        <a href="install/">安装</a>
+        <a href="privacy/">隐私</a>
+        <a href="cloud-library/">云端设计</a>
+        <a href="https://github.com/jinjianghu19823-wq/paper-galaxy">GitHub</a>
+        <a class="lang-link" href="../">English</a>
+      </nav>
+    </header>
+
+    <main>
+      <section class="hero">
+        <div class="hero-copy">
+          <h1>把你的研究资料库<br>映射成本地图谱</h1>
+          <p class="lead">Paper Galaxy 可以把论文、笔记、<br>LaTeX、Markdown 和 PDF 文件夹<br>变成一个交互式研究地图，<br>同时默认让数据留在你的电脑上。</p>
+          <div class="actions">
+            <a class="button primary" href="demo/">体验演示</a>
+            <a class="button" href="install/">本地安装</a>
+            <a class="button" href="https://github.com/jinjianghu19823-wq/paper-galaxy">查看 GitHub</a>
+          </div>
+          <div class="signal-list" aria-label="隐私承诺">
+            <span>无需账号</span>
+            <span>无遥测</span>
+            <span>默认不上传文档</span>
+          </div>
+        </div>
+
+        <div class="graph-preview" aria-label="截图式预览">
+          <div class="preview-bar">
+            <span>静态公开演示</span>
+            <span>TF-IDF 邻近关系</span>
+          </div>
+          <div class="preview-grid">
+            <svg class="mini-map" viewBox="0 0 900 560" aria-hidden="true">
+              <line x1="130" y1="270" x2="330" y2="190"></line>
+              <line x1="330" y1="190" x2="515" y2="330"></line>
+              <line x1="515" y1="330" x2="710" y2="190"></line>
+              <line x1="330" y1="190" x2="410" y2="480"></line>
+              <line x1="410" y1="480" x2="710" y2="190"></line>
+              <line x1="515" y1="330" x2="735" y2="430"></line>
+              <circle cx="130" cy="270" r="18" fill="#86b7ff"></circle>
+              <circle cx="330" cy="190" r="20" fill="#68d8c8"></circle>
+              <circle cx="515" cy="330" r="18" fill="#68d8c8"></circle>
+              <circle cx="710" cy="190" r="18" fill="#b9b1ff"></circle>
+              <circle cx="410" cy="480" r="18" fill="#68d8c8"></circle>
+              <circle cx="735" cy="430" r="26" fill="#f3bd5c"></circle>
+              <text x="755" y="435" fill="#dfd8ff" font-size="20" font-weight="700">Deep operator networks</text>
+            </svg>
+            <aside class="preview-panel">
+              <h3>文档检查器</h3>
+              <div class="stat-row"><span>活跃文档</span><strong>8</strong></div>
+              <div class="stat-row"><span>聚类</span><strong>4</strong></div>
+              <div class="stat-row"><span>证据</span><strong>词项 + 片段</strong></div>
+              <p class="muted">公开演示只使用合成样例数据。真正安装后的应用会读取你本地项目的 SQLite 数据库。</p>
+            </aside>
+          </div>
+        </div>
+      </section>
+
+      <section class="section">
+        <h2>为什么做 Paper Galaxy？</h2>
+        <p class="lead">它面向想要整理研究结构、但不想把私人资料库交给云服务的研究者。</p>
+        <div class="cards">
+          <article class="card"><h3>本地优先索引</h3><p>扫描本地文件夹，并把抽取记录保存在项目目录下的 SQLite 数据库里。</p></article>
+          <article class="card"><h3>动态图谱</h3><p>浏览聚类、聚焦邻居，并在无前端构建工具的浏览器界面里检查文档元数据。</p></article>
+          <article class="card"><h3>可解释邻近关系</h3><p>最近邻来自高维 TF-IDF 相似度，并显示关键词和短文本片段作为证据。</p></article>
+          <article class="card"><h3>手动聚类标签</h3><p>你可以在本地重命名聚类，同时保留自动标签背后的证据。</p></article>
+          <article class="card"><h3>可选本地嵌入</h3><p>稠密向量是显式本地命令，不是隐藏下载或远程默认功能。</p></article>
+          <article class="card"><h3>导出与备份</h3><p>验证项目、保存地图运行，并在清楚了解敏感性的前提下导出本地备份。</p></article>
+        </div>
+      </section>
+
+      <section class="section">
+        <h2>架构一眼看懂</h2>
+        <div class="architecture" aria-label="架构流程">
+          <div class="arch-step">文件</div>
+          <div class="arch-step">抽取</div>
+          <div class="arch-step">SQLite</div>
+          <div class="arch-step">向量</div>
+          <div class="arch-step">图谱</div>
+          <div class="arch-step">解释</div>
+        </div>
+      </section>
+
+      <section class="section split">
+        <div>
+          <h2>安全与隐私</h2>
+          <p class="lead">本地应用没有账号系统、没有遥测、没有自动上传。OCR 和 embedding 都是用户主动开启的本地工作流。</p>
+        </div>
+        <div class="card">
+          <h3>未来个人云端库</h3>
+          <p>个人云端库目前只是设计文档，不是已实现功能。未来即使实现，也必须是可选开启，并保持无需账号也能使用本地流程。</p>
+          <a class="button" href="cloud-library/">阅读设计边界</a>
+        </div>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <span>Paper Galaxy 公开演示。仅使用合成数据。© <span data-year></span></span>
+    </footer>
+    <script src="../assets/demo.js" defer></script>
+  </body>
+</html>

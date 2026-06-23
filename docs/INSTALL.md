@@ -1,5 +1,16 @@
 # Install
 
+## Try Before Installing
+
+Open the static public demo:
+
+```text
+https://jinjianghu19823-wq.github.io/paper-galaxy/
+```
+
+The demo uses synthetic data only and includes English plus Simplified Chinese
+pages. It does not run the local FastAPI app or read user documents.
+
 ## Development Install
 
 ```bash
@@ -31,3 +42,7 @@ paper-galaxy validate-project --project-dir .
 paper-galaxy build-map-run --project-dir . --name "Tiny corpus map"
 paper-galaxy serve --project-dir .
 ```
+
+The local server binds to `127.0.0.1` by default. The local SQLite database can
+contain extracted text, chunks, vectors, labels, and saved map runs, so do not
+commit `.paper-galaxy/`.

@@ -1,0 +1,9 @@
+cff-version: 1.2.0
+message: "If you use Paper Galaxy in research or teaching, please cite the project repository."
+title: "Paper Galaxy"
+version: "0.1.0"
+authors:
+  - name: "Paper Galaxy contributors"
+repository-code: "https://github.com/jinjianghu19823-wq/paper-galaxy"
+url: "https://jinjianghu19823-wq.github.io/paper-galaxy/"
+license: "MIT"

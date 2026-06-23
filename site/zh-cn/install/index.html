@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>安装 | Paper Galaxy</title>
+    <meta name="description" content="本地安装 Paper Galaxy 并生成第一个研究图谱。">
+    <link rel="icon" href="../../assets/favicon.svg" type="image/svg+xml">
+    <link rel="stylesheet" href="../../assets/styles.css">
+  </head>
+  <body>
+    <header class="site-header">
+      <a class="brand" href="../"><img class="brand-mark" src="../../assets/favicon.svg" alt=""><span>Paper Galaxy</span></a>
+      <nav class="site-nav" aria-label="主导航">
+        <a href="../demo/">演示</a>
+        <a href="../privacy/">隐私</a>
+        <a href="../cloud-library/">云端设计</a>
+        <a class="lang-link" href="../../install/">English</a>
+      </nav>
+    </header>
+    <main class="section split">
+      <div class="page-copy">
+        <h1>本地安装</h1>
+        <p class="lead">Paper Galaxy 仍处于 alpha 阶段，推荐使用 editable install。应用默认在 127.0.0.1 启动，并读取本地 SQLite 数据库。</p>
+        <h2>快速开始</h2>
+        <pre class="code-block" id="quickstart">python -m pip install -e ".[dev,ml,pdf,app]"
+paper-galaxy doctor
+paper-galaxy init . --force
+paper-galaxy index examples/tiny_corpus --project-dir . --min-chars 40
+paper-galaxy serve --project-dir .</pre>
+        <button class="button" data-copy="#quickstart" data-label="复制" data-copied="已复制">复制</button>
+      </div>
+      <aside class="card">
+        <h3>可选 extras</h3>
+        <p>`ocr` 会安装本地 OCR 包装层。`embeddings` 会启用显式本地稠密向量命令。默认不会接受远程模型名，除非你明确允许。</p>
+        <h3>本地数据提醒</h3>
+        <p>SQLite 数据库可能包含抽取文本、分块、向量、标签和保存的地图运行。请不要公开 `.paper-galaxy/`。</p>
+      </aside>
+    </main>
+    <footer class="site-footer">安装前也可以先体验静态演示：<a href="../demo/">打开演示</a>。</footer>
+    <script src="../../assets/demo.js" defer></script>
+  </body>
+</html>

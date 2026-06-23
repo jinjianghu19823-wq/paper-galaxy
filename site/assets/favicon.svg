@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Paper Galaxy">
+  <rect width="64" height="64" rx="14" fill="#0d1117"/>
+  <circle cx="20" cy="24" r="5" fill="#68d8c8"/>
+  <circle cx="43" cy="18" r="4" fill="#a9a4ff"/>
+  <circle cx="39" cy="43" r="6" fill="#f3bd5c"/>
+  <path d="M24 25l15-7M23 28l14 13M42 23l-2 14" stroke="#d7d1ff" stroke-width="2.4" stroke-linecap="round" opacity=".9"/>
+</svg>

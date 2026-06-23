@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Paper Galaxy | Local-first research maps</title>
+    <meta name="description" content="Paper Galaxy maps a local research library into an explainable document graph with no account, telemetry, or upload by default.">
+    <link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
+    <link rel="stylesheet" href="assets/styles.css">
+  </head>
+  <body>
+    <header class="site-header">
+      <a class="brand" href="./" aria-label="Paper Galaxy home">
+        <img class="brand-mark" src="assets/favicon.svg" alt="">
+        <span>Paper Galaxy</span>
+      </a>
+      <nav class="site-nav" aria-label="Main navigation">
+        <a href="demo/">Demo</a>
+        <a href="install/">Install</a>
+        <a href="privacy/">Privacy</a>
+        <a href="cloud-library/">Cloud design</a>
+        <a href="https://github.com/jinjianghu19823-wq/paper-galaxy">GitHub</a>
+        <a class="lang-link" href="zh-cn/">简体中文</a>
+      </nav>
+    </header>
+
+    <main>
+      <section class="hero">
+        <div class="hero-copy">
+          <h1>Map your research library locally</h1>
+          <p class="lead">Paper Galaxy turns a folder of papers, notes, LaTeX, Markdown, and PDFs into an interactive research map that stays on your machine.</p>
+          <div class="actions">
+            <a class="button primary" href="demo/">Try the demo</a>
+            <a class="button" href="install/">Install locally</a>
+            <a class="button" href="https://github.com/jinjianghu19823-wq/paper-galaxy">View on GitHub</a>
+          </div>
+          <div class="signal-list" aria-label="Privacy promises">
+            <span>No account required</span>
+            <span>No telemetry</span>
+            <span>No document upload by default</span>
+          </div>
+        </div>
+
+        <div class="graph-preview" aria-label="Screenshot-style preview">
+          <div class="preview-bar">
+            <span>Static demo preview</span>
+            <span>TF-IDF neighbors</span>
+          </div>
+          <div class="preview-grid">
+            <svg class="mini-map" viewBox="0 0 900 560" aria-hidden="true">
+              <line x1="130" y1="270" x2="330" y2="190"></line>
+              <line x1="330" y1="190" x2="515" y2="330"></line>
+              <line x1="515" y1="330" x2="710" y2="190"></line>
+              <line x1="330" y1="190" x2="410" y2="480"></line>
+              <line x1="410" y1="480" x2="710" y2="190"></line>
+              <line x1="515" y1="330" x2="735" y2="430"></line>
+              <circle cx="130" cy="270" r="18" fill="#86b7ff"></circle>
+              <circle cx="330" cy="190" r="20" fill="#68d8c8"></circle>
+              <circle cx="515" cy="330" r="18" fill="#68d8c8"></circle>
+              <circle cx="710" cy="190" r="18" fill="#b9b1ff"></circle>
+              <circle cx="410" cy="480" r="18" fill="#68d8c8"></circle>
+              <circle cx="735" cy="430" r="26" fill="#f3bd5c"></circle>
+              <text x="755" y="435" fill="#dfd8ff" font-size="20" font-weight="700">Deep operator networks</text>
+            </svg>
+            <aside class="preview-panel">
+              <h3>Document inspector</h3>
+              <div class="stat-row"><span>Active docs</span><strong>8</strong></div>
+              <div class="stat-row"><span>Clusters</span><strong>4</strong></div>
+              <div class="stat-row"><span>Evidence</span><strong>terms + chunks</strong></div>
+              <p class="muted">The public demo uses synthetic sample content only. The installed app reads your local SQLite project.</p>
+            </aside>
+          </div>
+        </div>
+      </section>
+
+      <section class="section">
+        <h2>Why Paper Galaxy?</h2>
+        <p class="lead">It is a research cartography tool for people who want visual structure without turning a private library into a cloud product.</p>
+        <div class="cards">
+          <article class="card"><h3>Local-first indexing</h3><p>Scan local folders and store extracted records in SQLite under your project directory.</p></article>
+          <article class="card"><h3>Dynamic graph</h3><p>Browse clusters, focus neighbors, and inspect document metadata in a dependency-free browser UI.</p></article>
+          <article class="card"><h3>Explainable neighbors</h3><p>Nearest neighbors come from high-dimensional TF-IDF similarity, with visible terms and short chunk evidence.</p></article>
+          <article class="card"><h3>Manual cluster labels</h3><p>Rename generated labels locally while preserving the original evidence behind each cluster.</p></article>
+          <article class="card"><h3>Optional embeddings</h3><p>Dense vectors are explicit local commands, not a hidden download or remote default.</p></article>
+          <article class="card"><h3>Export and backup</h3><p>Validate projects, save map runs, and create local backups with clear sensitivity warnings.</p></article>
+        </div>
+      </section>
+
+      <section class="section">
+        <h2>Architecture in one glance</h2>
+        <div class="architecture" aria-label="Architecture flow">
+          <div class="arch-step">Files</div>
+          <div class="arch-step">Extraction</div>
+          <div class="arch-step">SQLite</div>
+          <div class="arch-step">Vectors</div>
+          <div class="arch-step">Graph</div>
+          <div class="arch-step">Explainability</div>
+        </div>
+      </section>
+
+      <section class="section split">
+        <div>
+          <h2>Security and privacy</h2>
+          <p class="lead">The local app has no account system, no telemetry, and no automatic upload. Optional OCR and embeddings run only when enabled.</p>
+        </div>
+        <div class="card">
+          <h3>Future cloud library</h3>
+          <p>A personal cloud library is design-only today. Any future version must stay opt-in and keep the local workflow usable without an account.</p>
+          <a class="button" href="cloud-library/">Read the design boundary</a>
+        </div>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <span>Paper Galaxy public demo. Synthetic data only. © <span data-year></span></span>
+    </footer>
+    <script src="assets/demo.js" defer></script>
+  </body>
+</html>

@@ -55,3 +55,24 @@ Paper Galaxy is local-first by default.
 Future cloud features, if any, must be opt-in. They should clearly explain what
 data leaves the machine, where it goes, and how the user can disable or delete
 that data.
+
+## Public Demo
+
+The GitHub Pages demo is static and uses synthetic content from
+`examples/tiny_corpus` only. It does not connect to a backend, upload documents,
+load remote runtime assets, or include a local SQLite database. The demo JSON
+contains metadata, graph points, labels, terms, neighbors, and short sample
+explanation excerpts, not full source document text.
+
+The public site includes English and Simplified Chinese pages. Both use the
+same synthetic demo data.
+
+## Future Cloud Library Caveat
+
+The personal cloud library docs describe a possible future opt-in design. They
+do not implement cloud sync, accounts, hosted indexing, or upload behavior in
+the current codebase.
+
+If a cloud feature is ever implemented, backups, vectors, map runs, labels, and
+metadata must be treated as sensitive. Users must be able to understand what is
+leaving the device before enabling it.

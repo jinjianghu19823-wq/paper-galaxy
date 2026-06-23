@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Install | Paper Galaxy</title>
+    <meta name="description" content="Install Paper Galaxy locally and build your first research map.">
+    <link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+    <link rel="stylesheet" href="../assets/styles.css">
+  </head>
+  <body>
+    <header class="site-header">
+      <a class="brand" href="../"><img class="brand-mark" src="../assets/favicon.svg" alt=""><span>Paper Galaxy</span></a>
+      <nav class="site-nav" aria-label="Main navigation">
+        <a href="../demo/">Demo</a>
+        <a href="../privacy/">Privacy</a>
+        <a href="../cloud-library/">Cloud design</a>
+        <a class="lang-link" href="../zh-cn/install/">简体中文</a>
+      </nav>
+    </header>
+    <main class="section split">
+      <div class="page-copy">
+        <h1>Install locally</h1>
+        <p class="lead">Use an editable install while Paper Galaxy is still alpha. The app reads a local SQLite database and serves the browser UI on 127.0.0.1 by default.</p>
+        <h2>Quickstart</h2>
+        <pre class="code-block" id="quickstart">python -m pip install -e ".[dev,ml,pdf,app]"
+paper-galaxy doctor
+paper-galaxy init . --force
+paper-galaxy index examples/tiny_corpus --project-dir . --min-chars 40
+paper-galaxy serve --project-dir .</pre>
+        <button class="button" data-copy="#quickstart" data-label="Copy" data-copied="Copied">Copy</button>
+      </div>
+      <aside class="card">
+        <h3>Optional extras</h3>
+        <p>`ocr` enables local OCR wrappers. `embeddings` enables explicit local dense-vector commands. Remote model names are rejected by default unless you opt in.</p>
+        <h3>Local data warning</h3>
+        <p>The SQLite database can contain extracted text, chunks, vectors, labels, and saved map runs. Keep `.paper-galaxy/` private.</p>
+      </aside>
+    </main>
+    <footer class="site-footer">Try the static demo before installing: <a href="../demo/">open demo</a>.</footer>
+    <script src="../assets/demo.js" defer></script>
+  </body>
+</html>

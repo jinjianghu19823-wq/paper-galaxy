@@ -1,0 +1,746 @@
+{
+  "cluster_labels": {
+    "0": "equations / finite / difference",
+    "1": "randomized / numerical linear / linear algebra",
+    "2": "operator / fourier / branch"
+  },
+  "clusters": [
+    {
+      "cluster_id": 0,
+      "cluster_signature": "cluster_07336b9038fc0a75",
+      "display_label": "equations / finite / difference",
+      "document_ids": [
+        "demo_doc_529342df0f3a",
+        "demo_doc_3f1c050d3d95",
+        "demo_doc_64eb59f7de68"
+      ],
+      "generated_label": "equations / finite / difference",
+      "representatives": [
+        {
+          "document_id": "demo_doc_3f1c050d3d95",
+          "relative_path": "thesis/thesis_ideas.md",
+          "score": 5.0263,
+          "title": "Thesis Ideas"
+        },
+        {
+          "document_id": "demo_doc_64eb59f7de68",
+          "relative_path": "numerical_pdes/finite_difference_notes.md",
+          "score": 4.0259,
+          "title": "Finite Difference Notes"
+        },
+        {
+          "document_id": "demo_doc_529342df0f3a",
+          "relative_path": "numerical_pdes/spectral_methods.tex",
+          "score": 2.0452,
+          "title": "Spectral Methods For Smooth PDEs"
+        }
+      ],
+      "size": 3,
+      "source": "generated",
+      "top_terms": [
+        {
+          "score": 0.2153,
+          "term": "equations"
+        },
+        {
+          "score": 0.2153,
+          "term": "finite"
+        },
+        {
+          "score": 0.2153,
+          "term": "difference"
+        },
+        {
+          "score": 0.2153,
+          "term": "finite difference"
+        },
+        {
+          "score": 0.1637,
+          "term": "thesis"
+        },
+        {
+          "score": 0.1615,
+          "term": "spectral methods"
+        }
+      ],
+      "warnings": []
+    },
+    {
+      "cluster_id": 1,
+      "cluster_signature": "cluster_f455cb67dda5a67b",
+      "display_label": "randomized / numerical linear / linear algebra",
+      "document_ids": [
+        "demo_doc_2801a6fe2cb8",
+        "demo_doc_ece495a655d0",
+        "demo_doc_ef6e0ef90ec2"
+      ],
+      "generated_label": "randomized / numerical linear / linear algebra",
+      "representatives": [
+        {
+          "document_id": "demo_doc_ece495a655d0",
+          "relative_path": "randomized_nla/randomized_svd.md",
+          "score": 6.0294,
+          "title": "Randomized SVD"
+        },
+        {
+          "document_id": "demo_doc_ef6e0ef90ec2",
+          "relative_path": "randomized_nla/sketching_least_squares.txt",
+          "score": 6.0256,
+          "title": "Sketching least squares methods reduce a tall matrix to a smaller subproblem."
+        },
+        {
+          "document_id": "demo_doc_2801a6fe2cb8",
+          "relative_path": "thesis/literature_plan.txt",
+          "score": 6.0243,
+          "title": "The literature plan organizes papers into numerical PDEs, tensor decompositions,"
+        }
+      ],
+      "size": 3,
+      "source": "generated",
+      "top_terms": [
+        {
+          "score": 0.2289,
+          "term": "randomized"
+        },
+        {
+          "score": 0.1717,
+          "term": "numerical linear"
+        },
+        {
+          "score": 0.1717,
+          "term": "linear algebra"
+        },
+        {
+          "score": 0.1717,
+          "term": "linear"
+        },
+        {
+          "score": 0.1717,
+          "term": "algebra"
+        },
+        {
+          "score": 0.169,
+          "term": "numerical"
+        }
+      ],
+      "warnings": []
+    },
+    {
+      "cluster_id": 2,
+      "cluster_signature": "cluster_17683e200854a639",
+      "display_label": "operator / fourier / branch",
+      "document_ids": [
+        "demo_doc_426614f495c4",
+        "demo_doc_1de7c9307ee1"
+      ],
+      "generated_label": "operator / fourier / branch",
+      "representatives": [
+        {
+          "document_id": "demo_doc_426614f495c4",
+          "relative_path": "neural_operators/fourier_neural_operator.md",
+          "score": 4.0295,
+          "title": "Fourier Neural Operator Notes"
+        },
+        {
+          "document_id": "demo_doc_1de7c9307ee1",
+          "relative_path": "neural_operators/deep_operator_network.txt",
+          "score": 4.028,
+          "title": "Deep operator networks represent nonlinear solution operators with branch and"
+        }
+      ],
+      "size": 2,
+      "source": "generated",
+      "top_terms": [
+        {
+          "score": 0.2933,
+          "term": "operator"
+        },
+        {
+          "score": 0.2571,
+          "term": "fourier"
+        },
+        {
+          "score": 0.1928,
+          "term": "branch"
+        },
+        {
+          "score": 0.1928,
+          "term": "neural"
+        },
+        {
+          "score": 0.1928,
+          "term": "networks"
+        },
+        {
+          "score": 0.1928,
+          "term": "fourier neural"
+        }
+      ],
+      "warnings": []
+    }
+  ],
+  "documents": [
+    {
+      "char_count": 280,
+      "document_id": "demo_doc_1de7c9307ee1",
+      "file_type": "txt",
+      "id": "demo_doc_1de7c9307ee1",
+      "relative_path": "neural_operators/deep_operator_network.txt",
+      "status": "active",
+      "title": "Deep operator networks represent nonlinear solution operators with branch and",
+      "updated_at": "synthetic-demo"
+    },
+    {
+      "char_count": 295,
+      "document_id": "demo_doc_426614f495c4",
+      "file_type": "md",
+      "id": "demo_doc_426614f495c4",
+      "relative_path": "neural_operators/fourier_neural_operator.md",
+      "status": "active",
+      "title": "Fourier Neural Operator Notes",
+      "updated_at": "synthetic-demo"
+    },
+    {
+      "char_count": 259,
+      "document_id": "demo_doc_64eb59f7de68",
+      "file_type": "md",
+      "id": "demo_doc_64eb59f7de68",
+      "relative_path": "numerical_pdes/finite_difference_notes.md",
+      "status": "active",
+      "title": "Finite Difference Notes",
+      "updated_at": "synthetic-demo"
+    },
+    {
+      "char_count": 452,
+      "document_id": "demo_doc_529342df0f3a",
+      "file_type": "tex",
+      "id": "demo_doc_529342df0f3a",
+      "relative_path": "numerical_pdes/spectral_methods.tex",
+      "status": "active",
+      "title": "Spectral Methods For Smooth PDEs",
+      "updated_at": "synthetic-demo"
+    },
+    {
+      "char_count": 294,
+      "document_id": "demo_doc_ece495a655d0",
+      "file_type": "md",
+      "id": "demo_doc_ece495a655d0",
+      "relative_path": "randomized_nla/randomized_svd.md",
+      "status": "active",
+      "title": "Randomized SVD",
+      "updated_at": "synthetic-demo"
+    },
+    {
+      "char_count": 256,
+      "document_id": "demo_doc_ef6e0ef90ec2",
+      "file_type": "txt",
+      "id": "demo_doc_ef6e0ef90ec2",
+      "relative_path": "randomized_nla/sketching_least_squares.txt",
+      "status": "active",
+      "title": "Sketching least squares methods reduce a tall matrix to a smaller subproblem.",
+      "updated_at": "synthetic-demo"
+    },
+    {
+      "char_count": 243,
+      "document_id": "demo_doc_2801a6fe2cb8",
+      "file_type": "txt",
+      "id": "demo_doc_2801a6fe2cb8",
+      "relative_path": "thesis/literature_plan.txt",
+      "status": "active",
+      "title": "The literature plan organizes papers into numerical PDEs, tensor decompositions,",
+      "updated_at": "synthetic-demo"
+    },
+    {
+      "char_count": 263,
+      "document_id": "demo_doc_3f1c050d3d95",
+      "file_type": "md",
+      "id": "demo_doc_3f1c050d3d95",
+      "relative_path": "thesis/thesis_ideas.md",
+      "status": "active",
+      "title": "Thesis Ideas",
+      "updated_at": "synthetic-demo"
+    }
+  ],
+  "explanations": [
+    {
+      "chunk_matches": [
+        {
+          "score": 0.0587,
+          "shared_terms": [
+            "operators",
+            "learning",
+            "operator",
+            "pde"
+          ],
+          "source_chunk_id": "doc_c76e792168445c8c_chunk_000000",
+          "source_chunk_index": 0,
+          "source_excerpt": "Deep operator networks represent nonlinear solution operators with branch and trunk networks. The branch net reads sampled input functions, while the trunk n...",
+          "target_chunk_id": "doc_5f460dee1c0ae28e_chunk_000000",
+          "target_chunk_index": 0,
+          "target_excerpt": "Fourier Neural Operator Notes Fourier neural operators learn maps between function spaces by mixing local features with spectral convolution layers. These no..."
+        }
+      ],
+      "dense_score": null,
+      "hybrid_score": null,
+      "lexical_score": 0.0587,
+      "shared_terms": [
+        {
+          "score": 0.0293,
+          "term": "operator"
+        },
+        {
+          "score": 0.0073,
+          "term": "operators"
+        },
+        {
+          "score": 0.0073,
+          "term": "pde"
+        },
+        {
+          "score": 0.0073,
+          "term": "operator learning"
+        },
+        {
+          "score": 0.0073,
+          "term": "learning"
+        }
+      ],
+      "source": {
+        "document_id": "demo_doc_1de7c9307ee1",
+        "relative_path": "neural_operators/deep_operator_network.txt",
+        "score": 0.0,
+        "title": "Deep operator networks represent nonlinear solution operators with branch and"
+      },
+      "target": {
+        "document_id": "demo_doc_426614f495c4",
+        "relative_path": "neural_operators/fourier_neural_operator.md",
+        "score": 0.0,
+        "title": "Fourier Neural Operator Notes"
+      },
+      "warnings": []
+    },
+    {
+      "chunk_matches": [
+        {
+          "score": 0.0356,
+          "shared_terms": [
+            "learning",
+            "operator"
+          ],
+          "source_chunk_id": "doc_c76e792168445c8c_chunk_000000",
+          "source_chunk_index": 0,
+          "source_excerpt": "...runk net represents evaluation coordinates. This note discusses operator learning, PDE data, generalization, and basis functions.",
+          "target_chunk_id": "doc_314f3617a9d55682_chunk_000000",
+          "target_chunk_index": 0,
+          "target_excerpt": "...tensor decompositions, randomized numerical linear algebra, and operator learning. It tracks which papers support the dissertation background, experiment..."
+        }
+      ],
+      "dense_score": null,
+      "hybrid_score": null,
+      "lexical_score": 0.0356,
+      "shared_terms": [
+        {
+          "score": 0.0178,
+          "term": "operator"
+        },
+        {
+          "score": 0.0089,
+          "term": "operator learning"
+        },
+        {
+          "score": 0.0089,
+          "term": "learning"
+        }
+      ],
+      "source": {
+        "document_id": "demo_doc_1de7c9307ee1",
+        "relative_path": "neural_operators/deep_operator_network.txt",
+        "score": 0.0,
+        "title": "Deep operator networks represent nonlinear solution operators with branch and"
+      },
+      "target": {
+        "document_id": "demo_doc_2801a6fe2cb8",
+        "relative_path": "thesis/literature_plan.txt",
+        "score": 0.0,
+        "title": "The literature plan organizes papers into numerical PDEs, tensor decompositions,"
+      },
+      "warnings": []
+    },
+    {
+      "chunk_matches": [
+        {
+          "score": 0.0182,
+          "shared_terms": [
+            "functions",
+            "basis"
+          ],
+          "source_chunk_id": "doc_c76e792168445c8c_chunk_000000",
+          "source_chunk_index": 0,
+          "source_excerpt": "...ators with branch and trunk networks. The branch net reads sampled input functions, while the trunk net represents evaluation coordinates. This note discu...",
+          "target_chunk_id": "doc_8d78324f1df14337_chunk_000000",
+          "target_chunk_index": 0,
+          "target_excerpt": "...Es section Chebyshev Differentiation Spectral methods approximate smooth functions using global polynomial or trigonometric bases. Chebyshev grids, differ..."
+        }
+      ],
+      "dense_score": null,
+      "hybrid_score": null,
+      "lexical_score": 0.0182,
+      "shared_terms": [
+        {
+          "score": 0.0121,
+          "term": "functions"
+        },
+        {
+          "score": 0.0061,
+          "term": "basis"
+        }
+      ],
+      "source": {
+        "document_id": "demo_doc_1de7c9307ee1",
+        "relative_path": "neural_operators/deep_operator_network.txt",
+        "score": 0.0,
+        "title": "Deep operator networks represent nonlinear solution operators with branch and"
+      },
+      "target": {
+        "document_id": "demo_doc_529342df0f3a",
+        "relative_path": "numerical_pdes/spectral_methods.tex",
+        "score": 0.0,
+        "title": "Spectral Methods For Smooth PDEs"
+      },
+      "warnings": []
+    }
+  ],
+  "metadata": {
+    "demo": "paper-galaxy-static-demo",
+    "generated_at": "deterministic-static-demo",
+    "languages": [
+      "en",
+      "zh-CN"
+    ],
+    "notes": [
+      "Generated from the synthetic tiny corpus only.",
+      "No source document full text, absolute paths, or SQLite paths are included."
+    ],
+    "paper_galaxy_version": "0.1.0",
+    "source_corpus": "examples/tiny_corpus",
+    "synthetic_only": true
+  },
+  "points": [
+    {
+      "cluster_id": 2,
+      "cluster_label": "operator / fourier / branch",
+      "cluster_signature": "cluster_17683e200854a639",
+      "document_id": "demo_doc_1de7c9307ee1",
+      "nearest_neighbors": [
+        {
+          "document_id": "demo_doc_426614f495c4",
+          "relative_path": "neural_operators/fourier_neural_operator.md",
+          "score": 0.0602,
+          "title": "Fourier Neural Operator Notes"
+        },
+        {
+          "document_id": "demo_doc_2801a6fe2cb8",
+          "relative_path": "thesis/literature_plan.txt",
+          "score": 0.0404,
+          "title": "The literature plan organizes papers into numerical PDEs, tensor decompositions,"
+        },
+        {
+          "document_id": "demo_doc_529342df0f3a",
+          "relative_path": "numerical_pdes/spectral_methods.tex",
+          "score": 0.0269,
+          "title": "Spectral Methods For Smooth PDEs"
+        }
+      ],
+      "top_terms": [
+        "networks",
+        "branch",
+        "trunk",
+        "net",
+        "functions",
+        "operator",
+        "basis functions",
+        "evaluation"
+      ],
+      "x": -1.0,
+      "y": -0.2812097885170892
+    },
+    {
+      "cluster_id": 2,
+      "cluster_label": "operator / fourier / branch",
+      "cluster_signature": "cluster_17683e200854a639",
+      "document_id": "demo_doc_426614f495c4",
+      "nearest_neighbors": [
+        {
+          "document_id": "demo_doc_1de7c9307ee1",
+          "relative_path": "neural_operators/deep_operator_network.txt",
+          "score": 0.0602,
+          "title": "Deep operator networks represent nonlinear solution operators with branch and"
+        },
+        {
+          "document_id": "demo_doc_64eb59f7de68",
+          "relative_path": "numerical_pdes/finite_difference_notes.md",
+          "score": 0.0583,
+          "title": "Finite Difference Notes"
+        },
+        {
+          "document_id": "demo_doc_2801a6fe2cb8",
+          "relative_path": "thesis/literature_plan.txt",
+          "score": 0.0486,
+          "title": "The literature plan organizes papers into numerical PDEs, tensor decompositions,"
+        }
+      ],
+      "top_terms": [
+        "fourier",
+        "fourier neural",
+        "neural",
+        "notes",
+        "operator",
+        "modes mesh",
+        "parametric diffusion",
+        "fourier modes"
+      ],
+      "x": -0.17772373113113815,
+      "y": -0.42599562994312135
+    },
+    {
+      "cluster_id": 0,
+      "cluster_label": "equations / finite / difference",
+      "cluster_signature": "cluster_07336b9038fc0a75",
+      "document_id": "demo_doc_64eb59f7de68",
+      "nearest_neighbors": [
+        {
+          "document_id": "demo_doc_3f1c050d3d95",
+          "relative_path": "thesis/thesis_ideas.md",
+          "score": 0.1381,
+          "title": "Thesis Ideas"
+        },
+        {
+          "document_id": "demo_doc_529342df0f3a",
+          "relative_path": "numerical_pdes/spectral_methods.tex",
+          "score": 0.0958,
+          "title": "Spectral Methods For Smooth PDEs"
+        },
+        {
+          "document_id": "demo_doc_426614f495c4",
+          "relative_path": "neural_operators/fourier_neural_operator.md",
+          "score": 0.0583,
+          "title": "Fourier Neural Operator Notes"
+        }
+      ],
+      "top_terms": [
+        "finite",
+        "difference",
+        "finite difference",
+        "notes",
+        "pde solvers",
+        "error",
+        "notes finite",
+        "difference notes"
+      ],
+      "x": 1.0,
+      "y": -1.0
+    },
+    {
+      "cluster_id": 0,
+      "cluster_label": "equations / finite / difference",
+      "cluster_signature": "cluster_07336b9038fc0a75",
+      "document_id": "demo_doc_529342df0f3a",
+      "nearest_neighbors": [
+        {
+          "document_id": "demo_doc_64eb59f7de68",
+          "relative_path": "numerical_pdes/finite_difference_notes.md",
+          "score": 0.0958,
+          "title": "Finite Difference Notes"
+        },
+        {
+          "document_id": "demo_doc_426614f495c4",
+          "relative_path": "neural_operators/fourier_neural_operator.md",
+          "score": 0.0335,
+          "title": "Fourier Neural Operator Notes"
+        },
+        {
+          "document_id": "demo_doc_2801a6fe2cb8",
+          "relative_path": "thesis/literature_plan.txt",
+          "score": 0.0325,
+          "title": "The literature plan organizes papers into numerical PDEs, tensor decompositions,"
+        }
+      ],
+      "top_terms": [
+        "smooth",
+        "section",
+        "chebyshev",
+        "differentiation",
+        "spectral methods",
+        "spectral",
+        "equations",
+        "methods"
+      ],
+      "x": 0.018630077632372677,
+      "y": -0.6642218744336039
+    },
+    {
+      "cluster_id": 1,
+      "cluster_label": "randomized / numerical linear / linear algebra",
+      "cluster_signature": "cluster_f455cb67dda5a67b",
+      "document_id": "demo_doc_ece495a655d0",
+      "nearest_neighbors": [
+        {
+          "document_id": "demo_doc_2801a6fe2cb8",
+          "relative_path": "thesis/literature_plan.txt",
+          "score": 0.0859,
+          "title": "The literature plan organizes papers into numerical PDEs, tensor decompositions,"
+        },
+        {
+          "document_id": "demo_doc_ef6e0ef90ec2",
+          "relative_path": "randomized_nla/sketching_least_squares.txt",
+          "score": 0.0829,
+          "title": "Sketching least squares methods reduce a tall matrix to a smaller subproblem."
+        },
+        {
+          "document_id": "demo_doc_3f1c050d3d95",
+          "relative_path": "thesis/thesis_ideas.md",
+          "score": 0.0488,
+          "title": "Thesis Ideas"
+        }
+      ],
+      "top_terms": [
+        "randomized",
+        "algebra experiments",
+        "decomposition",
+        "svd randomized",
+        "randomized svd",
+        "singular",
+        "value",
+        "stable"
+      ],
+      "x": -0.06697870054532329,
+      "y": 1.0
+    },
+    {
+      "cluster_id": 1,
+      "cluster_label": "randomized / numerical linear / linear algebra",
+      "cluster_signature": "cluster_f455cb67dda5a67b",
+      "document_id": "demo_doc_ef6e0ef90ec2",
+      "nearest_neighbors": [
+        {
+          "document_id": "demo_doc_ece495a655d0",
+          "relative_path": "randomized_nla/randomized_svd.md",
+          "score": 0.0829,
+          "title": "Randomized SVD"
+        },
+        {
+          "document_id": "demo_doc_2801a6fe2cb8",
+          "relative_path": "thesis/literature_plan.txt",
+          "score": 0.0691,
+          "title": "The literature plan organizes papers into numerical PDEs, tensor decompositions,"
+        },
+        {
+          "document_id": "demo_doc_529342df0f3a",
+          "relative_path": "numerical_pdes/spectral_methods.tex",
+          "score": 0.0268,
+          "title": "Spectral Methods For Smooth PDEs"
+        }
+      ],
+      "top_terms": [
+        "problems efficiently",
+        "squares methods",
+        "efficiently",
+        "overdetermined",
+        "algebra problems",
+        "diagnostics",
+        "intuition",
+        "score"
+      ],
+      "x": -0.24667991272076017,
+      "y": 0.8933895855735186
+    },
+    {
+      "cluster_id": 1,
+      "cluster_label": "randomized / numerical linear / linear algebra",
+      "cluster_signature": "cluster_f455cb67dda5a67b",
+      "document_id": "demo_doc_2801a6fe2cb8",
+      "nearest_neighbors": [
+        {
+          "document_id": "demo_doc_ece495a655d0",
+          "relative_path": "randomized_nla/randomized_svd.md",
+          "score": 0.0859,
+          "title": "Randomized SVD"
+        },
+        {
+          "document_id": "demo_doc_ef6e0ef90ec2",
+          "relative_path": "randomized_nla/sketching_least_squares.txt",
+          "score": 0.0691,
+          "title": "Sketching least squares methods reduce a tall matrix to a smaller subproblem."
+        },
+        {
+          "document_id": "demo_doc_3f1c050d3d95",
+          "relative_path": "thesis/thesis_ideas.md",
+          "score": 0.053,
+          "title": "Thesis Ideas"
+        }
+      ],
+      "top_terms": [
+        "papers",
+        "comparison methods",
+        "organizes papers",
+        "literature",
+        "organizes",
+        "decompositions",
+        "tracks",
+        "support"
+      ],
+      "x": 0.5387382098363322,
+      "y": 0.7230852771518266
+    },
+    {
+      "cluster_id": 0,
+      "cluster_label": "equations / finite / difference",
+      "cluster_signature": "cluster_07336b9038fc0a75",
+      "document_id": "demo_doc_3f1c050d3d95",
+      "nearest_neighbors": [
+        {
+          "document_id": "demo_doc_64eb59f7de68",
+          "relative_path": "numerical_pdes/finite_difference_notes.md",
+          "score": 0.1381,
+          "title": "Finite Difference Notes"
+        },
+        {
+          "document_id": "demo_doc_2801a6fe2cb8",
+          "relative_path": "thesis/literature_plan.txt",
+          "score": 0.053,
+          "title": "The literature plan organizes papers into numerical PDEs, tensor decompositions,"
+        },
+        {
+          "document_id": "demo_doc_ece495a655d0",
+          "relative_path": "randomized_nla/randomized_svd.md",
+          "score": 0.0488,
+          "title": "Randomized SVD"
+        }
+      ],
+      "top_terms": [
+        "thesis",
+        "tensor",
+        "operators",
+        "possible",
+        "plan connects",
+        "thesis plan",
+        "ideas thesis",
+        "thesis ideas"
+      ],
+      "x": 0.9586619577342397,
+      "y": -0.4945916986727038
+    }
+  ],
+  "stats": {
+    "active_documents": 8,
+    "chunks": 8,
+    "database_path": "omitted-for-static-demo",
+    "documents": 8,
+    "last_scan_time": "synthetic-demo",
+    "missing_documents": 0,
+    "scan_runs": 1,
+    "total_indexed_characters": 2342,
+    "unindexed_documents": 0
+  },
+  "warnings": []
+}

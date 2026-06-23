@@ -134,6 +134,29 @@ Non-goals: desktop packaging, cloud dependency, telemetry, accounts, cloud
 sync, Zotero integration, LLM chat, mandatory LLM labeling, remote plugin
 loading, React/Node tooling, and locking user data into a proprietary format.
 
+## Public Launch Readiness (current milestone)
+
+Goal: make the repository safe and polished enough to publish.
+
+Deliverables: public-readiness audit, community files, issue templates, pull
+request template, static GitHub Pages demo site, Simplified Chinese public site
+pages, demo build/check scripts, Pages deployment workflow, and publishing
+checklist.
+
+Definition of done: the demo is generated from synthetic data only, static
+assets have no external runtime dependencies, public readiness checks fail on
+secrets or generated local data, and existing Phase 0-7 checks still pass.
+
+Non-goals: cloud runtime, hosted backend, account system, document upload,
+remote plugin loading, React/Node frontend tooling, or cloud sync.
+
+## Future Personal Cloud Library (design only)
+
+The personal cloud library is a future opt-in design, not an implementation.
+The staged design starts with an encrypted backup vault, then metadata sync, and
+only later considers managed compute. Local-first use must remain available
+without an account.
+
 ## Phase 8+: Future Work
 
 Future phases may improve extraction, map stability, import/export formats, or

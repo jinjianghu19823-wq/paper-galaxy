@@ -1,5 +1,10 @@
 # Paper Galaxy
 
+[![CI](https://img.shields.io/github/actions/workflow/status/jinjianghu19823-wq/paper-galaxy/ci.yml?branch=main&label=CI)](https://github.com/jinjianghu19823-wq/paper-galaxy/actions)
+![Python](https://img.shields.io/badge/python-3.11%20%7C%203.12-86b7ff)
+![License](https://img.shields.io/badge/license-MIT-f3bd5c)
+![Local-first](https://img.shields.io/badge/local--first-yes-68d8c8)
+
 Paper Galaxy is a local-first research cartography tool for turning a personal
 research corpus into an interactive map of documents, clusters, and conceptual
 neighborhoods.
@@ -34,6 +39,37 @@ mandatory LLM labeling.
 
 Paper Galaxy is local-first by default. There is no account, no telemetry, no
 automatic upload, and no cloud dependency. Generated HTML is local and offline.
+
+## Live Demo
+
+Try the public static demo at
+[jinjianghu19823-wq.github.io/paper-galaxy](https://jinjianghu19823-wq.github.io/paper-galaxy/).
+The demo uses synthetic data from `examples/tiny_corpus` only. It has English
+and Simplified Chinese pages, including a static graph demo that runs without a
+backend.
+
+## Screenshot
+
+The public site includes a screenshot-style preview and a live static graph
+demo. Build it locally with:
+
+```bash
+python scripts/build_demo_site.py --out site_dist
+python scripts/check_demo_site.py --dist site_dist
+```
+
+## Why Paper Galaxy?
+
+- Local-first: documents, extracted text, vectors, labels, and map runs stay in
+  your project by default.
+- Visual graph: browse clusters and nearest-neighbor links in a lightweight
+  browser UI.
+- Explainability: inspect TF-IDF terms and short chunk evidence for nearby
+  documents.
+- No cloud required: the app works without accounts, telemetry, upload, or a
+  hosted backend.
+
+## Quickstart
 
 ## Development Setup
 
@@ -251,11 +287,27 @@ Packaging commands:
 python -m build
 make validate-example
 make check
+make launch-check
 ```
 
 ## Next Phase
 
-The next planned implementation phase is Phase 8 or later future work. There is
-still no cloud dependency, Zotero integration, desktop packaging, account
-system, telemetry, LLM chat, mandatory LLM labeling, remote plugin loading, or
-React/Node frontend in Phase 7.
+The repository is being prepared for public launch with a static GitHub Pages
+demo and public-readiness audit. The future personal cloud library is design
+only and not implemented; see [docs/CLOUD_LIBRARY_DESIGN.md](docs/CLOUD_LIBRARY_DESIGN.md).
+
+There is still no cloud dependency, Zotero integration, desktop packaging,
+account system, telemetry, LLM chat, mandatory LLM labeling, remote plugin
+loading, or React/Node frontend in the local app.
+
+## Security And Privacy
+
+Do not commit `.paper-galaxy/`, SQLite databases, generated HTML/JSON exports,
+backup zip files, vector indexes, downloaded model files, or secrets. Public
+issues should not include private document text. See [SECURITY.md](SECURITY.md)
+and [docs/PRIVACY.md](docs/PRIVACY.md).
+
+## Roadmap And Contributing
+
+See [docs/ROADMAP.md](docs/ROADMAP.md) for phase boundaries and
+[CONTRIBUTING.md](CONTRIBUTING.md) for contribution guidance.

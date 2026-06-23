@@ -1,0 +1,26 @@
+[
+  {
+    "title": "Local-first indexing",
+    "summary": "Scan a local folder, keep extracted records in SQLite, and avoid account or upload requirements."
+  },
+  {
+    "title": "Dynamic graph",
+    "summary": "Explore a moving document graph with pan, focus, cluster labels, and nearest-neighbor links."
+  },
+  {
+    "title": "Explainable neighbors",
+    "summary": "Use TF-IDF terms and chunk evidence to inspect why two documents are close."
+  },
+  {
+    "title": "Manual labels",
+    "summary": "Rename generated clusters locally without losing the transparent evidence behind them."
+  },
+  {
+    "title": "Optional embeddings",
+    "summary": "Add dense local vectors only when you explicitly provide or allow a model."
+  },
+  {
+    "title": "Export and backup",
+    "summary": "Validate projects, save map runs, and export local project bundles deliberately."
+  }
+]

@@ -1,0 +1,34 @@
+name: Feature request
+description: Suggest a local-first Paper Galaxy improvement.
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: story
+    attributes:
+      label: User story
+      description: What are you trying to do with your research library?
+      placeholder: "As a researcher, I want..."
+    validations:
+      required: true
+  - type: textarea
+    id: privacy
+    attributes:
+      label: Local-first and privacy implications
+      description: Would this require network access, cloud services, extra local storage, or sensitive data handling?
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+  - type: dropdown
+    id: external
+    attributes:
+      label: Does this need cloud or external services?
+      options:
+        - "No"
+        - "Maybe"
+        - "Yes"
+    validations:
+      required: true

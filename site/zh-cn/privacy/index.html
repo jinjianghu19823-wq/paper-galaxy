@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>隐私 | Paper Galaxy</title>
+    <meta name="description" content="Paper Galaxy 的本地优先隐私边界。">
+    <link rel="icon" href="../../assets/favicon.svg" type="image/svg+xml">
+    <link rel="stylesheet" href="../../assets/styles.css">
+  </head>
+  <body>
+    <header class="site-header">
+      <a class="brand" href="../"><img class="brand-mark" src="../../assets/favicon.svg" alt=""><span>Paper Galaxy</span></a>
+      <nav class="site-nav" aria-label="主导航">
+        <a href="../demo/">演示</a>
+        <a href="../install/">安装</a>
+        <a href="../cloud-library/">云端设计</a>
+        <a class="lang-link" href="../../privacy/">English</a>
+      </nav>
+    </header>
+    <main class="section page-copy">
+      <h1>隐私</h1>
+      <p class="lead">Paper Galaxy 默认本地优先。它目前没有账号、遥测、自动上传、托管后端或远程标签服务。</p>
+      <h2>哪些内容留在本地</h2>
+      <ul>
+        <li>源文档留在你的文件夹中。</li>
+        <li>抽取文本、分块、标签、向量和保存的地图运行存储在本地 SQLite。</li>
+        <li>图谱位置和演示标签编辑只使用浏览器 localStorage。</li>
+      </ul>
+      <h2>可选本地功能</h2>
+      <p>OCR 和 dense embeddings 都是显式本地工作流。OCR 可能需要本地 Tesseract；embedding 命令默认要求本地模型路径。</p>
+      <h2>备份也很敏感</h2>
+      <p>备份包可能包含抽取文本、分块、向量、标签和地图运行。请把它当成私人研究数据。</p>
+      <h2>公开演示</h2>
+      <p>GitHub Pages 演示只使用合成样例内容，不连接后端。</p>
+    </main>
+    <footer class="site-footer">完整隐私说明见 `docs/PRIVACY.md`。</footer>
+    <script src="../../assets/demo.js" defer></script>
+  </body>
+</html>

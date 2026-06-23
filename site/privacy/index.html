@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Privacy | Paper Galaxy</title>
+    <meta name="description" content="Paper Galaxy privacy model and local-first data boundaries.">
+    <link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+    <link rel="stylesheet" href="../assets/styles.css">
+  </head>
+  <body>
+    <header class="site-header">
+      <a class="brand" href="../"><img class="brand-mark" src="../assets/favicon.svg" alt=""><span>Paper Galaxy</span></a>
+      <nav class="site-nav" aria-label="Main navigation">
+        <a href="../demo/">Demo</a>
+        <a href="../install/">Install</a>
+        <a href="../cloud-library/">Cloud design</a>
+        <a class="lang-link" href="../zh-cn/privacy/">简体中文</a>
+      </nav>
+    </header>
+    <main class="section page-copy">
+      <h1>Privacy</h1>
+      <p class="lead">Paper Galaxy is local-first by default. There is no account, telemetry, automatic upload, hosted backend, or remote labeling service.</p>
+      <h2>What stays local</h2>
+      <ul>
+        <li>Source documents stay in your folders.</li>
+        <li>Extracted text, chunks, labels, vectors, and saved map runs live in local SQLite.</li>
+        <li>Graph positions and demo label edits use browser localStorage only.</li>
+      </ul>
+      <h2>Optional local features</h2>
+      <p>OCR and dense embeddings are explicit local workflows. OCR may require a local Tesseract binary. Embedding commands require a local model path unless you explicitly allow model resolution.</p>
+      <h2>Backups are sensitive</h2>
+      <p>Backup bundles may contain extracted text, chunks, vectors, labels, and map runs. Treat them like private research data.</p>
+      <h2>Public demo</h2>
+      <p>The GitHub Pages demo uses synthetic sample content only and does not talk to a backend.</p>
+    </main>
+    <footer class="site-footer">Full privacy notes live in `docs/PRIVACY.md`.</footer>
+    <script src="../assets/demo.js" defer></script>
+  </body>
+</html>

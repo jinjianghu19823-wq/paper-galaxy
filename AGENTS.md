@@ -19,15 +19,10 @@ exports into an interactive 2D research universe.
 
 ## Current Phase
 
-This repository is in Phase 7: professionalization. It can export
-static offline HTML, persist document/chunk records and extraction reports in
-SQLite, search local FTS, serve a local read-only browser app, optionally run
-local image OCR, optionally store local dense document/chunk vectors, generate
-inspectable cluster labels, store local manual cluster label overrides, and
-explain nearby documents with shared terms and chunk excerpts. It also validates
-projects, saves TF-IDF map runs, exports/imports local backup bundles, lists
-built-in plugin boundaries, and builds standard Python distributions. Do not
-implement Phase 8 or later phases unless explicitly asked.
+This repository is in public launch readiness. Phase 7 professionalization is
+implemented, and the current milestone adds public repository checks plus a
+static GitHub Pages demo site. The product remains local-first. Do not implement
+cloud runtime features unless explicitly asked.
 
 ## Commands
 
@@ -61,6 +56,10 @@ implement Phase 8 or later phases unless explicitly asked.
 - `paper-galaxy serve --project-dir .`
 - `paper-galaxy extract-preview examples/tiny_corpus/neural_operators/fourier_neural_operator.md`
 - `python -m build`
+- `python scripts/build_demo_site.py --out site_dist`
+- `python scripts/check_demo_site.py --dist site_dist`
+- `python scripts/public_readiness_check.py --strict`
+- `make launch-check`
 
 ## Engineering Rules
 
@@ -75,6 +74,8 @@ implement Phase 8 or later phases unless explicitly asked.
   other Phase 8+ features unless a future task explicitly asks for that phase.
 - Do not add remote plugin loading; Phase 7 plugins are static built-in
   boundaries only.
+- The personal cloud library is design-only in this milestone. Do not add cloud
+  sync, hosted auth, storage SDKs, accounts, payment code, or background upload.
 - Cluster labels and pair explanations must remain local and inspectable. Do
   not add mandatory LLM labeling or remote explanation services.
 - Pair explanations may return short excerpts, but should not return full

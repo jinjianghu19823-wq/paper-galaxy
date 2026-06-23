@@ -18,6 +18,8 @@ build/
 
 .paper-galaxy/
 data/
+!site/data/
+!site/data/*.json
 *.sqlite3
 *.faiss
 *.index
@@ -27,3 +29,5 @@ extraction-report.json
 validation.json
 map-run*.json
 paper-galaxy-backup*.zip
+site_dist/
+public-readiness.json

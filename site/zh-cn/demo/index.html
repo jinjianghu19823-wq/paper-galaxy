@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>演示 | Paper Galaxy</title>
+    <meta name="description" content="体验 Paper Galaxy 的静态合成图谱演示。">
+    <link rel="icon" href="../../assets/favicon.svg" type="image/svg+xml">
+    <link rel="stylesheet" href="../../assets/styles.css">
+  </head>
+  <body>
+    <header class="site-header">
+      <a class="brand" href="../"><img class="brand-mark" src="../../assets/favicon.svg" alt=""><span>Paper Galaxy</span></a>
+      <nav class="site-nav" aria-label="主导航">
+        <a href="../install/">安装</a>
+        <a href="../privacy/">隐私</a>
+        <a href="../cloud-library/">云端设计</a>
+        <a href="https://github.com/jinjianghu19823-wq/paper-galaxy">GitHub</a>
+        <a class="lang-link" href="../../demo/">English</a>
+      </nav>
+    </header>
+
+    <main class="section demo-page">
+      <h1>静态图谱演示</h1>
+      <p class="lead">本页面从合成 tiny corpus 加载生成好的 JSON 地图。真实应用会在本地读取你自己的 SQLite 项目。</p>
+      <section class="demo-shell" aria-label="交互式图谱演示">
+        <div class="demo-note">静态合成演示。无后端、无账号、无遥测、无文档上传。</div>
+        <div class="demo-topbar"><span>文档图谱</span><span>点击节点或邻居</span></div>
+        <div class="demo-layout">
+          <aside class="legend-panel">
+            <h3>聚类图例</h3>
+            <div data-legend></div>
+          </aside>
+          <section class="graph-stage">
+            <svg class="graph-canvas" data-graph-canvas viewBox="0 0 1000 700" role="img" aria-label="Paper Galaxy 合成文档图谱"></svg>
+          </section>
+          <aside>
+            <div class="inspector" data-inspector></div>
+            <div class="why-panel" data-why></div>
+          </aside>
+        </div>
+      </section>
+    </main>
+
+    <footer class="site-footer">静态演示由 `examples/tiny_corpus` 生成。</footer>
+    <script src="../../assets/demo.js" defer></script>
+    <script src="../../assets/graph-demo.js" data-map-src="../../data/tiny-map.json" defer></script>
+  </body>
+</html>

@@ -256,3 +256,40 @@ extension discovery.
 `paper-galaxy validate-project` reports schema, count, consistency, dependency,
 and issue metadata. It does not include full extracted document text or chunk
 contents in console output or JSON reports.
+
+## ADR 0042: Public Demo Is Static And Synthetic-Only
+
+The public demo site is generated from `examples/tiny_corpus` and ships only
+metadata, graph points, cluster labels, top terms, neighbor summaries, and short
+explanation excerpts. It does not include user documents, full extracted text,
+SQLite databases, local absolute paths, or `.paper-galaxy/` state.
+
+## ADR 0043: GitHub Pages Deploys A Built Artifact
+
+GitHub Pages uses a workflow-generated `site_dist/` artifact from committed
+`site/` source. `site_dist/` stays gitignored so generated output does not
+become source of truth.
+
+## ADR 0044: Public Readiness Is Locally Audited
+
+Public release is gated by `scripts/public_readiness_check.py`, which checks
+for generated local artifacts, likely secrets, downloaded model files, community
+files, demo site policy, README readiness, and package metadata before making
+the repository public.
+
+## ADR 0045: Cloud Library Is Design-Only
+
+The personal cloud library is documented as future opt-in design only. This
+milestone does not implement account systems, cloud sync, hosted indexing,
+storage SDKs, payment code, telemetry, or document upload.
+
+## ADR 0046: No Server-Side Demo Backend On Pages
+
+The public demo must work as static HTML, CSS, JavaScript, and JSON. The local
+FastAPI app remains a local install feature and is not hosted on GitHub Pages.
+
+## ADR 0047: Public Site Supports English And Simplified Chinese
+
+The public static site includes English and Simplified Chinese pages. The
+language layer is static site content plus small browser-side text selection for
+the demo inspector, not a new runtime dependency or app-wide i18n framework.

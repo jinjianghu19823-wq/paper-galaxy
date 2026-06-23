@@ -14,3 +14,8 @@ Paper Galaxy is designed to run locally. It should not upload documents, send
 telemetry, load remote frontend assets, or load remote plugins by default.
 Backup bundles can contain the local SQLite database, so treat them as sensitive
 project data.
+
+The public GitHub Pages demo is static and synthetic-data-only. It should not
+contain user documents, local databases, model files, private paths, or remote
+runtime assets. Run `python scripts/public_readiness_check.py --strict` before
+making the repository public.

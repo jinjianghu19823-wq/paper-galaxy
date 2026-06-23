@@ -365,6 +365,48 @@ The plugin module is a static registry of built-in extractor boundaries. It is
 metadata only in Phase 7 and intentionally does not load third-party, remote, or
 user-provided code.
 
+## Public Static Demo Site
+
+The public launch site is a static GitHub Pages artifact generated from
+committed `site/` source files. It does not run FastAPI and does not require
+Node, npm, React, Vite, external fonts, analytics, or remote runtime assets.
+
+```text
+examples/tiny_corpus
+  -> scripts/build_demo_site.py
+  -> site/data/tiny-map.json
+  -> site_dist/
+  -> GitHub Pages artifact
+```
+
+`scripts/build_demo_site.py` indexes the synthetic tiny corpus in a temporary
+project directory, builds the same TF-IDF map payload used by the local web app,
+adds short precomputed pair explanations, strips local database paths, replaces
+machine-dependent document IDs with stable demo IDs, and writes a JSON payload
+without full source text.
+
+`scripts/check_demo_site.py` verifies the generated static site, demo JSON
+shape, local asset policy, absence of absolute paths, absence of full source
+text, English and Simplified Chinese pages, and optional local HTTP serving.
+
+GitHub Pages deployment is handled by `.github/workflows/pages.yml`. Repository
+Pages settings still need Source = GitHub Actions.
+
+## Public Readiness Audit
+
+`scripts/public_readiness_check.py` checks for generated local data, likely
+secrets, downloaded model files, large accidental binaries, required community
+files, static demo asset policy, README launch content, and package metadata.
+It can write `public-readiness.json` and exits nonzero on blockers in strict
+mode.
+
+## Future Cloud Library Boundary
+
+The cloud library docs under `docs/cloud-library/` are design-only. They do not
+add cloud runtime modules, hosted auth, sync workers, storage SDKs, payment
+code, telemetry, or background upload. The local architecture remains useful
+without accounts or cloud services.
+
 ## Future Data Model Sketch
 
 - `documents`: one row per source document.
