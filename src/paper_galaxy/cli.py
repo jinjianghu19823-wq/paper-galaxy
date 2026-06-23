@@ -1,6 +1,7 @@
 """Command-line interface for Paper Galaxy."""
 
 import importlib.util
+import json
 import sys
 from pathlib import Path
 from typing import Annotated
@@ -47,11 +48,26 @@ from paper_galaxy.validation import (
     write_validation_report,
 )
 from paper_galaxy.web.map_builder import build_map_payload
+from paper_galaxy.zotero.detect import detect_zotero, detection_payload
+from paper_galaxy.zotero.importers import import_from_zotero
+from paper_galaxy.zotero.local_api import (
+    DEFAULT_LOCAL_API_URL,
+    LocalZoteroAPIClient,
+    ZoteroAPIError,
+)
+from paper_galaxy.zotero.models import ZoteroImportRunSummary
+from paper_galaxy.zotero.normalize import normalize_collection, normalize_item
+from paper_galaxy.zotero.reading import build_and_store_zotero_reading_map
 
 app = typer.Typer(
     help="Local-first research cartography tools.",
     no_args_is_help=True,
 )
+zotero_app = typer.Typer(
+    help="Read-only local Zotero import and reading graph tools.",
+    no_args_is_help=True,
+)
+app.add_typer(zotero_app, name="zotero")
 
 OPTIONAL_MODULES: tuple[tuple[str, str], ...] = (
     ("pypdf", "pypdf"),
@@ -103,6 +119,9 @@ def doctor() -> None:
     console.print(
         "Professionalization commands: Phase 7 validation, map runs, backups, "
         "and plugins are available."
+    )
+    console.print(
+        "Zotero commands: local read-only import and reading graph are available."
     )
 
 
@@ -1531,6 +1550,451 @@ def explain_pair_command(
     console.print(chunk_table)
 
 
+@zotero_app.command("detect")
+def zotero_detect_command(
+    data_dir: Annotated[
+        Path | None,
+        typer.Option("--data-dir", help="Explicit Zotero data directory."),
+    ] = None,
+    api_url: Annotated[
+        str,
+        typer.Option("--api-url", help="Zotero local API base URL."),
+    ] = DEFAULT_LOCAL_API_URL,
+    timeout: Annotated[
+        float,
+        typer.Option("--timeout", help="Local API timeout in seconds."),
+    ] = 2.0,
+    json_output: Annotated[
+        bool,
+        typer.Option("--json", help="Print JSON instead of a table."),
+    ] = False,
+) -> None:
+    """Detect local Zotero API and data directory state."""
+
+    console = get_console()
+    payload = detection_payload(
+        detect_zotero(api_url=api_url, data_dir=data_dir, timeout=timeout)
+    )
+    if json_output:
+        console.print_json(json.dumps(payload, sort_keys=True))
+        return
+    table = Table(title="Paper Galaxy Zotero Detection")
+    table.add_column("Check", style="bold")
+    table.add_column("Value", overflow="fold")
+    table.add_row("Local API reachable", str(payload["api_reachable"]))
+    table.add_row("API URL", str(payload["api_url"]))
+    table.add_row("Data dir", str(payload["data_dir"]))
+    table.add_row("zotero.sqlite exists", str(payload["database_exists"]))
+    table.add_row("storage/ exists", str(payload["storage_exists"]))
+    if payload.get("api_error"):
+        table.add_row("API error", str(payload["api_error"]))
+    table.add_row("Recommended next command", str(payload["recommended_next_command"]))
+    console.print(table)
+    console.print(str(payload["note"]))
+
+
+@zotero_app.command("status")
+def zotero_status_command(
+    api_url: Annotated[
+        str,
+        typer.Option("--api-url", help="Zotero local API base URL."),
+    ] = DEFAULT_LOCAL_API_URL,
+    timeout: Annotated[
+        float,
+        typer.Option("--timeout", help="Local API timeout in seconds."),
+    ] = 2.0,
+    json_output: Annotated[
+        bool,
+        typer.Option("--json", help="Print JSON instead of a table."),
+    ] = False,
+) -> None:
+    """Check whether Zotero Desktop local API appears enabled."""
+
+    console = get_console()
+    client = LocalZoteroAPIClient(api_url, timeout=timeout)
+    try:
+        root = client.root()
+        top_items = client.top_items(limit=1)
+        collections = client.collections(limit=1)
+        tags = client.tags(limit=1)
+    except ZoteroAPIError as exc:
+        next_steps = [
+            "Open Zotero Desktop.",
+            "Make sure the local API is enabled.",
+            "Use Zotero Settings -> Advanced -> Files and Folders -> "
+            "Show Data Directory.",
+            "Retry: paper-galaxy zotero status",
+        ]
+        payload = {
+            "reachable": False,
+            "api_url": api_url,
+            "error": str(exc),
+            "next_steps": next_steps,
+        }
+        if json_output:
+            console.print_json(json.dumps(payload, sort_keys=True))
+        else:
+            console.print(payload["error"])
+            for step in next_steps:
+                console.print(f"- {step}")
+        raise typer.Exit(1) from exc
+    payload = {
+        "reachable": True,
+        "api_url": api_url,
+        "root": root,
+        "top_items_probe_count": len(top_items),
+        "collections_probe_count": len(collections),
+        "tags_probe_count": len(tags),
+    }
+    if json_output:
+        console.print_json(json.dumps(payload, sort_keys=True))
+        return
+    table = Table(title="Paper Galaxy Zotero Status")
+    table.add_column("Field", style="bold")
+    table.add_column("Value")
+    table.add_row("Local API reachable", "true")
+    table.add_row("API URL", api_url)
+    table.add_row("Top items probe", str(len(top_items)))
+    table.add_row("Collections probe", str(len(collections)))
+    table.add_row("Tags probe", str(len(tags)))
+    console.print(table)
+
+
+@zotero_app.command("collections")
+def zotero_collections_command(
+    api_url: Annotated[str, typer.Option("--api-url")] = DEFAULT_LOCAL_API_URL,
+    project_dir: Annotated[Path, typer.Option("--project-dir")] = Path("."),
+    limit: Annotated[int, typer.Option("--limit")] = 50,
+    json_output: Annotated[bool, typer.Option("--json")] = False,
+) -> None:
+    """List Zotero collections from the read-only local API."""
+
+    del project_dir
+    console = get_console()
+    try:
+        rows = [
+            normalize_collection(row)
+            for row in LocalZoteroAPIClient(api_url).collections(limit=limit)
+        ]
+    except ZoteroAPIError as exc:
+        console.print(str(exc))
+        raise typer.Exit(1) from exc
+    payload = [
+        {
+            "key": row.key,
+            "name": row.name,
+            "parent_key": row.parent_key,
+            "version": row.version,
+        }
+        for row in rows
+    ]
+    if json_output:
+        console.print_json(json.dumps(payload, sort_keys=True))
+        return
+    table = Table(title="Zotero Collections")
+    table.add_column("Key")
+    table.add_column("Name")
+    table.add_column("Parent")
+    for row in payload:
+        table.add_row(str(row["key"]), str(row["name"]), str(row["parent_key"] or ""))
+    console.print(table)
+
+
+@zotero_app.command("items")
+def zotero_items_command(
+    api_url: Annotated[str, typer.Option("--api-url")] = DEFAULT_LOCAL_API_URL,
+    limit: Annotated[int, typer.Option("--limit")] = 20,
+    collection: Annotated[str | None, typer.Option("--collection")] = None,
+    tag: Annotated[str | None, typer.Option("--tag")] = None,
+    item_type: Annotated[str | None, typer.Option("--item-type")] = None,
+    json_output: Annotated[bool, typer.Option("--json")] = False,
+) -> None:
+    """Preview Zotero items from the read-only local API without importing."""
+
+    del collection
+    console = get_console()
+    try:
+        rows = [
+            normalize_item(row)
+            for row in LocalZoteroAPIClient(api_url).top_items(limit=limit)
+        ]
+    except ZoteroAPIError as exc:
+        console.print(str(exc))
+        raise typer.Exit(1) from exc
+    if tag:
+        rows = [row for row in rows if tag in {item.tag for item in row.tags}]
+    if item_type:
+        rows = [row for row in rows if row.item_type == item_type]
+    payload = [
+        {
+            "key": row.key,
+            "title": row.title,
+            "year": row.year,
+            "creators": [creator.display_name for creator in row.creators],
+            "item_type": row.item_type,
+            "tags": [tag_row.tag for tag_row in row.tags],
+            "collections": list(row.collections),
+        }
+        for row in rows
+    ]
+    if json_output:
+        console.print_json(json.dumps(payload, sort_keys=True))
+        return
+    table = Table(title="Zotero Item Preview")
+    table.add_column("Key")
+    table.add_column("Title", overflow="fold")
+    table.add_column("Year")
+    table.add_column("Type")
+    table.add_column("Tags", overflow="fold")
+    for row in rows:
+        table.add_row(
+            row.key,
+            row.title,
+            str(row.year or ""),
+            row.item_type,
+            ", ".join(tag_value.tag for tag_value in row.tags),
+        )
+    console.print(table)
+
+
+@zotero_app.command("import")
+def zotero_import_command(
+    project_dir: Annotated[Path, typer.Option("--project-dir")] = Path("."),
+    api_url: Annotated[str, typer.Option("--api-url")] = DEFAULT_LOCAL_API_URL,
+    data_dir: Annotated[Path | None, typer.Option("--data-dir")] = None,
+    library: Annotated[str, typer.Option("--library")] = "local",
+    collection: Annotated[str | None, typer.Option("--collection")] = None,
+    tag: Annotated[list[str] | None, typer.Option("--tag")] = None,
+    item_type: Annotated[list[str] | None, typer.Option("--item-type")] = None,
+    include_pdfs: Annotated[
+        bool,
+        typer.Option("--include-pdfs/--no-include-pdfs"),
+    ] = True,
+    include_notes: Annotated[
+        bool,
+        typer.Option("--include-notes/--no-include-notes"),
+    ] = True,
+    include_attachments: Annotated[
+        bool,
+        typer.Option("--include-attachments/--no-include-attachments"),
+    ] = True,
+    include_metadata_only: Annotated[
+        bool,
+        typer.Option("--include-metadata-only/--no-include-metadata-only"),
+    ] = True,
+    read_tag: Annotated[list[str] | None, typer.Option("--read-tag")] = None,
+    reading_tag: Annotated[list[str] | None, typer.Option("--reading-tag")] = None,
+    to_read_tag: Annotated[list[str] | None, typer.Option("--to-read-tag")] = None,
+    include_status: Annotated[str, typer.Option("--include-status")] = "all",
+    limit: Annotated[int | None, typer.Option("--limit")] = None,
+    since_version: Annotated[int | None, typer.Option("--since-version")] = None,
+    force: Annotated[bool, typer.Option("--force")] = False,
+    dry_run: Annotated[bool, typer.Option("--dry-run")] = False,
+    build_reading_map: Annotated[
+        bool,
+        typer.Option("--build-reading-map/--no-build-reading-map"),
+    ] = True,
+    map_name: Annotated[str, typer.Option("--map-name")] = "Zotero Reading Graph",
+    min_chars: Annotated[int, typer.Option("--min-chars")] = 40,
+    verbose: Annotated[bool, typer.Option("--verbose")] = False,
+    json_out: Annotated[Path | None, typer.Option("--json-out")] = None,
+) -> None:
+    """Import Zotero items into Paper Galaxy local SQLite state."""
+
+    del library
+    console = get_console()
+    try:
+        summary = import_from_zotero(
+            project_dir=project_dir,
+            api_url=api_url,
+            data_dir=data_dir,
+            collection=collection,
+            tags=tuple(tag or ()),
+            item_types=tuple(item_type or ()),
+            include_pdfs=include_pdfs,
+            include_notes=include_notes,
+            include_attachments=include_attachments,
+            include_metadata_only=include_metadata_only,
+            read_tags=tuple(read_tag or ("read", "Read", "finished")),
+            reading_tags=tuple(reading_tag or ("reading", "Reading", "current")),
+            to_read_tags=tuple(
+                to_read_tag or ("to read", "To Read", "unread", "queue")
+            ),
+            include_status=include_status,
+            limit=limit,
+            since_version=since_version,
+            force=force,
+            dry_run=dry_run,
+            build_reading_map=build_reading_map,
+            map_name=map_name,
+            min_chars=min_chars,
+            verbose=verbose,
+        )
+    except ZoteroAPIError as exc:
+        console.print(str(exc))
+        raise typer.Exit(1) from exc
+    payload = _zotero_import_summary_payload(summary)
+    if json_out is not None:
+        json_out.expanduser().resolve().write_text(
+            json.dumps(payload, indent=2, sort_keys=True),
+            encoding="utf-8",
+        )
+    table = Table(title="Paper Galaxy Zotero Import Summary")
+    table.add_column("Metric", style="bold")
+    table.add_column("Value", overflow="fold")
+    for key, value in payload.items():
+        if key in {"warnings", "reading_status_counts"}:
+            continue
+        table.add_row(key.replace("_", " ").title(), str(value))
+    reading_status_counts = payload["reading_status_counts"]
+    warnings = payload["warnings"]
+    table.add_row("Reading statuses", json.dumps(reading_status_counts))
+    if isinstance(warnings, list) and warnings:
+        table.add_row("Warnings", "; ".join(str(w) for w in warnings))
+    if json_out is not None:
+        table.add_row("JSON output", str(json_out.expanduser().resolve()))
+    console.print(table)
+
+
+@zotero_app.command("graph")
+def zotero_graph_command(
+    project_dir: Annotated[Path, typer.Option("--project-dir")] = Path("."),
+    status: Annotated[str, typer.Option("--status")] = "all",
+    collection: Annotated[str | None, typer.Option("--collection")] = None,
+    tag: Annotated[str | None, typer.Option("--tag")] = None,
+    seed: Annotated[int, typer.Option("--seed")] = 42,
+    clusters: Annotated[int | None, typer.Option("--clusters")] = None,
+    neighbors: Annotated[int, typer.Option("--neighbors")] = 5,
+    limit: Annotated[int, typer.Option("--limit")] = 1000,
+    name: Annotated[str, typer.Option("--name")] = "Zotero Reading Graph",
+    show: Annotated[bool, typer.Option("--show")] = False,
+) -> None:
+    """Build a saved Zotero reading graph map run from imported documents."""
+
+    del show
+    console = get_console()
+    saved = build_and_store_zotero_reading_map(
+        project_dir=project_dir,
+        name=name,
+        status=status,
+        collection=collection,
+        tag=tag,
+        seed=seed,
+        clusters=clusters,
+        neighbors=neighbors,
+        limit=limit,
+    )
+    run_value = saved.get("map_run", {})
+    run = run_value if isinstance(run_value, dict) else {}
+    console.print(f"Saved Zotero reading graph: {run.get('id', 'unknown')}")
+    console.print(f"Documents: {len(_object_list(saved.get('documents')))}")
+    console.print(f"Clusters: {len(_object_list(saved.get('clusters')))}")
+
+
+@zotero_app.command("imported")
+def zotero_imported_command(
+    project_dir: Annotated[Path, typer.Option("--project-dir")] = Path("."),
+    limit: Annotated[int, typer.Option("--limit")] = 50,
+    status: Annotated[str, typer.Option("--status")] = "all",
+    collection: Annotated[str | None, typer.Option("--collection")] = None,
+    tag: Annotated[str | None, typer.Option("--tag")] = None,
+    json_output: Annotated[bool, typer.Option("--json")] = False,
+) -> None:
+    """List Zotero items already imported into Paper Galaxy."""
+
+    console = get_console()
+    repository = _open_repository(project_dir.expanduser().resolve())
+    try:
+        items = repository.list_zotero_items(
+            limit=limit,
+            status=status,
+            collection=collection,
+            tag=tag,
+        )
+    finally:
+        repository.connection.close()
+    if json_output:
+        console.print_json(json.dumps(items, sort_keys=True))
+        return
+    table = Table(title="Imported Zotero Items")
+    table.add_column("ID", overflow="fold")
+    table.add_column("Title", overflow="fold")
+    table.add_column("Status")
+    table.add_column("Year")
+    table.add_column("Tags", overflow="fold")
+    for item in items:
+        tag_rows = item.get("tags")
+        tag_labels: list[str] = []
+        if isinstance(tag_rows, list):
+            tag_labels = [
+                str(tag_row.get("tag", ""))
+                for tag_row in tag_rows
+                if isinstance(tag_row, dict)
+            ]
+        table.add_row(
+            str(item["id"]),
+            str(item["title"]),
+            str(item["reading_status"]),
+            str(item.get("year") or ""),
+            ", ".join(tag_labels),
+        )
+    console.print(table)
+
+
+@zotero_app.command("validate")
+def zotero_validate_command(
+    project_dir: Annotated[Path, typer.Option("--project-dir")] = Path("."),
+    data_dir: Annotated[Path | None, typer.Option("--data-dir")] = None,
+    json_out: Annotated[Path | None, typer.Option("--json-out")] = None,
+) -> None:
+    """Validate imported Zotero state inside a Paper Galaxy project."""
+
+    del data_dir
+    console = get_console()
+    repository = _open_repository(project_dir.expanduser().resolve())
+    try:
+        payload = {
+            "stats": repository.zotero_stats(),
+            "dangling_counts": repository.zotero_dangling_counts(),
+        }
+    finally:
+        repository.connection.close()
+    if json_out is not None:
+        json_out.expanduser().resolve().write_text(
+            json.dumps(payload, indent=2, sort_keys=True),
+            encoding="utf-8",
+        )
+    console.print_json(json.dumps(payload, sort_keys=True))
+
+
+@zotero_app.command("smoke-test")
+def zotero_smoke_test_command(
+    project_dir: Annotated[Path, typer.Option("--project-dir")] = Path("."),
+    api_url: Annotated[str, typer.Option("--api-url")] = DEFAULT_LOCAL_API_URL,
+    data_dir: Annotated[Path | None, typer.Option("--data-dir")] = None,
+    limit: Annotated[int, typer.Option("--limit")] = 10,
+    no_write: Annotated[bool, typer.Option("--no-write")] = True,
+) -> None:
+    """Fetch a small Zotero sample and report what would be imported."""
+
+    del no_write
+    console = get_console()
+    try:
+        summary = import_from_zotero(
+            project_dir=project_dir,
+            api_url=api_url,
+            data_dir=data_dir,
+            limit=limit,
+            dry_run=True,
+            build_reading_map=False,
+        )
+    except ZoteroAPIError as exc:
+        console.print(str(exc))
+        raise typer.Exit(1) from exc
+    payload = _zotero_import_summary_payload(summary)
+    console.print_json(json.dumps(payload, sort_keys=True))
+
+
 @app.command("serve")
 def serve_command(
     project_dir: Annotated[
@@ -1611,6 +2075,31 @@ def _print_embeddings_dependency_error() -> None:
         'python -m pip install -e ".[dev,ml,pdf,app,embeddings]"',
         markup=False,
     )
+
+
+def _zotero_import_summary_payload(
+    summary: ZoteroImportRunSummary,
+) -> dict[str, object]:
+    return {
+        "run_id": str(summary.run_id),
+        "source_id": str(summary.source_id),
+        "project_dir": str(summary.project_dir),
+        "database_path": str(summary.database_path),
+        "dry_run": bool(summary.dry_run),
+        "items_seen": int(summary.items_seen),
+        "items_imported": int(summary.items_imported),
+        "items_updated": int(summary.items_updated),
+        "items_unchanged": int(summary.items_unchanged),
+        "attachments_seen": int(summary.attachments_seen),
+        "attachments_resolved": int(summary.attachments_resolved),
+        "pdfs_extracted": int(summary.pdfs_extracted),
+        "notes_imported": int(summary.notes_imported),
+        "metadata_only_documents": int(summary.metadata_only_documents),
+        "skipped": int(summary.skipped),
+        "warnings": list(summary.warnings),
+        "reading_status_counts": dict(summary.reading_status_counts),
+        "map_run_id": summary.map_run_id,
+    }
 
 
 def _neighbors_table(title: str, neighbors: list[NeighborResult]) -> Table:

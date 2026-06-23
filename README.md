@@ -11,7 +11,7 @@ Paper Galaxy is a local-first research cartography tool for turning a personal
 research corpus into an interactive map of documents, clusters, and conceptual
 neighborhoods.
 
-Current status: public alpha / Phase 7 professionalization. This repository can
+Current status: public alpha / Zotero Reading Graph. This repository can
 scan a local sample corpus, export a self-contained offline `galaxy.html`,
 index documents and chunks into local SQLite, rerun indexing incrementally,
 search indexed text with SQLite FTS5, and serve a local English/Simplified
@@ -23,8 +23,9 @@ document/chunk embeddings for semantic search and neighbor comparison. Cluster
 labels are generated from inspectable local terms, can be manually renamed in
 SQLite, and document-neighbor explanations can show shared terms and matching
 chunk excerpts. It also validates local projects, persists stable map runs,
-exports/imports local backup bundles, lists built-in plugin boundaries, and
-builds standard Python distributions.
+exports/imports local backup bundles, lists built-in plugin boundaries, builds
+standard Python distributions, and imports Zotero Desktop libraries through the
+read-only local API to build a personal Zotero Reading Graph.
 
 Eventually, Paper Galaxy will let a user point the app at folders or later
 integrations, represent each document as a point in a 2D map, place similar
@@ -36,12 +37,15 @@ files -> extraction -> cleaning -> records -> vectors -> graph -> map -> cluster
 ```
 
 Intentionally not implemented yet: UMAP as a required path, full TeX parsing,
-cloud OCR, mandatory OCR system services, React, Node build tooling, Zotero
-integration, desktop packaging, cloud sync, accounts, telemetry, LLM chat, and
-mandatory LLM labeling.
+cloud OCR, mandatory OCR system services, React, Node build tooling, desktop
+packaging, cloud sync, accounts, telemetry, LLM chat, Zotero write-back,
+Zotero online API sync, and mandatory LLM labeling.
 
 Paper Galaxy is local-first by default. There is no account, no telemetry, no
 automatic upload, and no cloud dependency. Generated HTML is local and offline.
+The Zotero connector uses the Zotero Desktop local API, does not write to
+Zotero, performs no upload, and references Zotero PDFs in place; PDFs are not
+copied by default.
 
 ## Live Demo
 
@@ -68,6 +72,8 @@ python scripts/check_demo_site.py --dist site_dist
 
 - Local-first: documents, extracted text, vectors, labels, and map runs stay in
   your project by default.
+- Zotero Reading Graph: import metadata, tags, collections, notes, and local PDF
+  text from Zotero Desktop into a local Paper Galaxy project.
 - Visual graph: browse clusters and nearest-neighbor links in a lightweight
   browser UI.
 - Explainability: inspect TF-IDF terms and short chunk evidence for nearby
@@ -146,12 +152,51 @@ paper-galaxy delete-map-run MAP_RUN_ID --project-dir . --yes
 paper-galaxy export-project --project-dir . --out paper-galaxy-backup.zip --yes
 paper-galaxy import-project paper-galaxy-backup.zip --project-dir /path/to/restore --dry-run
 paper-galaxy plugins
+paper-galaxy zotero detect
+paper-galaxy zotero status
+paper-galaxy zotero import --project-dir . --include-pdfs --include-notes --build-reading-map
+paper-galaxy zotero graph --project-dir . --name "Zotero Reading Graph"
 paper-galaxy serve --project-dir .
 paper-galaxy extract-preview examples/tiny_corpus/neural_operators/fourier_neural_operator.md
 ```
 
 `paper-galaxy init` creates `.paper-galaxy/project.toml` only. It does not scan
 documents or copy corpus files.
+
+## Zotero Reading Graph
+
+Paper Galaxy can import a local Zotero Desktop library into the same SQLite
+project state used by the local app. The primary path is Zotero Desktop's local
+API at `http://localhost:23119/api/`; it is read-only for Paper Galaxy and does
+not require a Zotero Web API key. Direct `zotero.sqlite` access is used only for
+read-only diagnostics and path hints.
+
+Typical workflow:
+
+```bash
+paper-galaxy init .
+paper-galaxy zotero detect
+paper-galaxy zotero status
+paper-galaxy zotero import --project-dir . --include-pdfs --include-notes --build-reading-map
+paper-galaxy serve --project-dir .
+```
+
+The import creates Paper Galaxy document records with stable `doc_zotero_*`
+IDs, Zotero metadata tables, extracted chunks when local PDFs are readable, and
+a saved map run named `Zotero Reading Graph`. If a PDF is missing, unsupported,
+or outside the Zotero data directory, the item can still become a metadata-only
+document with notes, abstract, creators, tags, collections, and a
+`zotero://items/<key>` reference.
+
+Privacy boundary: the connector uses the Zotero local API, does not write to
+Zotero, performs no upload, and does not copy or move PDFs by default. Imported
+metadata and extracted local PDF text live inside the Paper Galaxy project
+database under `.paper-galaxy/`, so do not commit that directory.
+
+More details:
+
+- [docs/ZOTERO_INTEGRATION.md](docs/ZOTERO_INTEGRATION.md)
+- [docs/READING_GRAPH.md](docs/READING_GRAPH.md)
 
 `paper-galaxy scan` recursively scans a local folder and writes a static HTML
 map. Supported Phase 1 formats are:

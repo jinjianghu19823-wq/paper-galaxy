@@ -4,6 +4,10 @@
 
 ## Unreleased
 
+- Added the first Zotero Reading Graph integration: read-only local API client,
+  Zotero schema v6 tables, importer, metadata/PDF/notes handling, CLI commands,
+  local web API endpoints, UI filters, docs, and synthetic-only public demo
+  boundaries.
 - Added post-public-launch activation docs, FAQ, troubleshooting, demo guide,
   feedback guide, triage guide, launch notes, and live-site verification.
 - Added `scripts/check_live_site.py`, `scripts/launch_report.py`, release

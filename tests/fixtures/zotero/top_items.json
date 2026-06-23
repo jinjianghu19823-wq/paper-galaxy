@@ -1,0 +1,62 @@
+[
+  {
+    "key": "AAAA1111",
+    "version": 7,
+    "library": {"type": "user", "id": 0, "name": "Local"},
+    "data": {
+      "key": "AAAA1111",
+      "version": 7,
+      "itemType": "journalArticle",
+      "title": "Fourier Neural Operator Memory",
+      "creators": [
+        {"creatorType": "author", "firstName": "Ada", "lastName": "Lovelace"}
+      ],
+      "abstractNote": "Operator learning for parametric partial differential equations.",
+      "date": "2021",
+      "publicationTitle": "Synthetic Journal",
+      "DOI": "10.0000/fno",
+      "url": "https://example.invalid/fno",
+      "tags": [{"tag": "read", "type": 1}, {"tag": "operator learning"}],
+      "collections": ["COLLREAD"],
+      "dateAdded": "2024-01-01T00:00:00Z",
+      "dateModified": "2024-01-02T00:00:00Z",
+      "extra": "Synthetic fixture item"
+    }
+  },
+  {
+    "key": "BBBB2222",
+    "version": 3,
+    "library": {"type": "user", "id": 0, "name": "Local"},
+    "data": {
+      "key": "BBBB2222",
+      "version": 3,
+      "itemType": "preprint",
+      "title": "Deep Operator Network Reading Note",
+      "creators": [{"creatorType": "author", "name": "Synthetic Team"}],
+      "abstractNote": "Branch and trunk networks for operator approximation.",
+      "date": "2022",
+      "tags": [{"tag": "reading"}, {"tag": "neural operators"}],
+      "collections": ["COLLREAD"],
+      "dateAdded": "2024-02-01T00:00:00Z",
+      "dateModified": "2024-02-02T00:00:00Z"
+    }
+  },
+  {
+    "key": "CCCC3333",
+    "version": 2,
+    "library": {"type": "user", "id": 0, "name": "Local"},
+    "data": {
+      "key": "CCCC3333",
+      "version": 2,
+      "itemType": "conferencePaper",
+      "title": "Queue Paper About Sparse Solvers",
+      "creators": [{"creatorType": "author", "firstName": "Grace", "lastName": "Hopper"}],
+      "abstractNote": "Sparse linear solvers and local research notes.",
+      "date": "2020",
+      "tags": [{"tag": "queue"}],
+      "collections": ["COLLTODO"],
+      "dateAdded": "2024-03-01T00:00:00Z",
+      "dateModified": "2024-03-02T00:00:00Z"
+    }
+  }
+]

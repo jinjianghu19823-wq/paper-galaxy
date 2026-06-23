@@ -89,6 +89,41 @@
             <div id="cluster-legend" class="legend"></div>
           </section>
 
+          <section class="panel zotero-panel">
+            <div class="panel-title-row">
+              <h2 data-i18n="zotero.title">Zotero Reading Graph</h2>
+              <span class="panel-kicker" data-i18n="zotero.kicker">local</span>
+            </div>
+            <div id="zotero-status" class="zotero-status"></div>
+            <label class="range-row">
+              <span data-i18n="zotero.statusFilter">Reading status</span>
+              <select id="zotero-status-filter">
+                <option value="all" data-i18n="zotero.all">All</option>
+                <option value="read" data-i18n="zotero.read">Read</option>
+                <option value="reading" data-i18n="zotero.reading">Reading</option>
+                <option value="to_read" data-i18n="zotero.toRead">To read</option>
+                <option value="unknown" data-i18n="zotero.unknown">Unknown</option>
+              </select>
+            </label>
+            <input
+              id="zotero-tag-filter"
+              class="filter-input"
+              type="search"
+              placeholder="Filter Zotero tag"
+              data-i18n-placeholder="zotero.tagPlaceholder"
+              autocomplete="off"
+            >
+            <input
+              id="zotero-collection-filter"
+              class="filter-input"
+              type="search"
+              placeholder="Filter Zotero collection"
+              data-i18n-placeholder="zotero.collectionPlaceholder"
+              autocomplete="off"
+            >
+            <div id="zotero-empty-help" class="zotero-help" hidden></div>
+          </section>
+
           <section class="panel settings-panel">
             <div class="panel-title-row">
               <h2 data-i18n="forces.title">Forces</h2>
@@ -148,6 +183,10 @@
               <p id="map-caption" data-i18n="graph.loading">Loading active indexed documents...</p>
             </div>
             <div class="graph-controls" aria-label="Graph controls">
+              <select id="graph-source-select" class="map-run-select" aria-label="Graph source">
+                <option value="documents" selected data-i18n="graph.sourceDocuments">Documents</option>
+                <option value="zotero" data-i18n="graph.sourceZotero">Zotero</option>
+              </select>
               <select id="map-run-select" class="map-run-select" aria-label="Saved map run">
                 <option value="" data-i18n="graph.liveMap">Live map</option>
               </select>

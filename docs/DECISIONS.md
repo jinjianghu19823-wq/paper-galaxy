@@ -295,3 +295,40 @@ FastAPI app remains a local install feature and is not hosted on GitHub Pages.
 The public static site includes English and Simplified Chinese pages. The
 language layer is static site content plus small browser-side text selection for
 the demo inspector, not a new runtime dependency or app-wide i18n framework.
+
+## ADR 0048: Zotero Local API Is The Primary Connector
+
+Zotero Desktop's local API is the primary integration path because it is
+available on the user's machine, does not require a Zotero Web API key, and
+avoids depending on Zotero's internal SQLite schema for normal imports.
+
+## ADR 0049: Zotero SQLite Access Is Read-Only Fallback
+
+Direct `zotero.sqlite` access is allowed only for read-only diagnostics and path
+hints. Paper Galaxy does not use it as the main import path and must not mutate
+Zotero's database.
+
+## ADR 0050: Paper Galaxy Never Writes To Zotero
+
+The Zotero integration is one-way into Paper Galaxy. It does not create,
+update, delete, tag, annotate, or move Zotero items. Any future write-back would
+require a separate explicit design and user confirmation boundary.
+
+## ADR 0051: Zotero PDFs Are Referenced, Not Copied By Default
+
+Imported Zotero PDFs remain in their Zotero or linked-file location. Paper
+Galaxy may store the resolved path and extracted local text in its own SQLite
+project database, but PDFs are not copied, moved, or bundled by default.
+
+## ADR 0052: Zotero Imports Produce Documents And Saved Reading Maps
+
+Imported Zotero items become Paper Galaxy document rows so they can reuse local
+chunking, search, TF-IDF similarity, explainability, and map-run infrastructure.
+`paper-galaxy zotero import --build-reading-map` saves a `Zotero Reading Graph`
+snapshot for the local app.
+
+## ADR 0053: Zotero Cloud Sync Is Separate Future Work
+
+This milestone does not implement Zotero online sync, Zotero OAuth, hosted
+accounts, upload, or personal cloud runtime behavior. Any cloud-backed Zotero
+feature must be designed separately and remain opt-in.

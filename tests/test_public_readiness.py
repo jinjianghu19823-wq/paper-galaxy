@@ -73,6 +73,22 @@ def test_public_readiness_source_only_allows_missing_site_dist(
     assert report["status"] == "PASS"
 
 
+def test_public_readiness_catches_private_zotero_storage_path(
+    tmp_path: Path,
+) -> None:
+    fixture = _public_fixture(tmp_path)
+    leaked = "/Users/example/" + "Zotero" + "/storage/ABCD/file.pdf"
+    (fixture / "notes.md").write_text(
+        f"Leaked path: {leaked}\n",
+        encoding="utf-8",
+    )
+
+    report = run_public_readiness(root=fixture)
+
+    assert report["status"] == "FAIL"
+    assert _check_detail(report, "no-private-zotero-data")
+
+
 def _check_detail(report: dict[str, object], name: str) -> str:
     checks = report["checks"]
     assert isinstance(checks, list)
@@ -103,6 +119,10 @@ Live demo
 https://jinjianghu19823-wq.github.io/paper-galaxy/
 Privacy
 Local-first
+local API
+does not write to Zotero
+no upload
+not copied by default
 python -m pip install -e ".[dev,ml,pdf,app]"
 Screenshot
 Contributing
@@ -182,10 +202,24 @@ jobs:
         "docs/FEEDBACK.md",
         "docs/FEEDBACK.zh-CN.md",
         "docs/TRIAGE.md",
+        "docs/PRIVACY.md",
+        "docs/ZOTERO_INTEGRATION.md",
+        "docs/ZOTERO_INTEGRATION.zh-CN.md",
+        "docs/READING_GRAPH.md",
+        "docs/READING_GRAPH.zh-CN.md",
     ):
         path = root / relative
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text("# Placeholder\n", encoding="utf-8")
+        text = "# Placeholder\n"
+        if relative in {
+            "docs/ZOTERO_INTEGRATION.md",
+            "docs/PRIVACY.md",
+        }:
+            text += (
+                "Zotero local API. Paper Galaxy does not write to Zotero. "
+                "There is no upload. PDFs are not copied by default.\n"
+            )
+        path.write_text(text, encoding="utf-8")
 
     for relative in ("docs/CLOUD_LIBRARY_DESIGN.md", "docs/cloud-library/README.md"):
         path = root / relative
@@ -241,7 +275,10 @@ def _write_minimal_site(base: Path) -> None:
     (data_dir / "tiny-map.json").write_text(
         json.dumps(
             {
-                "metadata": {"synthetic_only": True},
+                "metadata": {
+                    "synthetic_only": True,
+                    "contains_real_zotero_data": False,
+                },
                 "documents": [{"document_id": "demo", "relative_path": "demo.md"}],
                 "points": [{"document_id": "demo", "x": 0, "y": 0}],
                 "clusters": [{"cluster_id": 0, "display_label": "Demo"}],

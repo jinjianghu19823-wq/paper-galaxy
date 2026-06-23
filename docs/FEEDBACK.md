@@ -20,6 +20,11 @@ reproducible, and privacy-safe.
    `paper-galaxy validate-project --project-dir .`
 7. Try an explanation:
    `paper-galaxy explain-pair SOURCE TARGET --project-dir .`
+8. If you use Zotero Desktop, try a local dry run first:
+   `paper-galaxy zotero smoke-test --project-dir .`
+9. Then import a small Zotero sample with `--limit` before importing a large
+   library:
+   `paper-galaxy zotero import --project-dir . --limit 20 --include-pdfs --include-notes --build-reading-map`
 
 ## Useful Feedback
 
@@ -28,11 +33,14 @@ reproducible, and privacy-safe.
 - Commands that are confusing or too verbose.
 - Install problems on specific Python/OS versions.
 - Privacy concerns or unclear local data boundaries.
+- Zotero detection, attachment path, metadata-only import, or reading graph
+  filtering issues.
 - Documentation gaps.
 
 ## Do Not Share
 
 - Private paper text or sensitive extracted chunks.
+- Real Zotero databases, `zotero.sqlite`, Zotero `storage/` folders, or PDFs.
 - `.paper-galaxy/` directories or SQLite databases.
 - API keys, tokens, secrets, or private keys.
 - Local paths that reveal sensitive names or institutions.

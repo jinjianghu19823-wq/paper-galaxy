@@ -65,6 +65,8 @@ source for nearest-neighbor search and proximity explanations.
   rows, optional dependencies, and map run consistency.
 - `backup.bundle`: local zip backup export/import with manifests and checksums.
 - `plugins`: static built-in local plugin metadata.
+- `zotero`: read-only local Zotero connector, normalization, attachment path
+  resolution, importer, SQLite diagnostics, and reading graph builder.
 - `web.server`: lazy FastAPI/Uvicorn app creation and local server startup.
 - `web.api`: read-only local JSON API routes.
 - `web.map_builder`: ephemeral map generation from active indexed documents.
@@ -133,6 +135,16 @@ Schema overview:
   terms, and nearest-neighbor summaries.
 - `map_run_clusters`: saved cluster display metadata, terms, representatives,
   and warnings.
+- `zotero_sources`: imported Zotero library/source identities.
+- `zotero_import_runs`: local Zotero import run summaries.
+- `zotero_items`: normalized Zotero top-level item metadata and reading status.
+- `zotero_creators`: normalized creators for imported Zotero items.
+- `zotero_collections`: collection metadata and paths.
+- `zotero_item_collections`: item-to-collection membership.
+- `zotero_item_tags`: imported Zotero tags.
+- `zotero_attachments`: attachment metadata and local path resolution status.
+- `zotero_document_links`: links between Zotero items/attachments and Paper
+  Galaxy document rows.
 - `documents_fts`: FTS5 table for local search.
 
 Document status controls search visibility. `active` documents are returned by
@@ -192,6 +204,12 @@ API endpoints:
   override.
 - `GET /api/explain/pair`: explain one document pair with shared terms and
   chunk excerpts.
+- `GET /api/zotero/status`: imported Zotero counts, latest run, and warnings.
+- `GET /api/zotero/items`: imported Zotero item list with status, tags, and
+  collections.
+- `GET /api/zotero/item/{zotero_item_id}`: imported Zotero item detail.
+- `GET /api/zotero/reading-map`: live Zotero reading map payload from imported
+  local records.
 
 Map generation reads active indexed records and extracted text from SQLite. It
 does not re-extract source files. It reuses the Phase 1 TF-IDF, layout,
@@ -225,6 +243,35 @@ If the database is missing, `/api/health` still works and the app returns
 structured empty states with the indexing command instead of a traceback. If the
 database exists but has no active documents, map endpoints return empty arrays
 and warnings.
+
+## Zotero Reading Graph
+
+Zotero support adds a read-only connector from Zotero Desktop into Paper Galaxy
+project state:
+
+```text
+Zotero Desktop local API
+  -> normalize Zotero items, collections, notes, and attachments
+  -> resolve local attachment paths without copying PDFs
+  -> upsert Zotero metadata and Paper Galaxy documents
+  -> chunk/index imported text
+  -> build a saved "Zotero Reading Graph" map run
+  -> local web app Zotero graph source
+```
+
+The local API is the primary path. Direct `zotero.sqlite` access is used only
+for read-only diagnostics and path hints. Paper Galaxy does not write to Zotero,
+does not upload Zotero data, and does not copy PDFs by default.
+
+Imported Zotero items use stable IDs derived from the source and Zotero key.
+Metadata-only items use `zotero://items/<key>` as their document path. Items
+with readable local PDFs can store extracted PDF text and chunks in the Paper
+Galaxy SQLite database, but the original PDF file stays in place.
+
+The reading graph uses the same high-dimensional TF-IDF similarity, layout,
+cluster label, nearest-neighbor, and saved-map infrastructure as the document
+map. Reading status is inferred locally from tags, and the browser UI can
+filter by status, tag, and collection.
 
 ## Phase 4 Extraction Quality
 

@@ -1,0 +1,28 @@
+[
+  {
+    "key": "ATTACH11",
+    "version": 5,
+    "data": {
+      "key": "ATTACH11",
+      "version": 5,
+      "itemType": "attachment",
+      "parentItem": "AAAA1111",
+      "title": "Stored PDF",
+      "filename": "fourier.pdf",
+      "contentType": "application/pdf",
+      "path": "storage:fourier.pdf",
+      "linkMode": "imported_file"
+    }
+  },
+  {
+    "key": "NOTE1111",
+    "version": 6,
+    "data": {
+      "key": "NOTE1111",
+      "version": 6,
+      "itemType": "note",
+      "parentItem": "AAAA1111",
+      "note": "<p>Important read note about spectral kernels.</p>"
+    }
+  }
+]

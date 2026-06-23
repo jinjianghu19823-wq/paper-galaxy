@@ -20,6 +20,7 @@ def test_doctor_exits_successfully() -> None:
     assert "Status: Phase 0 scaffold is ready." in result.output
     assert "Serve command: Phase 3 local web app is available." in result.output
     assert "Professionalization commands: Phase 7" in result.output
+    assert "Zotero commands: local read-only import" in result.output
 
 
 def test_init_creates_project_metadata(tmp_path: Path) -> None:

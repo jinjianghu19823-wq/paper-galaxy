@@ -23,9 +23,10 @@
 - ADR 0033-0036：Phase 6 标签来自透明本地词项，cluster signature 来自 active document IDs，手动标签是 SQLite display override，pair explanations 使用短本地证据。
 - ADR 0037-0041：Phase 7 地图运行是 SQLite 快照，备份默认不包含源文档，插件是静态内置边界，验证报告避免全文。
 - ADR 0042-0047：公开演示是静态且只用合成数据；GitHub Pages 部署构建产物；公开准备由本地脚本审计；云库只是设计；Pages 不提供 server-side backend；公开站支持英文和简体中文。
+- ADR 0048-0053：Zotero Desktop local API 是主要连接方式；直接读取 `zotero.sqlite` 只作为只读 fallback；Paper Galaxy 永远不写回 Zotero；Zotero PDF 默认只引用不复制；Zotero 导入会生成 Paper Galaxy 文档和保存的阅读图谱；Zotero cloud sync 属于未来单独设计。
 
 ## 当前边界
 
-当前实现不包含默认云运行时、托管后端、账号系统、遥测、文档上传、远程插件加载、React/Node 工具链、Zotero 集成、桌面打包或强制 LLM 标签。
+当前实现不包含默认云运行时、托管后端、账号系统、遥测、文档上传、远程插件加载、React/Node 工具链、Zotero 写回、Zotero online sync、桌面打包或强制 LLM 标签。
 
 未来如果更改这些边界，应先新增 ADR，并同步更新英文文档与本中文摘要。

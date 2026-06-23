@@ -28,7 +28,15 @@ OCR 是可选且本地的。Python extra 会安装 wrapper，但实际图片 OCR
 
 ## 可以和 Zotero 一起用吗？
 
-目前不可以。Zotero 集成没有在公开 alpha 中实现。
+可以。使用本机 Zotero Desktop：
+
+```bash
+paper-galaxy zotero detect
+paper-galaxy zotero status
+paper-galaxy zotero import --project-dir . --include-pdfs --include-notes --build-reading-map
+```
+
+连接器是只读的，使用 Zotero local API，不写回 Zotero，不上传 Zotero 数据，也不会默认复制 PDF。
 
 ## 可以用云同步吗？
 
@@ -44,4 +52,4 @@ OCR 是可选且本地的。Python extra 会安装 wrapper，但实际图片 OCR
 
 ## 如何报告 bug 又不泄露私人论文文本？
 
-使用合成文件、最小化脱敏示例、不包含私人文本的命令输出，以及遮挡敏感信息的截图。不要上传 `.paper-galaxy/`、SQLite 数据库、抽取片段、API key 或私人本地路径。
+使用合成文件、最小化脱敏示例、不包含私人文本的命令输出，以及遮挡敏感信息的截图。不要上传 `.paper-galaxy/`、SQLite 数据库、抽取片段、Zotero 数据库、Zotero storage 文件夹、PDF、API key 或私人本地路径。

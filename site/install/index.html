@@ -41,10 +41,18 @@ paper-galaxy init . --force
 paper-galaxy index examples/tiny_corpus --project-dir . --min-chars 40
 paper-galaxy serve --project-dir .</pre>
         <button class="button" data-copy="#quickstart" data-label="Copy" data-copied="Copied">Copy</button>
+        <h2>Zotero Reading Graph</h2>
+        <pre class="code-block" id="zotero-quickstart">paper-galaxy zotero detect
+paper-galaxy zotero status
+paper-galaxy zotero import --project-dir . --include-pdfs --include-notes --build-reading-map
+paper-galaxy serve --project-dir .</pre>
+        <button class="button" data-copy="#zotero-quickstart" data-label="Copy" data-copied="Copied">Copy</button>
       </div>
       <aside class="card">
         <h3>Optional extras</h3>
         <p>`ocr` enables local OCR wrappers. `embeddings` enables explicit local dense-vector commands. Remote model names are rejected by default unless you opt in.</p>
+        <h3>Zotero boundary</h3>
+        <p>Zotero import is read-only toward Zotero, performs no upload, and does not copy PDFs by default.</p>
         <h3>Local data warning</h3>
         <p>The SQLite database can contain extracted text, chunks, vectors, labels, and saved map runs. Keep `.paper-galaxy/` private.</p>
       </aside>

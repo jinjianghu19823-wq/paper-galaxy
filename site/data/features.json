@@ -4,6 +4,10 @@
     "summary": "Scan a local folder, keep extracted records in SQLite, and avoid account or upload requirements."
   },
   {
+    "title": "Zotero Reading Graph",
+    "summary": "Import Zotero Desktop metadata, notes, tags, collections, and local PDF text through the read-only local API."
+  },
+  {
     "title": "Dynamic graph",
     "summary": "Explore a moving document graph with pan, focus, cluster labels, and nearest-neighbor links."
   },

@@ -35,8 +35,16 @@ No. The public GitHub Pages demo uses synthetic sample content from
 
 ## Can I use this with Zotero?
 
-Not yet. Zotero integration is intentionally not implemented in this public
-alpha.
+Yes. Use Zotero Desktop locally:
+
+```bash
+paper-galaxy zotero detect
+paper-galaxy zotero status
+paper-galaxy zotero import --project-dir . --include-pdfs --include-notes --build-reading-map
+```
+
+The connector is read-only, uses the Zotero local API, does not write to Zotero,
+does not upload Zotero data, and does not copy PDFs by default.
 
 ## Can I use cloud sync?
 
@@ -58,5 +66,5 @@ that project.
 
 Use synthetic files, minimal redacted examples, command output that does not
 include private text, and screenshots with sensitive details hidden. Do not
-attach `.paper-galaxy/`, SQLite databases, extracted chunks, API keys, or
-private local paths.
+attach `.paper-galaxy/`, SQLite databases, extracted chunks, Zotero databases,
+Zotero storage folders, PDFs, API keys, or private local paths.

@@ -28,6 +28,8 @@ def test_demo_payload_is_safe_and_graph_shaped() -> None:
     raw = json.dumps(payload, sort_keys=True)
 
     assert payload["metadata"]["synthetic_only"] is True
+    assert payload["metadata"]["contains_real_zotero_data"] is False
+    assert payload["metadata"]["zotero_demo"] == "synthetic-feature-description-only"
     assert len(payload["documents"]) == 8
     assert payload["points"]
     assert payload["clusters"]
@@ -71,6 +73,23 @@ def test_check_demo_site_rejects_external_runtime_asset(tmp_path: Path) -> None:
     issues = check_demo_site(dist_dir=dist)
 
     assert any(issue.code == "external_runtime_asset" for issue in issues)
+
+
+def test_check_demo_site_rejects_real_zotero_markers(tmp_path: Path) -> None:
+    site_copy = tmp_path / "site"
+    dist = tmp_path / "site_dist"
+    shutil.copytree(Path("site"), site_copy)
+    build_demo_site(site_dir=site_copy, output_dir=dist)
+    data_path = dist / "data" / "tiny-map.json"
+    payload = json.loads(data_path.read_text(encoding="utf-8"))
+    payload["metadata"]["contains_real_zotero_data"] = True
+    payload["documents"][0]["path"] = "zotero://items/REALKEY"
+    data_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    issues = check_demo_site(dist_dir=dist)
+
+    assert any(issue.code == "demo_json_zotero_boundary_missing" for issue in issues)
+    assert any(issue.code == "demo_json_local_path" for issue in issues)
 
 
 def test_site_source_has_simplified_chinese_pages() -> None:

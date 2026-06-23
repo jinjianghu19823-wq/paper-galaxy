@@ -67,10 +67,19 @@ def test_schema_initializes_expected_tables(tmp_path: Path) -> None:
     assert "map_runs" in tables
     assert "map_run_points" in tables
     assert "map_run_clusters" in tables
+    assert "zotero_sources" in tables
+    assert "zotero_import_runs" in tables
+    assert "zotero_items" in tables
+    assert "zotero_creators" in tables
+    assert "zotero_collections" in tables
+    assert "zotero_item_collections" in tables
+    assert "zotero_item_tags" in tables
+    assert "zotero_attachments" in tables
+    assert "zotero_document_links" in tables
     assert "documents_fts" in tables
 
     assert version is not None
-    assert version["value"] == "5"
+    assert version["value"] == "6"
 
 
 def test_schema_upgrades_version_one_database_idempotently(tmp_path: Path) -> None:
@@ -104,6 +113,13 @@ def test_schema_upgrades_version_one_database_idempotently(tmp_path: Path) -> No
             WHERE type = 'table' AND name = 'map_runs'
             """
         ).fetchone()
+        zotero_items_table = connection.execute(
+            """
+            SELECT name
+            FROM sqlite_master
+            WHERE type = 'table' AND name = 'zotero_items'
+            """
+        ).fetchone()
         version = connection.execute(
             "SELECT value FROM schema_meta WHERE key = 'schema_version'"
         ).fetchone()
@@ -113,8 +129,9 @@ def test_schema_upgrades_version_one_database_idempotently(tmp_path: Path) -> No
     assert report_table is not None
     assert override_table is not None
     assert map_runs_table is not None
+    assert zotero_items_table is not None
     assert version is not None
-    assert version["value"] == "5"
+    assert version["value"] == "6"
 
 
 def test_cluster_label_override_repository_methods(tmp_path: Path) -> None:

@@ -25,6 +25,19 @@ paper-galaxy doctor
 
 这个安装支持扫描、索引、TF-IDF 地图、本地网页应用、项目验证、保存地图运行，以及备份导入/导出。
 
+## Zotero Reading Graph
+
+Zotero 支持包含在同一个 app 安装中，连接方式是 Zotero Desktop 的 local API：
+
+```bash
+paper-galaxy zotero detect
+paper-galaxy zotero status
+paper-galaxy zotero import --project-dir . --include-pdfs --include-notes --build-reading-map
+paper-galaxy serve --project-dir .
+```
+
+Paper Galaxy 不写回 Zotero，不上传数据，也不会默认复制 PDF。导入的元数据和抽取文本会存入 `.paper-galaxy/`。
+
 ## 可选 extras
 
 ```bash

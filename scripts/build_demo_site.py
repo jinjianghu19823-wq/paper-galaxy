@@ -27,6 +27,8 @@ DEMO_METADATA = {
     "demo": "paper-galaxy-static-demo",
     "paper_galaxy_version": __version__,
     "synthetic_only": True,
+    "zotero_demo": "synthetic-feature-description-only",
+    "contains_real_zotero_data": False,
     "source_corpus": "examples/tiny_corpus",
     "generated_at": "deterministic-static-demo",
     "languages": ["en", "zh-CN"],

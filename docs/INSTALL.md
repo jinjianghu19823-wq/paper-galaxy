@@ -25,6 +25,21 @@ paper-galaxy doctor
 This install supports scanning, indexing, TF-IDF maps, the local web app,
 validation, saved map runs, and backup import/export.
 
+## Zotero Reading Graph
+
+Zotero support is included in the same app install and uses Zotero Desktop's
+local API:
+
+```bash
+paper-galaxy zotero detect
+paper-galaxy zotero status
+paper-galaxy zotero import --project-dir . --include-pdfs --include-notes --build-reading-map
+paper-galaxy serve --project-dir .
+```
+
+Paper Galaxy does not write to Zotero, performs no upload, and does not copy
+PDFs by default. Imported metadata and extracted text live in `.paper-galaxy/`.
+
 ## Optional Extras
 
 ```bash

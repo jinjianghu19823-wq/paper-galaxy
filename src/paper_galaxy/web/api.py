@@ -24,6 +24,7 @@ from paper_galaxy.storage.migrations import initialize_database
 from paper_galaxy.storage.repository import Repository
 from paper_galaxy.storage.sqlite import connect_database, resolve_database_path
 from paper_galaxy.web.map_builder import build_map_payload
+from paper_galaxy.zotero.reading import build_zotero_reading_map_payload
 
 
 @dataclass(frozen=True)
@@ -101,6 +102,157 @@ def register_api_routes(app: Any, config: WebAppConfig) -> None:
             "vector_stats": embedding_vector_stats(config.project_dir),
             "warnings": [],
         }
+
+    @app.get("/api/zotero/status")
+    def zotero_status() -> dict[str, object]:
+        missing = _missing_database_payload(config)
+        if missing is not None:
+            return {
+                "database_exists": False,
+                "zotero": _empty_zotero_status(),
+                **missing,
+            }
+        repository = _repository(config.project_dir)
+        try:
+            stats_payload = repository.zotero_stats()
+        finally:
+            repository.connection.close()
+        return {
+            "database_exists": True,
+            "zotero": stats_payload,
+            "warnings": stats_payload.get("warnings", []),
+        }
+
+    @app.get("/api/zotero/items")
+    def zotero_items(
+        limit: int = 100,
+        status: str = "all",
+        collection: str | None = None,
+        tag: str | None = None,
+        q: str | None = None,
+    ) -> dict[str, object]:
+        missing = _missing_database_payload(config)
+        if missing is not None:
+            return {
+                "database_exists": False,
+                "items": [],
+                **missing,
+            }
+        repository = _repository(config.project_dir)
+        try:
+            items = repository.list_zotero_items(
+                limit=max(0, limit),
+                status=status,
+                collection=collection,
+                tag=tag,
+                q=q,
+            )
+        finally:
+            repository.connection.close()
+        return {"database_exists": True, "items": items, "warnings": []}
+
+    @app.get("/api/zotero/item/{zotero_item_id}")
+    def zotero_item_detail(zotero_item_id: str) -> Any:
+        missing = _missing_database_payload(config)
+        if missing is not None:
+            return JSONResponse(status_code=404, content=missing)
+        repository = _repository(config.project_dir)
+        try:
+            item = repository.get_zotero_item_detail(zotero_item_id)
+        finally:
+            repository.connection.close()
+        if item is None:
+            return JSONResponse(
+                status_code=404,
+                content={
+                    "database_exists": True,
+                    "error": {
+                        "code": "zotero_item_not_found",
+                        "message": f"No imported Zotero item found: {zotero_item_id}",
+                    },
+                },
+            )
+        return {"database_exists": True, "item": item, "warnings": []}
+
+    @app.get("/api/zotero/reading-map")
+    def zotero_reading_map(
+        status: str = "all",
+        collection: str | None = None,
+        tag: str | None = None,
+        limit: int | None = None,
+        seed: int | None = None,
+        clusters: int | None = None,
+        neighbors: int | None = None,
+        run_id: str | None = None,
+    ) -> Any:
+        missing = _missing_database_payload(config)
+        if missing is not None:
+            return {
+                "database_exists": False,
+                "documents": [],
+                "points": [],
+                "cluster_labels": {},
+                "clusters": [],
+                **missing,
+            }
+        if run_id:
+            try:
+                return {
+                    "database_exists": True,
+                    **persisted_map_payload(
+                        project_dir=config.project_dir,
+                        run_id=run_id,
+                    ),
+                }
+            except ValueError as exc:
+                return JSONResponse(
+                    status_code=404,
+                    content={
+                        "database_exists": True,
+                        "error": {
+                            "code": "map_run_not_found",
+                            "message": str(exc),
+                        },
+                    },
+                )
+        repository = _repository(config.project_dir)
+        try:
+            payload = build_zotero_reading_map_payload(
+                repository=repository,
+                project_dir=config.project_dir,
+                status=status,
+                collection=collection,
+                tag=tag,
+                seed=config.seed if seed is None else seed,
+                clusters=config.clusters if clusters is None else clusters,
+                neighbors=config.neighbors if neighbors is None else neighbors,
+                limit=config.map_limit if limit is None else limit,
+            )
+        except MissingDependencyError as exc:
+            return JSONResponse(
+                status_code=503,
+                content={
+                    "database_exists": True,
+                    "documents": [],
+                    "points": [],
+                    "cluster_labels": {},
+                    "clusters": [],
+                    "warnings": [
+                        "Missing optional dependency for Zotero reading graph: "
+                        f"{exc.dependency}."
+                    ],
+                    "error": {
+                        "code": "missing_dependency",
+                        "dependency": exc.dependency,
+                        "message": (
+                            'Install with: python -m pip install -e ".[dev,ml,pdf,app]"'
+                        ),
+                    },
+                },
+            )
+        finally:
+            repository.connection.close()
+        return {"database_exists": True, **payload}
 
     @app.get("/api/search")
     def search(
@@ -495,6 +647,19 @@ def _missing_database_payload(config: WebAppConfig) -> dict[str, object] | None:
                 f"--project-dir {shlex.quote(str(config.project_dir))}"
             ),
         },
+    }
+
+
+def _empty_zotero_status() -> dict[str, object]:
+    return {
+        "source_count": 0,
+        "imported_item_count": 0,
+        "imported_document_count": 0,
+        "attachment_count": 0,
+        "missing_attachment_count": 0,
+        "reading_status_counts": {},
+        "last_import_run": None,
+        "warnings": ["No Paper Galaxy database found."],
     }
 
 

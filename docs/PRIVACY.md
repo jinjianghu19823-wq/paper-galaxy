@@ -28,6 +28,12 @@ Paper Galaxy is local-first by default.
   confirms with `--yes`. Source documents are not included by default.
 - Phase 7 plugin metadata is static and local; there is no remote plugin
   loading or extension marketplace.
+- Zotero import uses the Zotero Desktop local API as a read-only connector. It
+  does not write to Zotero, performs no upload, and Zotero PDFs are not copied
+  by default.
+- Imported Zotero metadata, notes, extracted local PDF text, chunks, and saved
+  reading maps live in the local Paper Galaxy SQLite database under
+  `.paper-galaxy/`.
 - Missing and unindexed records may preserve previously extracted local text and
   chunks so the local index can recover document history without rescanning
   unavailable content.

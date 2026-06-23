@@ -28,8 +28,14 @@ paper-galaxy init . --force
 paper-galaxy index examples/tiny_corpus --project-dir . --min-chars 40
 paper-galaxy validate-project --project-dir .
 paper-galaxy build-map-run --project-dir . --name "Release smoke"
+paper-galaxy zotero detect
+paper-galaxy zotero smoke-test --project-dir . || true
 paper-galaxy export-project --project-dir . --out paper-galaxy-backup.zip --yes
 ```
+
+The Zotero smoke test is optional because CI and release machines may not have
+Zotero Desktop running. It must fail gracefully when the local API is not
+available.
 
 6. Build and check the public demo:
 

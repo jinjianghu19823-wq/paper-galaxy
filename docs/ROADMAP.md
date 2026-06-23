@@ -169,7 +169,30 @@ PyPI.
 
 Non-goals: creating a tag or GitHub Release without explicit approval, PyPI
 publishing, cloud runtime, hosted backend, account system, telemetry, analytics,
-document upload, or personal cloud library implementation.
+document upload, Zotero online sync, Zotero write-back, or personal cloud
+library implementation.
+
+## Zotero Reading Graph (implemented)
+
+Goal: connect a user's local Zotero Desktop library to Paper Galaxy and turn
+their collected/read papers into a personal reading graph.
+
+Deliverables: read-only Zotero local API connector, Zotero data-directory
+detection, normalized item/creator/tag/collection/attachment tables, metadata
+and local PDF import, metadata-only fallback documents, reading-status tag
+mapping, saved `Zotero Reading Graph` map runs, local web API endpoints, and a
+local app Zotero graph source with status/tag/collection filters.
+
+Definition of done: users can run `paper-galaxy zotero detect`,
+`paper-galaxy zotero status`, `paper-galaxy zotero import --project-dir .
+--include-pdfs --include-notes --build-reading-map`, and
+`paper-galaxy serve --project-dir .` to inspect their imported Zotero library in
+the local app. The feature uses the local API, does not write to Zotero, does
+not upload Zotero data, and does not copy PDFs by default.
+
+Non-goals: Zotero OAuth, Zotero online API sync, Zotero write-back, cloud sync,
+hosted accounts, telemetry, mandatory embeddings, LLM chat, React/Node tooling,
+or desktop packaging.
 
 ## Future Personal Cloud Library (design only)
 
@@ -182,6 +205,9 @@ without an account.
 
 - L1: public launch stabilization. Focus on install friction, extraction
   quality, graph usability, docs gaps, and privacy-safe bug reports.
+- Z1: real-library Zotero feedback. Test imports on real local Zotero Desktop
+  libraries, improve attachment path edge cases, and add synthetic fixtures for
+  any bugs without committing private Zotero data.
 - L2: user feedback triage. Convert early reports into small issues with
   synthetic fixtures where possible.
 - C1: encrypted backup vault design review. This remains design-only until a

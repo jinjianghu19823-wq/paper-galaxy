@@ -16,6 +16,7 @@ map of documents, clusters, and explainable neighbors.
 - Extraction reports for Markdown, LaTeX, PDFs, text, and optional image OCR.
 - Optional local dense embeddings and semantic search.
 - Cluster labels, manual local label overrides, and pair explanations.
+- Read-only Zotero Desktop import and saved Zotero Reading Graph maps.
 - Project validation, saved TF-IDF map runs, backup export/import, and package
   build checks.
 - Static GitHub Pages demo built from synthetic data only:
@@ -25,15 +26,16 @@ map of documents, clusters, and explainable neighbors.
 
 Paper Galaxy does not require an account, telemetry, automatic upload, hosted
 backend, or cloud dependency. The installed app reads local files and local
-SQLite project state. Optional OCR and embeddings run only when explicitly
-enabled.
+SQLite project state. Optional OCR, embeddings, and Zotero import run only when
+explicitly enabled. Zotero import uses the local API, does not write to Zotero,
+performs no upload, and does not copy PDFs by default.
 
 ## Intentionally Not Implemented
 
 The public alpha does not include cloud sync, accounts, hosted indexing,
-document upload, telemetry, remote plugin loading, Zotero integration, desktop
-packaging, mandatory OCR services, mandatory LLM labeling, LLM chat, React, or
-Node build tooling.
+document upload, telemetry, remote plugin loading, Zotero online sync, Zotero
+write-back, desktop packaging, mandatory OCR services, mandatory LLM labeling,
+LLM chat, React, or Node build tooling.
 
 The personal cloud library is design-only. It is documented as a future opt-in
 direction and is not implemented in the runtime.
@@ -53,6 +55,15 @@ paper-galaxy index examples/tiny_corpus --project-dir . --min-chars 40
 paper-galaxy serve --project-dir .
 ```
 
+## Zotero Quickstart
+
+```bash
+paper-galaxy zotero detect
+paper-galaxy zotero status
+paper-galaxy zotero import --project-dir . --include-pdfs --include-notes --build-reading-map
+paper-galaxy serve --project-dir .
+```
+
 ## Privacy Warning
 
 `.paper-galaxy/` can contain extracted text, chunks, vectors, labels, map runs,
@@ -65,8 +76,10 @@ reports should use synthetic examples or minimal redacted snippets.
 - OCR requires optional dependencies and a local Tesseract binary.
 - Embeddings require an explicit local model path unless model download is
   explicitly allowed.
+- Zotero import depends on Zotero Desktop local API availability and remains
+  one-way into Paper Galaxy.
 - The public demo is static and does not run the local FastAPI backend.
-- Zotero and cloud sync are not implemented.
+- Cloud sync is not implemented.
 
 ## Reporting Issues
 

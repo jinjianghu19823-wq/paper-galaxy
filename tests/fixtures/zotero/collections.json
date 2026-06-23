@@ -1,0 +1,20 @@
+[
+  {
+    "key": "COLLREAD",
+    "version": 4,
+    "data": {
+      "key": "COLLREAD",
+      "version": 4,
+      "name": "Read Papers"
+    }
+  },
+  {
+    "key": "COLLTODO",
+    "version": 2,
+    "data": {
+      "key": "COLLTODO",
+      "version": 2,
+      "name": "To Read Queue"
+    }
+  }
+]

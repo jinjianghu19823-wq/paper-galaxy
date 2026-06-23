@@ -1,4 +1,4 @@
-.PHONY: install-dev install-embeddings test lint format typecheck check doctor build check-build clean-artifacts validate-example demo-site public-check live-check post-public-check release-check launch-report launch-check
+.PHONY: install-dev install-embeddings test lint format typecheck check doctor build check-build clean-artifacts validate-example demo-site public-check live-check post-public-check release-check launch-report launch-check zotero-smoke zotero-demo-test zotero-check
 
 install-dev:
 	python -m pip install -e ".[dev,ml,pdf,app]"
@@ -36,9 +36,21 @@ check-build: build
 
 clean-artifacts:
 	rm -rf .paper-galaxy galaxy.html galaxy.json extraction-report.json validation.json map-run*.json paper-galaxy-backup*.zip public-readiness.json live-site-check.json launch-report.md release-notes.generated.md site_dist dist build *.egg-info src/*.egg-info
+	find . -name "zotero.sqlite" -delete
 	find . -name "*.sqlite3" -delete
 	find . -name "*.faiss" -delete
 	find . -name "*.index" -delete
+
+zotero-smoke:
+	paper-galaxy zotero detect
+	-paper-galaxy zotero status
+
+zotero-demo-test:
+	python -m pytest tests/test_zotero*.py
+
+zotero-check:
+	python -m pytest tests/test_zotero*.py
+	python scripts/public_readiness_check.py --strict
 
 validate-example:
 	paper-galaxy init . --force

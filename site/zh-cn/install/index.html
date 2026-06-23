@@ -41,10 +41,18 @@ paper-galaxy init . --force
 paper-galaxy index examples/tiny_corpus --project-dir . --min-chars 40
 paper-galaxy serve --project-dir .</pre>
         <button class="button" data-copy="#quickstart" data-label="复制" data-copied="已复制">复制</button>
+        <h2>Zotero Reading Graph</h2>
+        <pre class="code-block" id="zotero-quickstart">paper-galaxy zotero detect
+paper-galaxy zotero status
+paper-galaxy zotero import --project-dir . --include-pdfs --include-notes --build-reading-map
+paper-galaxy serve --project-dir .</pre>
+        <button class="button" data-copy="#zotero-quickstart" data-label="复制" data-copied="已复制">复制</button>
       </div>
       <aside class="card">
         <h3>可选 extras</h3>
         <p>`ocr` 会安装本地 OCR 包装层。`embeddings` 会启用显式本地稠密向量命令。默认不会接受远程模型名，除非你明确允许。</p>
+        <h3>Zotero 边界</h3>
+        <p>Zotero 导入对 Zotero 是只读的，不上传数据，也不会默认复制 PDF。</p>
         <h3>本地数据提醒</h3>
         <p>SQLite 数据库可能包含抽取文本、分块、向量、标签和保存的地图运行。请不要公开 `.paper-galaxy/`。</p>
       </aside>

@@ -32,6 +32,7 @@ make release-check
 - 仓库里没有 `*.sqlite3`。
 - 仓库里没有 `galaxy.html`、`galaxy.json`、`extraction-report.json` 或本地备份 zip。
 - 仓库里没有用户文档、私人路径、API key 或 tokens。
+- 仓库和公开演示里没有真实 Zotero 数据：没有 `zotero.sqlite`、Zotero `storage/` 文件夹、PDF、`zotero://items/...` 记录或私人 Zotero 路径。
 - README、隐私、安全、贡献和路线图文档是最新的。
 - 公开演示只包含合成 tiny corpus 数据。
 - 静态资源没有 CDN、远程字体、远程图片或远程运行时依赖。

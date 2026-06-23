@@ -238,6 +238,25 @@ input[type="range"] {
   white-space: nowrap;
 }
 
+.zotero-status,
+.zotero-help {
+  display: grid;
+  gap: 0.38rem;
+  color: var(--muted);
+  font-size: 0.75rem;
+  line-height: 1.35;
+}
+
+.zotero-help code {
+  display: block;
+  padding: 0.42rem 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-quiet);
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+
 .icon-button {
   justify-self: end;
   display: inline-grid;

@@ -206,6 +206,135 @@ CREATE TABLE IF NOT EXISTS map_run_clusters (
   FOREIGN KEY(map_run_id) REFERENCES map_runs(id) ON DELETE CASCADE
 );
 
+CREATE TABLE IF NOT EXISTS zotero_sources (
+  id TEXT PRIMARY KEY,
+  source_type TEXT NOT NULL,
+  local_api_url TEXT,
+  data_dir TEXT,
+  library_id TEXT,
+  library_type TEXT,
+  name TEXT NOT NULL,
+  last_version INTEGER,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS zotero_import_runs (
+  id TEXT PRIMARY KEY,
+  source_id TEXT NOT NULL,
+  started_at TEXT NOT NULL,
+  finished_at TEXT,
+  status TEXT NOT NULL,
+  items_seen INTEGER NOT NULL DEFAULT 0,
+  items_imported INTEGER NOT NULL DEFAULT 0,
+  items_updated INTEGER NOT NULL DEFAULT 0,
+  items_unchanged INTEGER NOT NULL DEFAULT 0,
+  attachments_seen INTEGER NOT NULL DEFAULT 0,
+  attachments_resolved INTEGER NOT NULL DEFAULT 0,
+  pdfs_extracted INTEGER NOT NULL DEFAULT 0,
+  notes_imported INTEGER NOT NULL DEFAULT 0,
+  skipped INTEGER NOT NULL DEFAULT 0,
+  warnings_json TEXT NOT NULL DEFAULT '[]',
+  config_json TEXT NOT NULL DEFAULT '{}',
+  FOREIGN KEY(source_id) REFERENCES zotero_sources(id)
+);
+
+CREATE TABLE IF NOT EXISTS zotero_items (
+  id TEXT PRIMARY KEY,
+  source_id TEXT NOT NULL,
+  zotero_key TEXT NOT NULL,
+  version INTEGER,
+  item_type TEXT NOT NULL,
+  title TEXT NOT NULL,
+  year TEXT,
+  date TEXT,
+  date_added TEXT,
+  date_modified TEXT,
+  publication_title TEXT,
+  doi TEXT,
+  url TEXT,
+  abstract_note TEXT,
+  extra TEXT,
+  reading_status TEXT NOT NULL DEFAULT 'unknown',
+  data_json TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  UNIQUE(source_id, zotero_key),
+  FOREIGN KEY(source_id) REFERENCES zotero_sources(id)
+);
+
+CREATE TABLE IF NOT EXISTS zotero_creators (
+  id TEXT PRIMARY KEY,
+  zotero_item_id TEXT NOT NULL,
+  creator_type TEXT NOT NULL,
+  first_name TEXT,
+  last_name TEXT,
+  name TEXT,
+  order_index INTEGER NOT NULL,
+  FOREIGN KEY(zotero_item_id) REFERENCES zotero_items(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS zotero_collections (
+  id TEXT PRIMARY KEY,
+  source_id TEXT NOT NULL,
+  zotero_key TEXT NOT NULL,
+  parent_key TEXT,
+  name TEXT NOT NULL,
+  path TEXT,
+  version INTEGER,
+  data_json TEXT NOT NULL DEFAULT '{}',
+  UNIQUE(source_id, zotero_key),
+  FOREIGN KEY(source_id) REFERENCES zotero_sources(id)
+);
+
+CREATE TABLE IF NOT EXISTS zotero_item_collections (
+  zotero_item_id TEXT NOT NULL,
+  collection_id TEXT NOT NULL,
+  PRIMARY KEY(zotero_item_id, collection_id),
+  FOREIGN KEY(zotero_item_id) REFERENCES zotero_items(id) ON DELETE CASCADE,
+  FOREIGN KEY(collection_id) REFERENCES zotero_collections(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS zotero_item_tags (
+  zotero_item_id TEXT NOT NULL,
+  tag TEXT NOT NULL,
+  tag_type INTEGER,
+  PRIMARY KEY(zotero_item_id, tag),
+  FOREIGN KEY(zotero_item_id) REFERENCES zotero_items(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS zotero_attachments (
+  id TEXT PRIMARY KEY,
+  source_id TEXT NOT NULL,
+  parent_zotero_item_id TEXT,
+  zotero_key TEXT NOT NULL,
+  title TEXT,
+  filename TEXT,
+  content_type TEXT,
+  link_mode TEXT,
+  zotero_path TEXT,
+  resolved_path TEXT,
+  path_status TEXT NOT NULL,
+  version INTEGER,
+  data_json TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  UNIQUE(source_id, zotero_key),
+  FOREIGN KEY(source_id) REFERENCES zotero_sources(id),
+  FOREIGN KEY(parent_zotero_item_id) REFERENCES zotero_items(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS zotero_document_links (
+  document_id TEXT NOT NULL,
+  zotero_item_id TEXT NOT NULL,
+  attachment_id TEXT,
+  role TEXT NOT NULL,
+  PRIMARY KEY(document_id, zotero_item_id, role),
+  FOREIGN KEY(document_id) REFERENCES documents(id) ON DELETE CASCADE,
+  FOREIGN KEY(zotero_item_id) REFERENCES zotero_items(id) ON DELETE CASCADE,
+  FOREIGN KEY(attachment_id) REFERENCES zotero_attachments(id) ON DELETE SET NULL
+);
+
 CREATE VIRTUAL TABLE IF NOT EXISTS documents_fts USING fts5(
   document_id UNINDEXED,
   title,
@@ -266,3 +395,27 @@ CREATE INDEX IF NOT EXISTS idx_map_run_points_document_id
 
 CREATE INDEX IF NOT EXISTS idx_map_run_clusters_signature
   ON map_run_clusters(cluster_signature);
+
+CREATE INDEX IF NOT EXISTS idx_zotero_items_source_key
+  ON zotero_items(source_id, zotero_key);
+
+CREATE INDEX IF NOT EXISTS idx_zotero_items_reading_status
+  ON zotero_items(reading_status);
+
+CREATE INDEX IF NOT EXISTS idx_zotero_items_title
+  ON zotero_items(title);
+
+CREATE INDEX IF NOT EXISTS idx_zotero_collections_source_key
+  ON zotero_collections(source_id, zotero_key);
+
+CREATE INDEX IF NOT EXISTS idx_zotero_item_tags_tag
+  ON zotero_item_tags(tag);
+
+CREATE INDEX IF NOT EXISTS idx_zotero_attachments_source_key
+  ON zotero_attachments(source_id, zotero_key);
+
+CREATE INDEX IF NOT EXISTS idx_zotero_document_links_item
+  ON zotero_document_links(zotero_item_id);
+
+CREATE INDEX IF NOT EXISTS idx_zotero_document_links_document
+  ON zotero_document_links(document_id);

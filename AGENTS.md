@@ -11,19 +11,20 @@ exports into an interactive 2D research universe.
 - `src/paper_galaxy/`: Python package, CLI, scanner, extractors, pipeline,
   ML helpers, static exporters, chunking, SQLite storage, indexer, search,
   optional embeddings, explainability helpers, saved map runs, validation,
-  backups, plugin metadata, and local web app.
-- `tests/`: pytest coverage for imports and Phase 0-Phase 7 behavior.
+  backups, plugin metadata, local web app, and Zotero Reading Graph importer.
+- `tests/`: pytest coverage for imports, Phase 0-Phase 7 behavior, and Zotero
+  Reading Graph behavior.
 - `examples/tiny_corpus/`: synthetic local corpus for scan smoke tests.
 - `docs/`: roadmap, architecture, decisions, and privacy notes.
 - `.github/workflows/ci.yml`: basic CI checks.
 
 ## Current Phase
 
-This repository is in public launch activation and release readiness. Phase 7
-professionalization is implemented, the repository is public, and the current
-milestone verifies GitHub Pages, live-site checks, v0.1.0 release readiness, and
-early feedback/triage materials. The product remains local-first. Do not
-implement cloud runtime features unless explicitly asked.
+This repository is in public alpha with Phase 7 professionalization and the
+first Zotero Reading Graph implementation. The repository is public, and the
+current milestone focuses on local Zotero import, reading graph usability, and
+privacy-safe feedback. The product remains local-first. Do not implement cloud
+runtime features unless explicitly asked.
 
 ## Commands
 
@@ -54,6 +55,12 @@ implement cloud runtime features unless explicitly asked.
 - `paper-galaxy export-project --project-dir . --out paper-galaxy-backup.zip --yes`
 - `paper-galaxy import-project paper-galaxy-backup.zip --project-dir /path/to/restore --dry-run`
 - `paper-galaxy plugins`
+- `paper-galaxy zotero detect`
+- `paper-galaxy zotero status`
+- `paper-galaxy zotero import --project-dir . --include-pdfs --include-notes --build-reading-map`
+- `paper-galaxy zotero graph --project-dir . --name "Zotero Reading Graph"`
+- `paper-galaxy zotero validate --project-dir .`
+- `paper-galaxy zotero smoke-test --project-dir .`
 - `paper-galaxy serve --project-dir .`
 - `paper-galaxy extract-preview examples/tiny_corpus/neural_operators/fourier_neural_operator.md`
 - `python -m build`
@@ -78,8 +85,13 @@ implement cloud runtime features unless explicitly asked.
 - Do not add AGPL/copyleft dependencies without explicit approval.
 - Do not implement future phases unless asked.
 - Do not add React, Node build tooling, desktop packaging, cloud sync, accounts,
-  telemetry, cloud OCR, Zotero integration, LLM chat, cloud embedding APIs, or
-  other Phase 8+ features unless a future task explicitly asks for that phase.
+  telemetry, cloud OCR, Zotero write-back, Zotero online sync, LLM chat, cloud
+  embedding APIs, or other future features unless a future task explicitly asks
+  for that phase.
+- Zotero integration must remain read-only toward Zotero. Do not mutate
+  Zotero's database, items, tags, collections, notes, or attachments.
+- Do not copy Zotero PDFs by default; reference local attachment paths and store
+  extracted text only inside the Paper Galaxy project database.
 - Do not add remote plugin loading; Phase 7 plugins are static built-in
   boundaries only.
 - The personal cloud library is design-only in this milestone. Do not add cloud
@@ -100,7 +112,8 @@ implement cloud runtime features unless explicitly asked.
 - Do not commit `.paper-galaxy/`, `*.sqlite3`, `galaxy.html`, `galaxy.json`,
   `extraction-report.json`, `validation.json`, `map-run*.json`,
   `paper-galaxy-backup*.zip`, local vector index files, downloaded model files,
-  or other generated local artifacts.
+  Zotero databases, Zotero storage folders, PDFs, or other generated local
+  artifacts.
 - Add tests for any behavior change.
 - Update docs when architecture changes.
 - When a phase is complete and checks pass, commit and push automatically unless

@@ -45,6 +45,7 @@ FORBIDDEN_ARTIFACT_NAMES = {
     "galaxy.json",
     "extraction-report.json",
     "validation.json",
+    "zotero.sqlite",
 }
 FORBIDDEN_ARTIFACT_SUFFIXES = (".sqlite3", ".faiss", ".index")
 FORBIDDEN_ARTIFACT_PATTERNS = (
@@ -128,6 +129,8 @@ def run_public_readiness(
     checks.extend(_check_readme(root))
     checks.extend(_check_release_docs(root))
     checks.extend(_check_feedback_docs(root))
+    checks.extend(_check_zotero_public_boundary(root))
+    checks.extend(_check_no_private_zotero_data(root))
     checks.extend(_check_cloud_design_boundary(root))
     checks.extend(_check_no_cloud_runtime(root))
     checks.extend(_check_pyproject(root))
@@ -384,6 +387,80 @@ def _check_feedback_docs(root: Path) -> list[ReadinessCheck]:
             "feedback-docs",
             blockers,
             "FAQ, troubleshooting, demo guide, feedback, and triage docs exist.",
+        )
+    ]
+
+
+def _check_zotero_public_boundary(root: Path) -> list[ReadinessCheck]:
+    required = (
+        "docs/ZOTERO_INTEGRATION.md",
+        "docs/ZOTERO_INTEGRATION.zh-CN.md",
+        "docs/READING_GRAPH.md",
+        "docs/READING_GRAPH.zh-CN.md",
+    )
+    blockers = [relative for relative in required if not (root / relative).exists()]
+    docs = [
+        root / "README.md",
+        root / "docs" / "PRIVACY.md",
+        root / "docs" / "ZOTERO_INTEGRATION.md",
+    ]
+    tokens = (
+        "local api",
+        "does not write to zotero",
+        "no upload",
+        "not copied by default",
+    )
+    for path in docs:
+        if not path.exists():
+            blockers.append(f"{_relative(path, root)} missing")
+            continue
+        text = " ".join(path.read_text(encoding="utf-8").lower().split())
+        for token in tokens:
+            if token not in text:
+                blockers.append(f"{_relative(path, root)} missing {token}")
+    return [
+        _result(
+            "zotero-local-boundary",
+            blockers,
+            "Zotero docs explain local API, no write-back, no upload, and "
+            "no PDF copying.",
+        )
+    ]
+
+
+def _check_no_private_zotero_data(root: Path) -> list[ReadinessCheck]:
+    findings: list[str] = []
+    path_patterns = (
+        re.compile(r"/users/[^/\s]+/zotero", re.IGNORECASE),
+        re.compile(r"zotero[/\\]storage", re.IGNORECASE),
+    )
+    for path in _walk_repo(root, include_dirs=True):
+        relative = _relative(path, root)
+        if path.is_dir() and path.name.lower() == "storage":
+            if "zotero" in "/".join(path.relative_to(root).parts).lower():
+                findings.append(relative)
+            continue
+        if not path.is_file():
+            continue
+        if path.suffix.lower() == ".pdf":
+            findings.append(relative)
+            continue
+        if path.suffix.lower() not in TEXT_SUFFIXES or path.stat().st_size > 500_000:
+            continue
+        try:
+            text = path.read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            continue
+        for pattern in path_patterns:
+            if pattern.search(text):
+                findings.append(relative)
+                break
+    return [
+        _result(
+            "no-private-zotero-data",
+            sorted(set(findings)),
+            "No real Zotero databases, storage folders, PDFs, or local Zotero "
+            "paths found.",
         )
     ]
 

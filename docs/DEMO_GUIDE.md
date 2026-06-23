@@ -16,7 +16,9 @@ payload, strips local paths and database details, and writes static JSON to
 
 All demo documents are synthetic notes about neural operators, numerical PDEs,
 randomized linear algebra, and thesis ideas. No user papers or private
-documents are included.
+documents are included. The demo contains no real Zotero database, no Zotero
+storage folder, no PDFs, no local Zotero paths, and no `zotero://items/...`
+records.
 
 ## Simulated Versus Real Features
 
@@ -26,7 +28,8 @@ SQLite database, re-index files, or read local documents.
 
 The installed local app can read your local project database, run local search,
 show document chunks, use saved map runs, rename clusters, and inspect pair
-explanations from your indexed corpus.
+explanations from your indexed corpus. It can also show a Zotero Reading Graph
+after you explicitly import from Zotero Desktop on your own computer.
 
 ## Reproduce The Demo Locally
 

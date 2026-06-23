@@ -72,6 +72,33 @@ paper-galaxy index examples/tiny_corpus --project-dir . --min-chars 40
 paper-galaxy serve --project-dir .
 ```
 
+## Zotero Local API Unavailable
+
+`paper-galaxy zotero status` needs Zotero Desktop running with the local API
+enabled. Start Zotero, then run:
+
+```bash
+paper-galaxy zotero detect
+paper-galaxy zotero status
+```
+
+If the API is still unavailable, check Zotero Settings -> Advanced and confirm
+the local API is enabled. The Zotero data directory shown in Zotero settings is
+authoritative; `paper-galaxy zotero detect` only makes a best-effort guess.
+
+## Zotero Import Has Missing PDFs
+
+Missing or linked-outside-data-dir attachments do not block the import. Paper
+Galaxy can still create metadata-only documents from titles, abstracts, notes,
+tags, and collections:
+
+```bash
+paper-galaxy zotero import --project-dir . --include-metadata-only --build-reading-map
+```
+
+Paper Galaxy does not write to Zotero, does not upload Zotero data, and does
+not copy PDFs by default.
+
 ## FTS5 Unavailable
 
 SQLite FTS5 is required for local full-text search. Run:

@@ -140,3 +140,32 @@ def test_static_web_app_supports_simplified_chinese_locale() -> None:
     assert "切换到英文" in i18n_js
     assert "toggleLanguage" in app_js
     assert "static/i18n.js" in pyproject
+
+
+def test_static_web_app_includes_zotero_reading_graph_controls() -> None:
+    html = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
+    app_js = (STATIC_DIR / "app.js").read_text(encoding="utf-8")
+    i18n_js = (STATIC_DIR / "i18n.js").read_text(encoding="utf-8")
+
+    required_html = [
+        'value="zotero"',
+        'id="zotero-status-filter"',
+        'id="zotero-tag-filter"',
+        'id="zotero-collection-filter"',
+        'data-i18n="zotero.title"',
+    ]
+    for token in required_html:
+        assert token in html
+
+    required_js = [
+        "/api/zotero/status",
+        "/api/zotero/reading-map",
+        "renderZoteroInspector",
+        "graphSource",
+        "zoteroStatusFilter",
+    ]
+    for token in required_js:
+        assert token in app_js
+
+    assert "Zotero Reading Graph" in i18n_js
+    assert "Zotero 阅读图谱" in i18n_js

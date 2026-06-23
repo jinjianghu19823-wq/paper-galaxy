@@ -11,13 +11,13 @@
 
 ## 哪些内容是合成的
 
-所有演示文档都是关于 neural operators、numerical PDEs、randomized linear algebra 和 thesis ideas 的合成笔记。不包含用户论文或私人文档。
+所有演示文档都是关于 neural operators、numerical PDEs、randomized linear algebra 和 thesis ideas 的合成笔记。不包含用户论文或私人文档。演示不包含真实 Zotero 数据库、Zotero storage 文件夹、PDF、本地 Zotero 路径或 `zotero://items/...` 记录。
 
 ## 模拟功能与真实功能
 
 公开演示包含静态图谱、主题簇图例、文档 inspector 和预计算解释片段。它不运行 FastAPI 后端，不修改 SQLite 数据库，不重新索引文件，也不读取本地文档。
 
-安装后的本地 app 可以读取你的本地项目数据库，运行本地搜索，展示文档分块，使用保存的地图运行，重命名主题簇，并从你的索引语料中检查 pair explanations。
+安装后的本地 app 可以读取你的本地项目数据库，运行本地搜索，展示文档分块，使用保存的地图运行，重命名主题簇，并从你的索引语料中检查 pair explanations。你在本机显式从 Zotero Desktop 导入后，它也可以显示 Zotero Reading Graph。
 
 ## 本地复现演示
 

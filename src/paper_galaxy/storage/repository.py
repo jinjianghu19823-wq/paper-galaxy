@@ -786,6 +786,733 @@ class Repository:
         )
         return cursor.rowcount > 0
 
+    def upsert_zotero_source(self, source: Mapping[str, Any]) -> None:
+        """Insert or update a local read-only Zotero source."""
+
+        self.connection.execute(
+            """
+            INSERT INTO zotero_sources(
+              id, source_type, local_api_url, data_dir, library_id, library_type,
+              name, last_version, created_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+              source_type = excluded.source_type,
+              local_api_url = excluded.local_api_url,
+              data_dir = excluded.data_dir,
+              library_id = excluded.library_id,
+              library_type = excluded.library_type,
+              name = excluded.name,
+              last_version = excluded.last_version,
+              updated_at = excluded.updated_at
+            """,
+            (
+                str(source["id"]),
+                str(source.get("source_type", "local_api")),
+                _optional_str(source.get("local_api_url")),
+                _optional_str(source.get("data_dir")),
+                _optional_str(source.get("library_id")),
+                _optional_str(source.get("library_type")),
+                str(source.get("name", "Zotero Local Library")),
+                _optional_int(source.get("last_version")),
+                str(source["created_at"]),
+                str(source["updated_at"]),
+            ),
+        )
+
+    def create_zotero_import_run(
+        self,
+        run_id: str,
+        source_id: str,
+        *,
+        started_at: str,
+        config: Mapping[str, Any],
+    ) -> None:
+        """Create a Zotero import run record."""
+
+        self.connection.execute(
+            """
+            INSERT INTO zotero_import_runs(
+              id, source_id, started_at, status, config_json
+            )
+            VALUES (?, ?, ?, 'running', ?)
+            """,
+            (run_id, source_id, started_at, json.dumps(dict(config), sort_keys=True)),
+        )
+
+    def finish_zotero_import_run(
+        self,
+        run_id: str,
+        *,
+        finished_at: str,
+        status: str,
+        items_seen: int,
+        items_imported: int,
+        items_updated: int,
+        items_unchanged: int,
+        attachments_seen: int,
+        attachments_resolved: int,
+        pdfs_extracted: int,
+        notes_imported: int,
+        skipped: int,
+        warnings: Iterable[str],
+    ) -> None:
+        """Finish a Zotero import run summary."""
+
+        self.connection.execute(
+            """
+            UPDATE zotero_import_runs
+            SET finished_at = ?,
+                status = ?,
+                items_seen = ?,
+                items_imported = ?,
+                items_updated = ?,
+                items_unchanged = ?,
+                attachments_seen = ?,
+                attachments_resolved = ?,
+                pdfs_extracted = ?,
+                notes_imported = ?,
+                skipped = ?,
+                warnings_json = ?
+            WHERE id = ?
+            """,
+            (
+                finished_at,
+                status,
+                items_seen,
+                items_imported,
+                items_updated,
+                items_unchanged,
+                attachments_seen,
+                attachments_resolved,
+                pdfs_extracted,
+                notes_imported,
+                skipped,
+                json.dumps([str(warning) for warning in warnings], sort_keys=True),
+                run_id,
+            ),
+        )
+
+    def upsert_zotero_collection(self, collection: Mapping[str, Any]) -> None:
+        """Insert or update normalized Zotero collection metadata."""
+
+        self.connection.execute(
+            """
+            INSERT INTO zotero_collections(
+              id, source_id, zotero_key, parent_key, name, path, version, data_json
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(source_id, zotero_key) DO UPDATE SET
+              id = excluded.id,
+              parent_key = excluded.parent_key,
+              name = excluded.name,
+              path = excluded.path,
+              version = excluded.version,
+              data_json = excluded.data_json
+            """,
+            (
+                str(collection["id"]),
+                str(collection["source_id"]),
+                str(collection["zotero_key"]),
+                _optional_str(collection.get("parent_key")),
+                str(collection.get("name", "")),
+                _optional_str(collection.get("path")),
+                _optional_int(collection.get("version")),
+                json.dumps(dict(collection.get("data", {})), sort_keys=True),
+            ),
+        )
+
+    def upsert_zotero_item(self, item: Mapping[str, Any]) -> None:
+        """Insert or update normalized Zotero item metadata."""
+
+        self.connection.execute(
+            """
+            INSERT INTO zotero_items(
+              id, source_id, zotero_key, version, item_type, title, year, date,
+              date_added, date_modified, publication_title, doi, url,
+              abstract_note, extra, reading_status, data_json, created_at,
+              updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(source_id, zotero_key) DO UPDATE SET
+              id = excluded.id,
+              version = excluded.version,
+              item_type = excluded.item_type,
+              title = excluded.title,
+              year = excluded.year,
+              date = excluded.date,
+              date_added = excluded.date_added,
+              date_modified = excluded.date_modified,
+              publication_title = excluded.publication_title,
+              doi = excluded.doi,
+              url = excluded.url,
+              abstract_note = excluded.abstract_note,
+              extra = excluded.extra,
+              reading_status = excluded.reading_status,
+              data_json = excluded.data_json,
+              updated_at = excluded.updated_at
+            """,
+            (
+                str(item["id"]),
+                str(item["source_id"]),
+                str(item["zotero_key"]),
+                _optional_int(item.get("version")),
+                str(item.get("item_type", "")),
+                str(item.get("title", "")),
+                _optional_str(item.get("year")),
+                _optional_str(item.get("date")),
+                _optional_str(item.get("date_added")),
+                _optional_str(item.get("date_modified")),
+                _optional_str(item.get("publication_title")),
+                _optional_str(item.get("doi")),
+                _optional_str(item.get("url")),
+                _optional_str(item.get("abstract_note")),
+                _optional_str(item.get("extra")),
+                str(item.get("reading_status", "unknown")),
+                json.dumps(dict(item.get("data", {})), sort_keys=True),
+                str(item["created_at"]),
+                str(item["updated_at"]),
+            ),
+        )
+
+    def get_zotero_item_by_source_key(
+        self, source_id: str, zotero_key: str
+    ) -> dict[str, object] | None:
+        """Return one Zotero item by source/key."""
+
+        row = self.connection.execute(
+            """
+            SELECT *
+            FROM zotero_items
+            WHERE source_id = ? AND zotero_key = ?
+            """,
+            (source_id, zotero_key),
+        ).fetchone()
+        return self._zotero_item_payload(row) if row is not None else None
+
+    def replace_zotero_creators(
+        self, zotero_item_id: str, creators: Iterable[Mapping[str, Any]]
+    ) -> None:
+        """Replace creators for a Zotero item."""
+
+        self.connection.execute(
+            "DELETE FROM zotero_creators WHERE zotero_item_id = ?",
+            (zotero_item_id,),
+        )
+        self.connection.executemany(
+            """
+            INSERT INTO zotero_creators(
+              id, zotero_item_id, creator_type, first_name, last_name, name,
+              order_index
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            [
+                (
+                    _zotero_child_row_id(zotero_item_id, "creator", index),
+                    zotero_item_id,
+                    str(creator.get("creator_type", "author")),
+                    _optional_str(creator.get("first_name")),
+                    _optional_str(creator.get("last_name")),
+                    _optional_str(creator.get("name")),
+                    index,
+                )
+                for index, creator in enumerate(creators)
+            ],
+        )
+
+    def replace_zotero_item_tags(
+        self, zotero_item_id: str, tags: Iterable[Mapping[str, Any]]
+    ) -> None:
+        """Replace tags for a Zotero item."""
+
+        self.connection.execute(
+            "DELETE FROM zotero_item_tags WHERE zotero_item_id = ?",
+            (zotero_item_id,),
+        )
+        self.connection.executemany(
+            """
+            INSERT INTO zotero_item_tags(zotero_item_id, tag, tag_type)
+            VALUES (?, ?, ?)
+            """,
+            [
+                (
+                    zotero_item_id,
+                    str(tag.get("tag", "")),
+                    _optional_int(tag.get("type")),
+                )
+                for tag in tags
+                if str(tag.get("tag", "")).strip()
+            ],
+        )
+
+    def replace_zotero_item_collections(
+        self, zotero_item_id: str, collection_ids: Iterable[str]
+    ) -> None:
+        """Replace collection memberships for a Zotero item."""
+
+        self.connection.execute(
+            "DELETE FROM zotero_item_collections WHERE zotero_item_id = ?",
+            (zotero_item_id,),
+        )
+        self.connection.executemany(
+            """
+            INSERT OR IGNORE INTO zotero_item_collections(
+              zotero_item_id, collection_id
+            )
+            VALUES (?, ?)
+            """,
+            [(zotero_item_id, collection_id) for collection_id in collection_ids],
+        )
+
+    def upsert_zotero_attachment(self, attachment: Mapping[str, Any]) -> None:
+        """Insert or update a Zotero attachment record."""
+
+        self.connection.execute(
+            """
+            INSERT INTO zotero_attachments(
+              id, source_id, parent_zotero_item_id, zotero_key, title, filename,
+              content_type, link_mode, zotero_path, resolved_path, path_status,
+              version, data_json, created_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(source_id, zotero_key) DO UPDATE SET
+              id = excluded.id,
+              parent_zotero_item_id = excluded.parent_zotero_item_id,
+              title = excluded.title,
+              filename = excluded.filename,
+              content_type = excluded.content_type,
+              link_mode = excluded.link_mode,
+              zotero_path = excluded.zotero_path,
+              resolved_path = excluded.resolved_path,
+              path_status = excluded.path_status,
+              version = excluded.version,
+              data_json = excluded.data_json,
+              updated_at = excluded.updated_at
+            """,
+            (
+                str(attachment["id"]),
+                str(attachment["source_id"]),
+                _optional_str(attachment.get("parent_zotero_item_id")),
+                str(attachment["zotero_key"]),
+                _optional_str(attachment.get("title")),
+                _optional_str(attachment.get("filename")),
+                _optional_str(attachment.get("content_type")),
+                _optional_str(attachment.get("link_mode")),
+                _optional_str(attachment.get("zotero_path")),
+                _optional_str(attachment.get("resolved_path")),
+                str(attachment.get("path_status", "unsupported")),
+                _optional_int(attachment.get("version")),
+                json.dumps(dict(attachment.get("data", {})), sort_keys=True),
+                str(attachment["created_at"]),
+                str(attachment["updated_at"]),
+            ),
+        )
+
+    def upsert_zotero_document_link(
+        self,
+        *,
+        document_id: str,
+        zotero_item_id: str,
+        attachment_id: str | None,
+        role: str,
+    ) -> None:
+        """Link a Paper Galaxy document to a Zotero item."""
+
+        self.connection.execute(
+            """
+            INSERT INTO zotero_document_links(
+              document_id, zotero_item_id, attachment_id, role
+            )
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(document_id, zotero_item_id, role) DO UPDATE SET
+              attachment_id = excluded.attachment_id
+            """,
+            (document_id, zotero_item_id, attachment_id, role),
+        )
+
+    def list_zotero_items(
+        self,
+        *,
+        limit: int = 100,
+        status: str = "all",
+        collection: str | None = None,
+        tag: str | None = None,
+        q: str | None = None,
+    ) -> list[dict[str, object]]:
+        """List imported Zotero items with lightweight related metadata."""
+
+        where, params = _zotero_filter_clauses(
+            status=status,
+            collection=collection,
+            tag=tag,
+            q=q,
+        )
+        rows = self.connection.execute(
+            f"""
+            SELECT DISTINCT zi.*
+            FROM zotero_items zi
+            LEFT JOIN zotero_item_tags zit ON zit.zotero_item_id = zi.id
+            LEFT JOIN zotero_item_collections zic ON zic.zotero_item_id = zi.id
+            LEFT JOIN zotero_collections zc ON zc.id = zic.collection_id
+            {where}
+            ORDER BY zi.date_modified DESC, zi.title
+            LIMIT ?
+            """,
+            (*params, max(0, limit)),
+        ).fetchall()
+        return [self._zotero_item_detail_from_row(row) for row in rows]
+
+    def get_zotero_item_detail(self, zotero_item_id: str) -> dict[str, object] | None:
+        """Return imported Zotero item details without full document text."""
+
+        row = self.connection.execute(
+            "SELECT * FROM zotero_items WHERE id = ?",
+            (zotero_item_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        return self._zotero_item_detail_from_row(row)
+
+    def list_zotero_documents_with_text(
+        self,
+        *,
+        status: str = "all",
+        collection: str | None = None,
+        tag: str | None = None,
+        limit: int = 1000,
+    ) -> list[tuple[IndexedDocument, str, dict[str, object]]]:
+        """Return active Paper Galaxy documents linked to Zotero items."""
+
+        where, params = _zotero_filter_clauses(
+            status=status,
+            collection=collection,
+            tag=tag,
+            q=None,
+        )
+        rows = self.connection.execute(
+            f"""
+            SELECT DISTINCT
+              d.*,
+              dt.text,
+              zi.id AS zotero_item_id,
+              zi.zotero_key,
+              zi.reading_status,
+              zi.title AS zotero_title,
+              zi.publication_title AS zotero_publication_title,
+              zi.year AS zotero_year
+            FROM zotero_items zi
+            JOIN zotero_document_links zdl ON zdl.zotero_item_id = zi.id
+            JOIN documents d ON d.id = zdl.document_id
+            JOIN document_texts dt ON dt.document_id = d.id
+            LEFT JOIN zotero_item_tags zit ON zit.zotero_item_id = zi.id
+            LEFT JOIN zotero_item_collections zic ON zic.zotero_item_id = zi.id
+            LEFT JOIN zotero_collections zc ON zc.id = zic.collection_id
+            {where}
+              AND d.status = 'active'
+            ORDER BY zi.title
+            LIMIT ?
+            """,
+            (*params, max(0, limit)),
+        ).fetchall()
+        return [
+            (
+                _document_from_row(row),
+                str(row["text"]),
+                self._zotero_reading_meta(row),
+            )
+            for row in rows
+        ]
+
+    def zotero_stats(self) -> dict[str, object]:
+        """Return imported Zotero counts and last-run metadata."""
+
+        reading_rows = self.connection.execute(
+            """
+            SELECT reading_status, COUNT(*) AS count
+            FROM zotero_items
+            GROUP BY reading_status
+            ORDER BY reading_status
+            """
+        ).fetchall()
+        last_run = self.zotero_import_status()
+        return {
+            "source_count": _scalar_int(
+                self.connection,
+                "SELECT COUNT(*) FROM zotero_sources",
+            ),
+            "imported_item_count": _scalar_int(
+                self.connection,
+                "SELECT COUNT(*) FROM zotero_items",
+            ),
+            "imported_document_count": _scalar_int(
+                self.connection,
+                "SELECT COUNT(DISTINCT document_id) FROM zotero_document_links",
+            ),
+            "attachment_count": _scalar_int(
+                self.connection, "SELECT COUNT(*) FROM zotero_attachments"
+            ),
+            "missing_attachment_count": _scalar_int(
+                self.connection,
+                """
+                SELECT COUNT(*)
+                FROM zotero_attachments
+                WHERE path_status IN ('missing', 'no_local_file', 'unsupported')
+                """,
+            ),
+            "reading_status_counts": {
+                str(row["reading_status"]): int(row["count"]) for row in reading_rows
+            },
+            "last_import_run": last_run,
+            "warnings": _json_list(last_run.get("warnings") if last_run else []),
+        }
+
+    def zotero_import_status(self) -> dict[str, object] | None:
+        """Return the latest Zotero import run, if any."""
+
+        row = self.connection.execute(
+            """
+            SELECT *
+            FROM zotero_import_runs
+            ORDER BY started_at DESC
+            LIMIT 1
+            """
+        ).fetchone()
+        if row is None:
+            return None
+        return {
+            "id": str(row["id"]),
+            "source_id": str(row["source_id"]),
+            "started_at": str(row["started_at"]),
+            "finished_at": _optional_str(row["finished_at"]),
+            "status": str(row["status"]),
+            "items_seen": int(row["items_seen"]),
+            "items_imported": int(row["items_imported"]),
+            "items_updated": int(row["items_updated"]),
+            "items_unchanged": int(row["items_unchanged"]),
+            "attachments_seen": int(row["attachments_seen"]),
+            "attachments_resolved": int(row["attachments_resolved"]),
+            "pdfs_extracted": int(row["pdfs_extracted"]),
+            "notes_imported": int(row["notes_imported"]),
+            "skipped": int(row["skipped"]),
+            "warnings": _json_list(row["warnings_json"]),
+            "config": _json_object(row["config_json"]),
+        }
+
+    def zotero_dangling_counts(self) -> dict[str, int]:
+        """Return Zotero-specific dangling reference counts."""
+
+        return {
+            "zotero_links_without_documents": _scalar_int(
+                self.connection,
+                """
+                SELECT COUNT(*)
+                FROM zotero_document_links zdl
+                LEFT JOIN documents d ON d.id = zdl.document_id
+                WHERE d.id IS NULL
+                """,
+            ),
+            "zotero_links_without_items": _scalar_int(
+                self.connection,
+                """
+                SELECT COUNT(*)
+                FROM zotero_document_links zdl
+                LEFT JOIN zotero_items zi ON zi.id = zdl.zotero_item_id
+                WHERE zi.id IS NULL
+                """,
+            ),
+            "zotero_attachments_without_items": _scalar_int(
+                self.connection,
+                """
+                SELECT COUNT(*)
+                FROM zotero_attachments za
+                LEFT JOIN zotero_items zi ON zi.id = za.parent_zotero_item_id
+                WHERE za.parent_zotero_item_id IS NOT NULL AND zi.id IS NULL
+                """,
+            ),
+        }
+
+    def _zotero_item_detail_from_row(self, row: sqlite3.Row) -> dict[str, object]:
+        payload = self._zotero_item_payload(row)
+        item_id = str(row["id"])
+        payload["creators"] = self._zotero_creators(item_id)
+        payload["tags"] = self._zotero_tags(item_id)
+        payload["collections"] = self._zotero_collections(item_id)
+        payload["attachments"] = self._zotero_attachments(item_id)
+        payload["document_links"] = self._zotero_document_links(item_id)
+        return payload
+
+    def _zotero_item_payload(self, row: sqlite3.Row) -> dict[str, object]:
+        return {
+            "id": str(row["id"]),
+            "source_id": str(row["source_id"]),
+            "zotero_key": str(row["zotero_key"]),
+            "version": _optional_int(row["version"]),
+            "item_type": str(row["item_type"]),
+            "title": str(row["title"]),
+            "year": _optional_str(row["year"]),
+            "date": _optional_str(row["date"]),
+            "date_added": _optional_str(row["date_added"]),
+            "date_modified": _optional_str(row["date_modified"]),
+            "publication_title": _optional_str(row["publication_title"]),
+            "doi": _optional_str(row["doi"]),
+            "url": _optional_str(row["url"]),
+            "abstract_note": _optional_str(row["abstract_note"]),
+            "extra": _optional_str(row["extra"]),
+            "reading_status": str(row["reading_status"]),
+            "data": _json_object(row["data_json"]),
+            "created_at": str(row["created_at"]),
+            "updated_at": str(row["updated_at"]),
+            "zotero_uri": f"zotero://select/items/{row['zotero_key']}",
+        }
+
+    def _zotero_reading_meta(self, row: sqlite3.Row) -> dict[str, object]:
+        item_id = str(row["zotero_item_id"])
+        creators = [
+            " ".join(
+                str(part)
+                for part in (
+                    creator.get("first_name"),
+                    creator.get("last_name"),
+                    creator.get("name"),
+                )
+                if part is not None and str(part)
+            ).strip()
+            for creator in self._zotero_creators(item_id)
+        ]
+        collections = self._zotero_collections(item_id)
+        attachments = self._zotero_attachments(item_id)
+        return {
+            "zotero_item_id": item_id,
+            "zotero_key": str(row["zotero_key"]),
+            "reading_status": str(row["reading_status"]),
+            "title": str(row["zotero_title"]),
+            "creators": "; ".join(name for name in creators if name),
+            "publication": " ".join(
+                part
+                for part in (
+                    _optional_str(row["zotero_publication_title"]),
+                    _optional_str(row["zotero_year"]),
+                )
+                if part
+            ),
+            "tags": "; ".join(str(tag["tag"]) for tag in self._zotero_tags(item_id)),
+            "collections": "; ".join(
+                str(collection.get("path") or collection.get("name") or "")
+                for collection in collections
+            ),
+            "attachment_status": "; ".join(
+                str(attachment["path_status"]) for attachment in attachments
+            ),
+        }
+
+    def _zotero_creators(self, item_id: str) -> list[dict[str, object]]:
+        rows = self.connection.execute(
+            """
+            SELECT *
+            FROM zotero_creators
+            WHERE zotero_item_id = ?
+            ORDER BY order_index
+            """,
+            (item_id,),
+        ).fetchall()
+        return [
+            {
+                "creator_type": str(row["creator_type"]),
+                "first_name": _optional_str(row["first_name"]),
+                "last_name": _optional_str(row["last_name"]),
+                "name": _optional_str(row["name"]),
+                "order_index": int(row["order_index"]),
+            }
+            for row in rows
+        ]
+
+    def _zotero_tags(self, item_id: str) -> list[dict[str, object]]:
+        rows = self.connection.execute(
+            """
+            SELECT tag, tag_type
+            FROM zotero_item_tags
+            WHERE zotero_item_id = ?
+            ORDER BY tag COLLATE NOCASE
+            """,
+            (item_id,),
+        ).fetchall()
+        return [
+            {"tag": str(row["tag"]), "type": _optional_int(row["tag_type"])}
+            for row in rows
+        ]
+
+    def _zotero_collections(self, item_id: str) -> list[dict[str, object]]:
+        rows = self.connection.execute(
+            """
+            SELECT zc.*
+            FROM zotero_collections zc
+            JOIN zotero_item_collections zic ON zic.collection_id = zc.id
+            WHERE zic.zotero_item_id = ?
+            ORDER BY COALESCE(zc.path, zc.name) COLLATE NOCASE
+            """,
+            (item_id,),
+        ).fetchall()
+        return [
+            {
+                "id": str(row["id"]),
+                "zotero_key": str(row["zotero_key"]),
+                "name": str(row["name"]),
+                "path": _optional_str(row["path"]),
+                "parent_key": _optional_str(row["parent_key"]),
+            }
+            for row in rows
+        ]
+
+    def _zotero_attachments(self, item_id: str) -> list[dict[str, object]]:
+        rows = self.connection.execute(
+            """
+            SELECT *
+            FROM zotero_attachments
+            WHERE parent_zotero_item_id = ?
+            ORDER BY title COLLATE NOCASE
+            """,
+            (item_id,),
+        ).fetchall()
+        return [
+            {
+                "id": str(row["id"]),
+                "zotero_key": str(row["zotero_key"]),
+                "title": _optional_str(row["title"]),
+                "filename": _optional_str(row["filename"]),
+                "content_type": _optional_str(row["content_type"]),
+                "link_mode": _optional_str(row["link_mode"]),
+                "zotero_path": _optional_str(row["zotero_path"]),
+                "resolved_path": _optional_str(row["resolved_path"]),
+                "path_status": str(row["path_status"]),
+            }
+            for row in rows
+        ]
+
+    def _zotero_document_links(self, item_id: str) -> list[dict[str, object]]:
+        rows = self.connection.execute(
+            """
+            SELECT zdl.*, d.title, d.relative_path, d.file_type, d.status
+            FROM zotero_document_links zdl
+            LEFT JOIN documents d ON d.id = zdl.document_id
+            WHERE zdl.zotero_item_id = ?
+            ORDER BY zdl.role, zdl.document_id
+            """,
+            (item_id,),
+        ).fetchall()
+        return [
+            {
+                "document_id": str(row["document_id"]),
+                "attachment_id": _optional_str(row["attachment_id"]),
+                "role": str(row["role"]),
+                "title": _optional_str(row["title"]),
+                "relative_path": _optional_str(row["relative_path"]),
+                "file_type": _optional_str(row["file_type"]),
+                "status": _optional_str(row["status"]),
+            }
+            for row in rows
+        ]
+
     def count_rows(self, table_name: str) -> int:
         """Return a table row count for known internal tables."""
 
@@ -796,7 +1523,7 @@ class Repository:
     def dangling_row_counts(self) -> dict[str, int]:
         """Return cheap referential-integrity checks for validation."""
 
-        return {
+        counts = {
             "chunks_without_documents": _scalar_int(
                 self.connection,
                 """
@@ -834,6 +1561,8 @@ class Repository:
                 """,
             ),
         }
+        counts.update(self.zotero_dangling_counts())
+        return counts
 
     def touch_document(self, document_id: str, now: str) -> None:
         self.connection.execute(
@@ -1201,6 +1930,15 @@ _KNOWN_COUNT_TABLES = {
     "map_runs",
     "map_run_points",
     "map_run_clusters",
+    "zotero_sources",
+    "zotero_import_runs",
+    "zotero_items",
+    "zotero_creators",
+    "zotero_collections",
+    "zotero_item_collections",
+    "zotero_item_tags",
+    "zotero_attachments",
+    "zotero_document_links",
 }
 
 
@@ -1361,6 +2099,55 @@ def _map_run_cluster_payload(row: sqlite3.Row) -> dict[str, object]:
         "representatives": _json_list(json.loads(str(row["representatives_json"]))),
         "warnings": _json_list(json.loads(str(row["warnings_json"]))),
     }
+
+
+def _zotero_child_row_id(parent_id: str, kind: str, index: int) -> str:
+    digest = hashlib.sha256(f"{parent_id}\0{kind}\0{index}".encode()).hexdigest()
+    return f"zotero_{kind}_{digest[:16]}"
+
+
+def _zotero_filter_clauses(
+    *,
+    status: str,
+    collection: str | None,
+    tag: str | None,
+    q: str | None,
+) -> tuple[str, tuple[object, ...]]:
+    clauses = ["1 = 1"]
+    params: list[object] = []
+    if status != "all":
+        clauses.append("zi.reading_status = ?")
+        params.append(status)
+    if collection:
+        clauses.append("(zc.zotero_key = ? OR zc.name = ? OR zc.path = ?)")
+        params.extend([collection, collection, collection])
+    if tag:
+        clauses.append("zit.tag = ?")
+        params.append(tag)
+    if q:
+        like = f"%{q.lower()}%"
+        clauses.append(
+            "(LOWER(zi.title) LIKE ? OR LOWER(COALESCE(zi.abstract_note, '')) LIKE ?)"
+        )
+        params.extend([like, like])
+    return f"WHERE {' AND '.join(clauses)}", tuple(params)
+
+
+def _optional_str(value: object) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def _optional_int(value: object) -> int | None:
+    if value is None:
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str) and value.strip().lstrip("-").isdigit():
+        return int(value)
+    return None
 
 
 def _extraction_report_from_row(row: sqlite3.Row) -> ExtractionReport:

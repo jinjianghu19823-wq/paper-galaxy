@@ -411,6 +411,7 @@
     }
   ],
   "metadata": {
+    "contains_real_zotero_data": false,
     "demo": "paper-galaxy-static-demo",
     "generated_at": "deterministic-static-demo",
     "languages": [
@@ -423,7 +424,8 @@
     ],
     "paper_galaxy_version": "0.1.0",
     "source_corpus": "examples/tiny_corpus",
-    "synthetic_only": true
+    "synthetic_only": true,
+    "zotero_demo": "synthetic-feature-description-only"
   },
   "points": [
     {

@@ -36,6 +36,8 @@ make release-check
 - No secrets, tokens, `.env` files, private keys, or API keys.
 - No downloaded model files or vector indexes.
 - No user documents.
+- No real Zotero data: no `zotero.sqlite`, Zotero `storage/` folders, PDFs,
+  `zotero://items/...` records, or private Zotero paths in public demo data.
 - No external runtime assets in the public demo site.
 - Demo data comes from synthetic `examples/tiny_corpus` only.
 - English and Simplified Chinese static pages load.

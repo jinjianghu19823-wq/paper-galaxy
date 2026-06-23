@@ -50,6 +50,7 @@
             <span>无需账号</span>
             <span>无遥测</span>
             <span>默认不上传文档</span>
+            <span>只读 Zotero 导入</span>
           </div>
         </div>
 
@@ -90,6 +91,7 @@
         <p class="lead">它面向想要整理研究结构、但不想把私人资料库交给云服务的研究者。</p>
         <div class="cards">
           <article class="card"><h3>本地优先索引</h3><p>扫描本地文件夹，并把抽取记录保存在项目目录下的 SQLite 数据库里。</p></article>
+          <article class="card"><h3>Zotero Reading Graph</h3><p>通过只读 local API 导入 Zotero Desktop 元数据、笔记、标签、集合和本地 PDF 文本。</p></article>
           <article class="card"><h3>动态图谱</h3><p>浏览聚类、聚焦邻居，并在无前端构建工具的浏览器界面里检查文档元数据。</p></article>
           <article class="card"><h3>可解释邻近关系</h3><p>最近邻来自高维 TF-IDF 相似度，并显示关键词和短文本片段作为证据。</p></article>
           <article class="card"><h3>手动聚类标签</h3><p>你可以在本地重命名聚类，同时保留自动标签背后的证据。</p></article>
@@ -98,11 +100,25 @@
         </div>
       </section>
 
+      <section class="section split">
+        <div>
+          <h2>Zotero，但仍然本地</h2>
+          <p class="lead">连接本机 Zotero Desktop，导入本地阅读图谱，并按阅读状态、标签和集合查看论文。</p>
+          <p class="muted">Paper Galaxy 使用 Zotero local API，不写回 Zotero，不上传数据，也不会默认复制 PDF。</p>
+        </div>
+        <pre class="code-block"><code>paper-galaxy zotero detect
+paper-galaxy zotero status
+paper-galaxy zotero import --project-dir . \
+  --include-pdfs --include-notes --build-reading-map
+paper-galaxy serve --project-dir .</code></pre>
+      </section>
+
       <section class="section">
         <h2>架构一眼看懂</h2>
         <div class="architecture" aria-label="架构流程">
           <div class="arch-step">文件</div>
           <div class="arch-step">抽取</div>
+          <div class="arch-step">Zotero</div>
           <div class="arch-step">SQLite</div>
           <div class="arch-step">向量</div>
           <div class="arch-step">图谱</div>

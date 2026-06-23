@@ -6,6 +6,7 @@
 
 ## Unreleased
 
+- 增加第一版 Zotero Reading Graph 集成：只读 local API client、Zotero schema v6 表、导入器、元数据/PDF/笔记处理、CLI 命令、本地 web API、UI 过滤器、文档，以及只使用合成数据的公开演示边界。
 - 增加公开发布后的 activation 文档、FAQ、故障排查、演示指南、反馈指南、triage guide、发布说明和 live-site 验证。
 - 增加 `scripts/check_live_site.py`、`scripts/launch_report.py`、release workflow 检查，以及 `live-check`、`post-public-check`、`release-check`、`launch-report` Makefile target。
 - 强化 public readiness 检查，加入 source-only/site-dist 模式、release/feedback 文档检查、云设计边界检查和云运行时源码扫描。

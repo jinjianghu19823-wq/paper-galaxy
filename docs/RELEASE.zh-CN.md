@@ -30,8 +30,12 @@ paper-galaxy map-runs --project-dir .
 paper-galaxy export-project --project-dir . --out paper-galaxy-backup.zip --yes
 paper-galaxy import-project paper-galaxy-backup.zip --project-dir /tmp/paper-galaxy-restore --dry-run
 paper-galaxy plugins
+paper-galaxy zotero detect
+paper-galaxy zotero smoke-test --project-dir . || true
 paper-galaxy serve --help
 ```
+
+Zotero smoke test 是可选项，因为 CI 或 release 机器可能没有运行 Zotero Desktop。local API 不可用时应该优雅失败。
 
 ## 公开发布检查
 
@@ -50,6 +54,7 @@ python scripts/check_live_site.py --allow-not-deployed
 - `.paper-galaxy/`
 - `paper-galaxy-backup.zip`
 - 任意 `*.sqlite3`
+- `zotero.sqlite`、Zotero `storage/` 文件夹、PDF 或真实 Zotero 路径
 - 任意本地模型或向量下载
 
 ## 发布原则

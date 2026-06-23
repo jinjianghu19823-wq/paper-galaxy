@@ -4,6 +4,8 @@ const API = {
   stats: "/api/stats",
   map: "/api/map",
   mapRuns: "/api/map-runs",
+  zoteroStatus: "/api/zotero/status",
+  zoteroReadingMap: "/api/zotero/reading-map",
   search: "/api/search",
   documents: "/api/documents",
   clusters: "/api/clusters",
@@ -19,6 +21,8 @@ const state = {
   stats: null,
   map: null,
   mapRuns: [],
+  graphSource: "documents",
+  zoteroStatus: null,
   selectedRunId: "",
   graph: null,
   selectedId: null,
@@ -42,6 +46,12 @@ const els = {
   searchResults: document.querySelector("#search-results"),
   pointFilter: document.querySelector("#point-filter"),
   clusterLegend: document.querySelector("#cluster-legend"),
+  graphSourceSelect: document.querySelector("#graph-source-select"),
+  zoteroStatus: document.querySelector("#zotero-status"),
+  zoteroStatusFilter: document.querySelector("#zotero-status-filter"),
+  zoteroTagFilter: document.querySelector("#zotero-tag-filter"),
+  zoteroCollectionFilter: document.querySelector("#zotero-collection-filter"),
+  zoteroEmptyHelp: document.querySelector("#zotero-empty-help"),
   mapRunSelect: document.querySelector("#map-run-select"),
   mapCaption: document.querySelector("#map-caption"),
   mapEmpty: document.querySelector("#map-empty"),
@@ -77,6 +87,7 @@ async function init() {
     state.config = await fetchJson(API.config);
     updateHealth(state.health);
     await loadStats();
+    await loadZoteroStatus();
     await loadMapRuns();
     await loadMap();
   } catch (error) {
@@ -134,6 +145,28 @@ function bindEvents() {
       state.graph.setFilter(state.filter);
     }
   });
+  els.graphSourceSelect.addEventListener("change", async () => {
+    state.graphSource = els.graphSourceSelect.value;
+    state.selectedRunId = "";
+    state.selectedId = null;
+    state.selectedDetail = null;
+    renderMapRunSelect();
+    await loadMap();
+    setInspectorMessage(t("inspector.default"));
+  });
+  for (const input of [
+    els.zoteroStatusFilter,
+    els.zoteroTagFilter,
+    els.zoteroCollectionFilter
+  ]) {
+    input.addEventListener("change", reloadZoteroMap);
+    input.addEventListener("input", () => {
+      if (input.tagName === "INPUT") {
+        window.clearTimeout(state.searchTimer);
+        state.searchTimer = window.setTimeout(reloadZoteroMap, 220);
+      }
+    });
+  }
   els.resetSelection.addEventListener("click", () => {
     state.selectedId = null;
     state.selectedDetail = null;
@@ -162,6 +195,7 @@ function toggleLanguage() {
   if (state.stats) {
     updateStats(state.stats);
   }
+  renderZoteroStatus();
   renderMapRunSelect();
   if (state.map) {
     renderMap();
@@ -192,10 +226,25 @@ async function loadStats() {
   updateStats(payload.stats);
 }
 
+async function loadZoteroStatus() {
+  try {
+    const payload = await fetchJson(API.zoteroStatus);
+    state.zoteroStatus = payload.zotero || null;
+  } catch {
+    state.zoteroStatus = null;
+  }
+  renderZoteroStatus();
+}
+
 async function loadMap(runId = "") {
-  const url = runId
-    ? `${API.map}?${new URLSearchParams({ run_id: runId }).toString()}`
-    : API.map;
+  const base = state.graphSource === "zotero" ? API.zoteroReadingMap : API.map;
+  const params = state.graphSource === "zotero" ? zoteroMapParams() : new URLSearchParams();
+  if (runId) {
+    params.set("run_id", runId);
+  }
+  const url = params.toString()
+    ? `${base}?${params.toString()}`
+    : base;
   const payload = await fetchJson(url);
   state.map = payload;
   if (!payload.database_exists) {
@@ -206,6 +255,16 @@ async function loadMap(runId = "") {
     return;
   }
   renderMap();
+}
+
+async function reloadZoteroMap() {
+  if (state.graphSource !== "zotero") {
+    return;
+  }
+  state.selectedId = null;
+  state.selectedDetail = null;
+  await loadMap();
+  setInspectorMessage(t("inspector.default"));
 }
 
 async function loadMapRuns() {
@@ -269,6 +328,46 @@ function updateStats(stats) {
   els.lastScan.textContent = stats.last_scan_time || t("health.none");
 }
 
+function renderZoteroStatus() {
+  els.zoteroStatus.replaceChildren();
+  const status = state.zoteroStatus;
+  if (!status || !status.imported_item_count) {
+    appendText(els.zoteroStatus, "div", t("zotero.noImports"));
+    renderZoteroHelp(true);
+    return;
+  }
+  appendText(
+    els.zoteroStatus,
+    "div",
+    t("zotero.status", {
+      items: status.imported_item_count,
+      attachments: status.attachment_count
+    })
+  );
+  const counts = status.reading_status_counts || {};
+  appendText(
+    els.zoteroStatus,
+    "div",
+    Object.keys(counts).map((key) => `${key}: ${counts[key]}`).join(" · "),
+    "meta-row"
+  );
+  renderZoteroHelp(false);
+}
+
+function renderZoteroHelp(show) {
+  els.zoteroEmptyHelp.hidden = !show;
+  els.zoteroEmptyHelp.replaceChildren();
+  if (!show) {
+    return;
+  }
+  appendText(els.zoteroEmptyHelp, "div", t("zotero.instructions"));
+  appendText(
+    els.zoteroEmptyHelp,
+    "code",
+    "paper-galaxy zotero import --project-dir . --include-pdfs --include-notes --build-reading-map"
+  );
+}
+
 function updateMissingDatabase(error) {
   els.projectStatus.textContent = t("missing.title");
   els.activeCount.textContent = "0";
@@ -291,8 +390,15 @@ function renderMap() {
   const points = payload.points || [];
   if (!points.length) {
     els.mapSvg.hidden = true;
+    const isZotero = state.graphSource === "zotero";
     const message = (payload.warnings && payload.warnings[0]) || t("map.noActiveMessage");
-    showEmptyState(t("map.noActiveTitle"), message, null);
+    showEmptyState(
+      isZotero ? t("zotero.noImports") : t("map.noActiveTitle"),
+      isZotero ? t("zotero.instructions") : message,
+      isZotero
+        ? "paper-galaxy zotero import --project-dir . --include-pdfs --include-notes --build-reading-map"
+        : null
+    );
     renderLegend(points, payload.cluster_labels || {}, payload.clusters || []);
     els.mapCaption.textContent = t("graph.zeroActive");
     if (state.graph) {
@@ -457,6 +563,7 @@ function renderInspector() {
   }
   renderPinControl(metadata.document_id);
   renderClusterInspector(point);
+  renderZoteroInspector(metadata.document_id);
 
   const terms = point ? point.top_terms || [] : [];
   const termsSection = inspectorSection(t("inspector.topTerms"));
@@ -523,6 +630,27 @@ function renderInspector() {
     appendText(chunksSection, "p", t("inspector.noChunk"), "muted");
   }
   els.inspector.append(chunksSection);
+}
+
+function renderZoteroInspector(documentId) {
+  const documents = state.map && state.map.documents ? state.map.documents : [];
+  const row = documents.find((document) => document.document_id === documentId);
+  if (!row || !row.zotero) {
+    return;
+  }
+  const zotero = row.zotero;
+  const section = inspectorSection(t("zotero.metadata"));
+  appendText(section, "div", `Key: ${zotero.zotero_key || ""}`, "meta-row");
+  appendText(section, "div", `${t("zotero.statusFilter")}: ${zotero.reading_status || "unknown"}`, "meta-row");
+  appendText(section, "div", `${t("zotero.creators")}: ${zotero.creators || ""}`, "meta-row");
+  appendText(section, "div", `${t("zotero.publication")}: ${zotero.publication || ""}`, "meta-row");
+  appendText(section, "div", `${t("zotero.tags")}: ${zotero.tags || ""}`, "meta-row");
+  appendText(section, "div", `${t("zotero.collections")}: ${zotero.collections || ""}`, "meta-row");
+  appendText(section, "div", `${t("zotero.attachmentStatus")}: ${zotero.attachment_status || ""}`, "meta-row");
+  if (zotero.zotero_key) {
+    appendText(section, "code", `zotero://select/items/${zotero.zotero_key}`);
+  }
+  els.inspector.append(section);
 }
 
 function renderClusterInspector(point) {
@@ -741,7 +869,21 @@ function graphLayoutKey(payload) {
   const points = payload.points || [];
   const seed = config.seed === null || config.seed === undefined ? "default" : config.seed;
   const limit = config.map_limit === null || config.map_limit === undefined ? "default" : config.map_limit;
-  return `${identity}|run:${runId}|seed:${seed}|limit:${limit}|docs:${points.length}`;
+  return `${identity}|source:${state.graphSource}|run:${runId}|seed:${seed}|limit:${limit}|docs:${points.length}`;
+}
+
+function zoteroMapParams() {
+  const params = new URLSearchParams();
+  params.set("status", els.zoteroStatusFilter.value || "all");
+  const tag = els.zoteroTagFilter.value.trim();
+  const collection = els.zoteroCollectionFilter.value.trim();
+  if (tag) {
+    params.set("tag", tag);
+  }
+  if (collection) {
+    params.set("collection", collection);
+  }
+  return params;
 }
 
 function renderMapRunSelect() {

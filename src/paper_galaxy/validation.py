@@ -43,6 +43,15 @@ REQUIRED_TABLES = {
     "map_runs",
     "map_run_points",
     "map_run_clusters",
+    "zotero_sources",
+    "zotero_import_runs",
+    "zotero_items",
+    "zotero_creators",
+    "zotero_collections",
+    "zotero_item_collections",
+    "zotero_item_tags",
+    "zotero_attachments",
+    "zotero_document_links",
     "documents_fts",
 }
 
@@ -117,6 +126,7 @@ def validate_project(project_dir: Path, *, check_stale: bool = True) -> dict[str
                     f"Required table is missing: {table_name}.",
                 )
         report["counts"] = _counts(repository)
+        report["zotero"] = repository.zotero_stats()
         report["dangling_rows"] = repository.dangling_row_counts()
         for code, count in report["dangling_rows"].items():
             if count:
@@ -200,6 +210,15 @@ def _counts(repository: Repository) -> dict[str, int]:
         "map_runs",
         "map_run_points",
         "map_run_clusters",
+        "zotero_sources",
+        "zotero_import_runs",
+        "zotero_items",
+        "zotero_creators",
+        "zotero_collections",
+        "zotero_item_collections",
+        "zotero_item_tags",
+        "zotero_attachments",
+        "zotero_document_links",
     )
     return {table_name: repository.count_rows(table_name) for table_name in table_names}
 

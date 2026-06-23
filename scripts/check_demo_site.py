@@ -26,6 +26,10 @@ FORBIDDEN_TEXT_TOKENS = (
     "analytics.js",
     "gtag(",
     "eval(",
+    "zotero.sqlite",
+    "zotero://items/",
+    "/".join(("zotero", "storage")),
+    "\\".join(("zotero", "storage")),
 )
 RUNTIME_ATTRS = {
     "script": ("src",),
@@ -102,6 +106,8 @@ def _check_demo_json(data_path: Path, corpus_dir: Path) -> list[DemoSiteIssue]:
     metadata = payload.get("metadata", {})
     if not isinstance(metadata, dict) or metadata.get("synthetic_only") is not True:
         issues.append(DemoSiteIssue("demo_json_not_synthetic", "metadata"))
+    if metadata.get("contains_real_zotero_data") is not False:
+        issues.append(DemoSiteIssue("demo_json_zotero_boundary_missing", "metadata"))
 
     raw_json = data_path.read_text(encoding="utf-8")
     forbidden_fragments = [
@@ -110,6 +116,10 @@ def _check_demo_json(data_path: Path, corpus_dir: Path) -> list[DemoSiteIssue]:
         "\\Users\\",
         ".paper-galaxy",
         ".sqlite3",
+        "zotero.sqlite",
+        "/" + "/".join(("Zotero", "storage")),
+        "\\" + "\\".join(("Zotero", "storage")),
+        "zotero://items/",
     ]
     for fragment in forbidden_fragments:
         if fragment in raw_json:
@@ -197,7 +207,12 @@ def _check_metadata(dist_dir: Path) -> list[DemoSiteIssue]:
 def _check_text_tokens(dist_dir: Path) -> list[DemoSiteIssue]:
     issues: list[DemoSiteIssue] = []
     for path in dist_dir.rglob("*"):
-        if not path.is_file() or path.suffix.lower() not in TEXT_SUFFIXES:
+        if not path.is_file():
+            continue
+        if path.suffix.lower() == ".pdf":
+            issues.append(DemoSiteIssue("real_pdf_in_demo_site", str(path)))
+            continue
+        if path.suffix.lower() not in TEXT_SUFFIXES:
             continue
         text = path.read_text(encoding="utf-8").lower()
         normalized = text.replace("http://www.w3.org/2000/svg", "")

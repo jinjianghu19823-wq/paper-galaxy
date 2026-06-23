@@ -66,6 +66,27 @@ paper-galaxy index examples/tiny_corpus --project-dir . --min-chars 40
 paper-galaxy serve --project-dir .
 ```
 
+## Zotero local API 不可用
+
+`paper-galaxy zotero status` 需要 Zotero Desktop 正在运行，并且本地 API 已启用。先打开 Zotero，然后运行：
+
+```bash
+paper-galaxy zotero detect
+paper-galaxy zotero status
+```
+
+如果仍不可用，请在 Zotero Settings -> Advanced 中确认 local API 已启用。Zotero 设置里显示的 data directory 是权威路径；`paper-galaxy zotero detect` 只是 best-effort 猜测。
+
+## Zotero 导入时 PDF 缺失
+
+缺失附件或位于 data dir 外部的链接附件不会阻塞导入。Paper Galaxy 仍可以从题名、摘要、笔记、标签和集合创建 metadata-only 文档：
+
+```bash
+paper-galaxy zotero import --project-dir . --include-metadata-only --build-reading-map
+```
+
+Paper Galaxy 不写回 Zotero，不上传 Zotero 数据，也不会默认复制 PDF。
+
 ## FTS5 不可用
 
 本地全文搜索需要 SQLite FTS5。运行：
