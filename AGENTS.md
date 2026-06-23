@@ -19,10 +19,11 @@ exports into an interactive 2D research universe.
 
 ## Current Phase
 
-This repository is in public launch readiness. Phase 7 professionalization is
-implemented, and the current milestone adds public repository checks plus a
-static GitHub Pages demo site. The product remains local-first. Do not implement
-cloud runtime features unless explicitly asked.
+This repository is in public launch activation and release readiness. Phase 7
+professionalization is implemented, the repository is public, and the current
+milestone verifies GitHub Pages, live-site checks, v0.1.0 release readiness, and
+early feedback/triage materials. The product remains local-first. Do not
+implement cloud runtime features unless explicitly asked.
 
 ## Commands
 
@@ -58,8 +59,15 @@ cloud runtime features unless explicitly asked.
 - `python -m build`
 - `python scripts/build_demo_site.py --out site_dist`
 - `python scripts/check_demo_site.py --dist site_dist`
+- `python scripts/check_demo_site.py --dist site_dist --serve`
 - `python scripts/public_readiness_check.py --strict`
+- `python scripts/public_readiness_check.py --strict --require-site-dist`
+- `python scripts/check_live_site.py --base-url https://jinjianghu19823-wq.github.io/paper-galaxy/`
 - `make launch-check`
+- `make post-public-check`
+- `make release-check`
+- `make live-check`
+- `make launch-report`
 
 ## Engineering Rules
 
@@ -86,6 +94,7 @@ cloud runtime features unless explicitly asked.
 - OCR must stay optional, local, and disabled by default.
 - Frontend assets must not include remote URLs, CDN references, remote fonts, or
   external images.
+- Public demo social preview assets must remain local files under `site/assets/`.
 - Graph movement, force settings, labels, and manual layout persistence are
   local browser UI state only. Do not write graph positions to SQLite.
 - Do not commit `.paper-galaxy/`, `*.sqlite3`, `galaxy.html`, `galaxy.json`,

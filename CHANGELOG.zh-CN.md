@@ -6,6 +6,10 @@
 
 ## Unreleased
 
+- 增加公开发布后的 activation 文档、FAQ、故障排查、演示指南、反馈指南、triage guide、发布说明和 live-site 验证。
+- 增加 `scripts/check_live_site.py`、`scripts/launch_report.py`、release workflow 检查，以及 `live-check`、`post-public-check`、`release-check`、`launch-report` Makefile target。
+- 强化 public readiness 检查，加入 source-only/site-dist 模式、release/feedback 文档检查、云设计边界检查和云运行时源码扫描。
+- 增加本地 social preview SVG 资源，以及 Open Graph、Twitter card、canonical URL 和语言 alternate metadata。
 - 增加公开发布检查脚本、社区文件和 GitHub Pages 演示部署 workflow。
 - 增加由合成 tiny corpus 生成的英文/简体中文静态公开演示站。
 - 给本地网页应用增加英文/简体中文语言切换。

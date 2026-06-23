@@ -11,12 +11,12 @@ Paper Galaxy is a local-first research cartography tool for turning a personal
 research corpus into an interactive map of documents, clusters, and conceptual
 neighborhoods.
 
-Current status: Phase 7 professionalization. This repository can scan a
-local sample corpus, export a self-contained offline `galaxy.html`, index
-documents and chunks into local SQLite, rerun indexing incrementally, search
-indexed text with SQLite FTS5, and serve a local English/Simplified Chinese
-browser app with an Obsidian-inspired dynamic document graph for browsing the
-indexed corpus. It
+Current status: public alpha / Phase 7 professionalization. This repository can
+scan a local sample corpus, export a self-contained offline `galaxy.html`,
+index documents and chunks into local SQLite, rerun indexing incrementally,
+search indexed text with SQLite FTS5, and serve a local English/Simplified
+Chinese browser app with an Obsidian-inspired dynamic document graph for
+browsing the indexed corpus. It
 also records extraction quality reports, improves Markdown/LaTeX/PDF parsing,
 supports opt-in local OCR for image files, and can optionally store local dense
 document/chunk embeddings for semantic search and neighbor comparison. Cluster
@@ -50,6 +50,9 @@ Try the public static demo at
 The demo uses synthetic data from `examples/tiny_corpus` only. It has English
 and Simplified Chinese pages, including a static graph demo that runs without a
 backend.
+
+Launch notes for the first public alpha are in
+[docs/LAUNCH_NOTES.md](docs/LAUNCH_NOTES.md).
 
 ## Screenshot
 
@@ -295,13 +298,23 @@ make launch-check
 
 ## Next Phase
 
-The repository is being prepared for public launch with a static GitHub Pages
-demo and public-readiness audit. The future personal cloud library is design
-only and not implemented; see [docs/CLOUD_LIBRARY_DESIGN.md](docs/CLOUD_LIBRARY_DESIGN.md).
+The repository is public alpha. The next milestone is launch stabilization:
+install feedback, extraction quality feedback, graph usability fixes, and
+privacy-safe issue triage. The future personal cloud library is design-only and
+not implemented; see [docs/CLOUD_LIBRARY_DESIGN.md](docs/CLOUD_LIBRARY_DESIGN.md).
 
 There is still no cloud dependency, Zotero integration, desktop packaging,
 account system, telemetry, LLM chat, mandatory LLM labeling, remote plugin
 loading, or React/Node frontend in the local app.
+
+## Public Alpha Resources
+
+- [Launch notes](docs/LAUNCH_NOTES.md)
+- [FAQ](docs/FAQ.md)
+- [Troubleshooting](docs/TROUBLESHOOTING.md)
+- [Demo guide](docs/DEMO_GUIDE.md)
+- [Feedback guide](docs/FEEDBACK.md)
+- [Triage guide](docs/TRIAGE.md)
 
 ## Security And Privacy
 

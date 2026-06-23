@@ -7,6 +7,8 @@ Galaxy. It is design-only. No cloud runtime, hosted backend, account system,
 sync worker, storage SDK, payment code, or telemetry is implemented by these
 docs.
 
+Cloud sync is not implemented in this repository.
+
 ## Principles
 
 - Local-first remains the default.
@@ -29,3 +31,10 @@ docs.
 
 The recommended path is C1 backup vault first, then C2 metadata sync after
 security review and user testing.
+
+## Next Review Target
+
+C1 encrypted backup vault is the next design review target. It remains
+design-only until a separate explicit implementation phase is requested. Any
+future implementation must preserve local-first use without an account and must
+include clear export/delete controls before public release.

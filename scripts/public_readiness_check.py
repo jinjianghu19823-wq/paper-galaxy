@@ -102,12 +102,17 @@ class ReadinessCheck:
     def is_blocker(self) -> bool:
         return self.status == "FAIL"
 
+    @property
+    def is_warning(self) -> bool:
+        return self.status == "WARN"
+
 
 def run_public_readiness(
     *,
     root: Path = REPO_ROOT,
     strict: bool = True,
     max_binary_bytes: int = 5_000_000,
+    require_site_dist: bool = False,
 ) -> dict[str, Any]:
     """Run all public-readiness checks and return a JSON-safe report."""
 
@@ -119,15 +124,22 @@ def run_public_readiness(
     checks.extend(_check_large_binaries(root, max_binary_bytes=max_binary_bytes))
     checks.extend(_check_required_files(root))
     checks.extend(_check_community_files(root))
-    checks.extend(_check_site(root))
+    checks.extend(_check_site(root, require_site_dist=require_site_dist))
     checks.extend(_check_readme(root))
+    checks.extend(_check_release_docs(root))
+    checks.extend(_check_feedback_docs(root))
+    checks.extend(_check_cloud_design_boundary(root))
+    checks.extend(_check_no_cloud_runtime(root))
     checks.extend(_check_pyproject(root))
     blocker_count = sum(check.is_blocker for check in checks)
+    warning_count = sum(check.is_warning for check in checks)
     status = "PASS" if blocker_count == 0 else "FAIL"
     return {
         "status": status,
         "strict": strict,
+        "require_site_dist": require_site_dist,
         "blocker_count": blocker_count,
+        "warning_count": warning_count,
         "checks": [asdict(check) for check in checks],
     }
 
@@ -239,28 +251,36 @@ def _check_community_files(root: Path) -> list[ReadinessCheck]:
     ]
 
 
-def _check_site(root: Path) -> list[ReadinessCheck]:
+def _check_site(root: Path, *, require_site_dist: bool) -> list[ReadinessCheck]:
     try:
         from scripts.check_demo_site import check_demo_site
     except ModuleNotFoundError:
         from check_demo_site import check_demo_site
 
     blockers: list[str] = []
+    warnings: list[str] = []
     required = [
         "site/index.html",
         "site/demo/index.html",
+        "site/privacy/index.html",
+        "site/install/index.html",
+        "site/cloud-library/index.html",
         "site/zh-cn/index.html",
+        "site/zh-cn/demo/index.html",
         "site/assets/styles.css",
         "site/assets/demo.js",
         "site/assets/graph-demo.js",
+        "site/assets/social-card.svg",
         "site/data/tiny-map.json",
-        "site_dist/index.html",
-        "site_dist/demo/index.html",
         ".github/workflows/pages.yml",
     ]
+    if require_site_dist:
+        required.extend(("site_dist/index.html", "site_dist/demo/index.html"))
     for relative in required:
         if not (root / relative).exists():
             blockers.append(relative)
+    if not require_site_dist and (root / "site_dist").exists():
+        warnings.append("site_dist exists; rerun source-only checks after cleaning")
     gitignore = (root / ".gitignore").read_text(encoding="utf-8")
     if "site_dist/" not in gitignore:
         blockers.append(".gitignore missing site_dist/")
@@ -268,22 +288,36 @@ def _check_site(root: Path) -> list[ReadinessCheck]:
     if workflow_path.exists():
         workflow = workflow_path.read_text(encoding="utf-8")
         required_workflow_tokens = (
-            "github.repository_visibility != 'public'",
-            "github.repository_visibility == 'public'",
+            'branches: ["main"]',
+            "workflow_dispatch",
             "enablement: true",
+            "actions/configure-pages",
+            "actions/upload-pages-artifact",
+            "actions/deploy-pages",
         )
         for token in required_workflow_tokens:
             if token not in workflow:
                 blockers.append(f"pages workflow missing {token}")
-    if not blockers and (root / "site_dist").exists():
+    if require_site_dist and not blockers and (root / "site_dist").exists():
         blockers.extend(
             f"demo-site:{issue.code}:{issue.message}"
             for issue in check_demo_site(dist_dir=root / "site_dist")
         )
+    if blockers:
+        return [
+            _result(
+                "static-demo-site",
+                blockers,
+                "Static demo source/output, Pages workflow, and asset policy "
+                "are ready.",
+            )
+        ]
+    if warnings:
+        return [ReadinessCheck("static-demo-site", "WARN", "; ".join(warnings))]
     return [
-        _result(
+        ReadinessCheck(
             "static-demo-site",
-            blockers,
+            "PASS",
             "Static demo source/output, Pages workflow, and asset policy are ready.",
         )
     ]
@@ -294,13 +328,140 @@ def _check_readme(root: Path) -> list[ReadinessCheck]:
     if not readme.exists():
         return [ReadinessCheck("readme-content", "FAIL", "README.md missing")]
     lower = readme.read_text(encoding="utf-8").lower()
-    missing = [token for token in README_TOKENS if token not in lower]
+    required_tokens = (
+        *README_TOKENS,
+        "https://jinjianghu19823-wq.github.io/paper-galaxy/",
+        "readme.zh-cn.md",
+        "launch_notes",
+        "faq",
+        "troubleshooting",
+        "feedback",
+        "design-only",
+    )
+    missing = [token for token in required_tokens if token not in lower]
     return [
         _result(
             "readme-content",
             missing,
             "README includes quickstart, demo, privacy, install, screenshot, "
-            "and contribution sections.",
+            "Chinese, launch, FAQ, troubleshooting, and feedback sections.",
+        )
+    ]
+
+
+def _check_release_docs(root: Path) -> list[ReadinessCheck]:
+    required = (
+        "docs/RELEASE.md",
+        "docs/RELEASE.zh-CN.md",
+        "docs/LAUNCH_NOTES.md",
+        "docs/LAUNCH_NOTES.zh-CN.md",
+    )
+    blockers = [relative for relative in required if not (root / relative).exists()]
+    return [
+        _result(
+            "release-docs",
+            blockers,
+            "Release and launch note documents exist.",
+        )
+    ]
+
+
+def _check_feedback_docs(root: Path) -> list[ReadinessCheck]:
+    required = (
+        "docs/FAQ.md",
+        "docs/FAQ.zh-CN.md",
+        "docs/TROUBLESHOOTING.md",
+        "docs/TROUBLESHOOTING.zh-CN.md",
+        "docs/DEMO_GUIDE.md",
+        "docs/DEMO_GUIDE.zh-CN.md",
+        "docs/FEEDBACK.md",
+        "docs/FEEDBACK.zh-CN.md",
+        "docs/TRIAGE.md",
+    )
+    blockers = [relative for relative in required if not (root / relative).exists()]
+    return [
+        _result(
+            "feedback-docs",
+            blockers,
+            "FAQ, troubleshooting, demo guide, feedback, and triage docs exist.",
+        )
+    ]
+
+
+def _check_cloud_design_boundary(root: Path) -> list[ReadinessCheck]:
+    blockers: list[str] = []
+    for relative in (
+        "docs/CLOUD_LIBRARY_DESIGN.md",
+        "docs/cloud-library/README.md",
+        "README.md",
+    ):
+        path = root / relative
+        if not path.exists():
+            blockers.append(f"{relative} missing")
+            continue
+        text = path.read_text(encoding="utf-8").lower()
+        if relative.startswith("docs/") and "not implemented" not in text:
+            blockers.append(f"{relative} missing not implemented boundary")
+        if relative.startswith("docs/") and "opt-in" not in text:
+            blockers.append(f"{relative} missing opt-in boundary")
+        if relative == "README.md":
+            forbidden_claims = (
+                "cloud sync is implemented",
+                "hosted backend is available",
+                "account system is available",
+            )
+            for claim in forbidden_claims:
+                if claim in text:
+                    blockers.append(f"README claims {claim}")
+    return [
+        _result(
+            "cloud-design-boundary",
+            blockers,
+            "Cloud library docs remain design-only and opt-in.",
+        )
+    ]
+
+
+def _check_no_cloud_runtime(root: Path) -> list[ReadinessCheck]:
+    forbidden_patterns = (
+        re.compile(r"^\s*(?:import|from)\s+boto3\b", re.MULTILINE),
+        re.compile(r"^\s*(?:import|from)\s+google\.cloud\b", re.MULTILINE),
+        re.compile(r"^\s*(?:import|from)\s+azure\b", re.MULTILINE),
+        re.compile(r"^\s*(?:import|from)\s+supabase\b", re.MULTILINE),
+        re.compile(r"^\s*(?:import|from)\s+firebase\b", re.MULTILINE),
+        re.compile(r"^\s*(?:import|from)\s+stripe\b", re.MULTILINE),
+        re.compile(r"^\s*(?:import|from)\s+auth0\b", re.MULTILINE),
+    )
+    forbidden_env_tokens = (
+        "AWS_ACCESS_KEY_ID",
+        "AWS_SECRET_ACCESS_KEY",
+        "GOOGLE_APPLICATION_CREDENTIALS",
+        "AZURE_CLIENT_SECRET",
+        "SUPABASE_URL",
+        "FIREBASE_CONFIG",
+        "STRIPE_SECRET_KEY",
+        "AUTH0_DOMAIN",
+    )
+    findings: list[str] = []
+    for path in _walk_repo(root):
+        if path == root / "scripts" / "public_readiness_check.py":
+            continue
+        if path.suffix.lower() not in {".py", ".toml", ".yml", ".yaml"}:
+            continue
+        text = path.read_text(encoding="utf-8")
+        for pattern in forbidden_patterns:
+            if pattern.search(text):
+                findings.append(_relative(path, root))
+                break
+        for token in forbidden_env_tokens:
+            if token in text:
+                findings.append(f"{_relative(path, root)} contains {token}")
+                break
+    return [
+        _result(
+            "no-cloud-runtime",
+            sorted(set(findings)),
+            "No cloud SDK imports or required cloud environment variables found.",
         )
     ]
 
@@ -380,7 +541,10 @@ def _print_table(report: dict[str, Any]) -> None:
         "check": max(len("Check"), *(len(row["name"]) for row in rows)),
         "status": len("Status"),
     }
-    print(f"Public readiness: {report['status']}")
+    warning_suffix = ""
+    if report.get("warning_count"):
+        warning_suffix = f" ({report['warning_count']} warning(s))"
+    print(f"Public readiness: {report['status']}{warning_suffix}")
     print(f"{'Check'.ljust(widths['check'])}  Status  Detail")
     print(f"{'-' * widths['check']}  ------  ------")
     for row in rows:
@@ -394,6 +558,19 @@ def main() -> None:
     parser.add_argument("--json-out", type=Path)
     parser.add_argument("--strict", dest="strict", action="store_true", default=True)
     parser.add_argument("--no-strict", dest="strict", action="store_false")
+    parser.add_argument(
+        "--source-only",
+        dest="require_site_dist",
+        action="store_false",
+        help="Check committed source/demo inputs without requiring site_dist.",
+    )
+    parser.add_argument(
+        "--require-site-dist",
+        dest="require_site_dist",
+        action="store_true",
+        help="Require and validate a generated site_dist directory.",
+    )
+    parser.set_defaults(require_site_dist=False)
     parser.add_argument("--max-binary-bytes", type=int, default=5_000_000)
     args = parser.parse_args()
 
@@ -401,6 +578,7 @@ def main() -> None:
         root=args.root,
         strict=args.strict,
         max_binary_bytes=args.max_binary_bytes,
+        require_site_dist=args.require_site_dist,
     )
     _print_table(report)
     if args.json_out:

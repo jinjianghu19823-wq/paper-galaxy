@@ -10,8 +10,8 @@ def test_github_pages_workflow_exists_and_builds_demo_site() -> None:
     assert "contents: read" in workflow
     assert "pages: write" in workflow
     assert "id-token: write" in workflow
-    assert "github.repository_visibility != 'public'" in workflow
-    assert "github.repository_visibility == 'public'" in workflow
+    assert "github.event.repository.private == true" in workflow
+    assert "github.event.repository.private == false" in workflow
     assert "enablement: true" in workflow
     assert "python scripts/build_demo_site.py --out site_dist" in workflow
     assert "python scripts/check_demo_site.py --dist site_dist" in workflow

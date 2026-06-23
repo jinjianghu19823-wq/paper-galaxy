@@ -95,6 +95,8 @@ python scripts/public_readiness_check.py --strict
 
 `scripts/public_readiness_check.py --strict` 会检查仓库中是否混入常见 secrets、本地生成数据、SQLite 数据库、`.paper-galaxy/`、演示站远程运行时依赖等风险。
 
+Post-public launch activation 增加了 `scripts/check_live_site.py` 用于验证已部署的 GitHub Pages 站点，并增加 `scripts/launch_report.py` 生成简洁的本地发布报告。这些脚本只检查静态页面和仓库状态，不增加 analytics、遥测、云运行时或托管后端代码。
+
 ## 未来云库边界
 
 未来个人云库目前只是设计文档，不是当前 runtime。任何云功能都必须 opt-in，并且不能破坏本地优先路径。

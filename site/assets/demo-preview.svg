@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="560" viewBox="0 0 900 560" role="img" aria-labelledby="title desc">
+  <title id="title">Paper Galaxy demo graph preview</title>
+  <desc id="desc">Synthetic document nodes connected by TF-IDF neighbor links.</desc>
+  <rect width="900" height="560" rx="18" fill="#11131b"/>
+  <g opacity="0.25" stroke="#303647" stroke-width="1.5">
+    <path d="M0 80h900M0 160h900M0 240h900M0 320h900M0 400h900M0 480h900"/>
+    <path d="M120 0v560M240 0v560M360 0v560M480 0v560M600 0v560M720 0v560"/>
+  </g>
+  <g stroke="#bdb4ff" stroke-width="3" opacity="0.7">
+    <line x1="130" y1="270" x2="330" y2="190"/>
+    <line x1="330" y1="190" x2="515" y2="330"/>
+    <line x1="515" y1="330" x2="710" y2="190"/>
+    <line x1="330" y1="190" x2="410" y2="480"/>
+    <line x1="410" y1="480" x2="710" y2="190"/>
+    <line x1="515" y1="330" x2="735" y2="430"/>
+  </g>
+  <circle cx="130" cy="270" r="18" fill="#86b7ff" stroke="#eef2ff" stroke-width="4"/>
+  <circle cx="330" cy="190" r="20" fill="#68d8c8" stroke="#eef2ff" stroke-width="4"/>
+  <circle cx="515" cy="330" r="18" fill="#68d8c8" stroke="#eef2ff" stroke-width="4"/>
+  <circle cx="710" cy="190" r="18" fill="#b9b1ff" stroke="#eef2ff" stroke-width="4"/>
+  <circle cx="410" cy="480" r="18" fill="#68d8c8" stroke="#eef2ff" stroke-width="4"/>
+  <circle cx="735" cy="430" r="26" fill="#f3bd5c" stroke="#c9bdff" stroke-width="6"/>
+  <text x="60" y="72" fill="#f8f8ff" font-family="Arial, sans-serif" font-size="30" font-weight="800">Static synthetic graph demo</text>
+  <text x="765" y="437" fill="#dfd8ff" font-family="Arial, sans-serif" font-size="20" font-weight="700">Deep operator networks</text>
+</svg>

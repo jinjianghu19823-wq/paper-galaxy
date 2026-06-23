@@ -402,6 +402,11 @@ files, static demo asset policy, README launch content, and package metadata.
 It can write `public-readiness.json` and exits nonzero on blockers in strict
 mode.
 
+Post-public launch activation adds `scripts/check_live_site.py` for deployed
+GitHub Pages verification and `scripts/launch_report.py` for a concise local
+launch report. These scripts inspect static pages and repository state only;
+they do not add analytics, telemetry, cloud runtime, or hosted backend code.
+
 ## Future Cloud Library Boundary
 
 The cloud library docs under `docs/cloud-library/` are design-only. They do not

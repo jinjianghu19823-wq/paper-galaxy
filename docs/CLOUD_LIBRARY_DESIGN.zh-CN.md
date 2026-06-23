@@ -4,6 +4,8 @@
 
 个人云库是未来的 opt-in 设计，当前 Paper Galaxy runtime 中尚未实现。英文版仍是规范版本；本文件提供简体中文说明。
 
+Cloud sync is not implemented in this repository.
+
 Paper Galaxy 默认仍然本地优先：
 
 - 现在不需要账号；

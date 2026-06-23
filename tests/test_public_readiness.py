@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 from pathlib import Path
 
 from scripts.public_readiness_check import run_public_readiness
@@ -55,10 +56,21 @@ def test_public_readiness_checks_site_asset_policy(tmp_path: Path) -> None:
         encoding="utf-8",
     )
 
-    report = run_public_readiness(root=fixture)
+    report = run_public_readiness(root=fixture, require_site_dist=True)
 
     assert report["status"] == "FAIL"
     assert "external_runtime_asset" in _check_detail(report, "static-demo-site")
+
+
+def test_public_readiness_source_only_allows_missing_site_dist(
+    tmp_path: Path,
+) -> None:
+    fixture = _public_fixture(tmp_path)
+    shutil.rmtree(fixture / "site_dist")
+
+    report = run_public_readiness(root=fixture)
+
+    assert report["status"] == "PASS"
 
 
 def _check_detail(report: dict[str, object], name: str) -> str:
@@ -88,14 +100,22 @@ def _public_fixture(tmp_path: Path) -> Path:
 
 Quickstart
 Live demo
+https://jinjianghu19823-wq.github.io/paper-galaxy/
 Privacy
 Local-first
 python -m pip install -e ".[dev,ml,pdf,app]"
 Screenshot
 Contributing
+README.zh-CN.md
+docs/LAUNCH_NOTES.md
+FAQ
+Troubleshooting
+Feedback
+design-only
 """,
         encoding="utf-8",
     )
+    (root / "README.zh-CN.md").write_text("# Paper Galaxy\n", encoding="utf-8")
     (root / ".gitignore").write_text("site_dist/\n", encoding="utf-8")
     (root / "pyproject.toml").write_text(
         """
@@ -127,20 +147,50 @@ version = "0.1.0"
             path.write_text(
                 """
 name: Pages
+on:
+  push:
+    branches: ["main"]
+  workflow_dispatch:
 jobs:
   deploy:
     steps:
-      - if: ${{ github.repository_visibility != 'public' }}
+      - if: ${{ github.event.repository.private == true }}
         run: echo skipped
-      - if: ${{ github.repository_visibility == 'public' }}
+      - if: ${{ github.event.repository.private == false }}
         uses: actions/configure-pages@v5
         with:
           enablement: true
+      - uses: actions/upload-pages-artifact@v3
+      - uses: actions/deploy-pages@v4
 """,
                 encoding="utf-8",
             )
         else:
             path.write_text("name: placeholder\n", encoding="utf-8")
+
+    for relative in (
+        "docs/RELEASE.md",
+        "docs/RELEASE.zh-CN.md",
+        "docs/LAUNCH_NOTES.md",
+        "docs/LAUNCH_NOTES.zh-CN.md",
+        "docs/FAQ.md",
+        "docs/FAQ.zh-CN.md",
+        "docs/TROUBLESHOOTING.md",
+        "docs/TROUBLESHOOTING.zh-CN.md",
+        "docs/DEMO_GUIDE.md",
+        "docs/DEMO_GUIDE.zh-CN.md",
+        "docs/FEEDBACK.md",
+        "docs/FEEDBACK.zh-CN.md",
+        "docs/TRIAGE.md",
+    ):
+        path = root / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("# Placeholder\n", encoding="utf-8")
+
+    for relative in ("docs/CLOUD_LIBRARY_DESIGN.md", "docs/cloud-library/README.md"):
+        path = root / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("Future opt-in design. Not implemented.\n", encoding="utf-8")
 
     for base in (root / "site", root / "site_dist"):
         _write_minimal_site(base)
@@ -148,6 +198,24 @@ jobs:
 
 
 def _write_minimal_site(base: Path) -> None:
+    html = """
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta name="description" content="Paper Galaxy">
+    <link rel="canonical" href="https://jinjianghu19823-wq.github.io/paper-galaxy/">
+    <link rel="alternate" hreflang="en" href="https://jinjianghu19823-wq.github.io/paper-galaxy/">
+    <link rel="alternate" hreflang="zh-CN" href="https://jinjianghu19823-wq.github.io/paper-galaxy/zh-cn/">
+    <meta property="og:title" content="Paper Galaxy">
+    <meta property="og:description" content="Demo">
+    <meta property="og:type" content="website">
+    <meta property="og:url" content="https://jinjianghu19823-wq.github.io/paper-galaxy/">
+    <meta property="og:image" content="https://jinjianghu19823-wq.github.io/paper-galaxy/assets/social-card.svg">
+    <meta name="twitter:card" content="summary_large_image">
+  </head>
+  <body>Paper Galaxy</body>
+</html>
+"""
     for relative in (
         "index.html",
         "demo/index.html",
@@ -162,8 +230,12 @@ def _write_minimal_site(base: Path) -> None:
     ):
         path = base / relative
         path.parent.mkdir(parents=True, exist_ok=True)
-        content = "<html></html>" if path.suffix == ".html" else ""
+        content = html if path.suffix == ".html" else ""
         path.write_text(content, encoding="utf-8")
+    (base / "assets" / "social-card.svg").write_text(
+        '<svg xmlns="http://www.w3.org/2000/svg"></svg>',
+        encoding="utf-8",
+    )
     data_dir = base / "data"
     data_dir.mkdir(parents=True, exist_ok=True)
     (data_dir / "tiny-map.json").write_text(

@@ -4,6 +4,16 @@
 
 ## Unreleased
 
+- Added post-public-launch activation docs, FAQ, troubleshooting, demo guide,
+  feedback guide, triage guide, launch notes, and live-site verification.
+- Added `scripts/check_live_site.py`, `scripts/launch_report.py`, release
+  workflow checks, and Makefile targets for `live-check`, `post-public-check`,
+  `release-check`, and `launch-report`.
+- Strengthened public-readiness checks with source-only/site-dist modes,
+  release/feedback documentation checks, cloud design boundary checks, and
+  cloud runtime source scanning.
+- Added local social preview SVG assets and public demo metadata for Open Graph,
+  Twitter cards, canonical URLs, and language alternates.
 - Added public launch readiness scripts, community files, and GitHub Pages demo
   workflow.
 - Added a static English and Simplified Chinese public demo site generated from

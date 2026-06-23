@@ -5,6 +5,8 @@
 The personal cloud library is a future, opt-in design only. It is not
 implemented in the current Paper Galaxy runtime.
 
+Cloud sync is not implemented in this repository.
+
 Paper Galaxy remains local-first by default:
 
 - no account is required today;

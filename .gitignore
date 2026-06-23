@@ -31,3 +31,6 @@ map-run*.json
 paper-galaxy-backup*.zip
 site_dist/
 public-readiness.json
+live-site-check.json
+launch-report.md
+release-notes.generated.md

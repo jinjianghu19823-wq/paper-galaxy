@@ -136,7 +136,7 @@ Non-goals: desktop packaging, cloud dependency, telemetry, accounts, cloud
 sync, Zotero integration, LLM chat, mandatory LLM labeling, remote plugin
 loading, React/Node tooling, and locking user data into a proprietary format.
 
-## Public Launch Readiness (current milestone)
+## Public Launch Readiness (implemented)
 
 Goal: make the repository safe and polished enough to publish.
 
@@ -152,12 +152,40 @@ secrets or generated local data, and existing Phase 0-7 checks still pass.
 Non-goals: cloud runtime, hosted backend, account system, document upload,
 remote plugin loading, React/Node frontend tooling, or cloud sync.
 
+## Public Launch / v0.1.0 (current milestone)
+
+Goal: activate the public repository after launch and prepare a conservative
+`v0.1.0` GitHub Release.
+
+Deliverables: live-site checker, post-public Makefile targets, launch report,
+release workflow checks, launch notes, FAQ, troubleshooting guide, demo guide,
+feedback guide, triage labels guidance, public demo social metadata, and
+stronger public-readiness checks.
+
+Definition of done: GitHub Pages is verified, the live demo URL passes the
+live-site checker, source-only and site-dist public readiness modes pass, CI and
+Pages workflows pass, and release instructions are ready without publishing to
+PyPI.
+
+Non-goals: creating a tag or GitHub Release without explicit approval, PyPI
+publishing, cloud runtime, hosted backend, account system, telemetry, analytics,
+document upload, or personal cloud library implementation.
+
 ## Future Personal Cloud Library (design only)
 
 The personal cloud library is a future opt-in design, not an implementation.
 The staged design starts with an encrypted backup vault, then metadata sync, and
 only later considers managed compute. Local-first use must remain available
 without an account.
+
+## Next Recommended Milestones
+
+- L1: public launch stabilization. Focus on install friction, extraction
+  quality, graph usability, docs gaps, and privacy-safe bug reports.
+- L2: user feedback triage. Convert early reports into small issues with
+  synthetic fixtures where possible.
+- C1: encrypted backup vault design review. This remains design-only until a
+  separate explicit implementation request.
 
 ## Phase 8+: Future Work
 

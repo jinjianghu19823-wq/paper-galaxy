@@ -1,17 +1,16 @@
-name: CI
+name: Release
 
 on:
   push:
-  pull_request:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
 
 jobs:
-  test:
+  release-check:
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        python-version: ["3.11", "3.12"]
-
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -19,7 +18,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: ${{ matrix.python-version }}
+          python-version: "3.12"
 
       - name: Install package
         run: python -m pip install -e ".[dev,ml,pdf,app]"
@@ -39,20 +38,6 @@ jobs:
       - name: Build package
         run: python -m build
 
-  demo-site:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
-      - name: Install package
-        run: python -m pip install -e ".[dev,ml,pdf,app]"
-
       - name: Build demo site
         run: python scripts/build_demo_site.py --out site_dist
 
@@ -61,3 +46,9 @@ jobs:
 
       - name: Public readiness audit
         run: python scripts/public_readiness_check.py --strict --require-site-dist
+
+      - name: Upload distribution artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-distributions
+          path: dist/*

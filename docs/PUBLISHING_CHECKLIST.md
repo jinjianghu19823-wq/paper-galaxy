@@ -2,7 +2,8 @@
 
 [English](PUBLISHING_CHECKLIST.md) | [简体中文](PUBLISHING_CHECKLIST.zh-CN.md)
 
-Use this checklist before making `jinjianghu19823-wq/paper-galaxy` public.
+Use this checklist for the public repository launch and post-public activation
+of `jinjianghu19823-wq/paper-galaxy`.
 
 ## Local Checks
 
@@ -13,13 +14,16 @@ make build
 make public-check
 python scripts/build_demo_site.py --out site_dist
 python scripts/check_demo_site.py --dist site_dist --serve
+python scripts/check_live_site.py --allow-not-deployed
 ```
 
 Also useful:
 
 ```bash
-python scripts/public_readiness_check.py --strict --json-out public-readiness.json
+python scripts/public_readiness_check.py --strict --require-site-dist --json-out public-readiness.json
 make launch-check
+make post-public-check
+make release-check
 ```
 
 ## Verify Before Public
@@ -42,12 +46,20 @@ The Pages workflow always builds and checks the static site. It only deploys
 when the repository visibility is public, so private-repository pushes can
 verify the site without publishing it.
 
-1. Make the repository public after the readiness checks pass.
-2. Open repository settings.
-3. Go to Pages.
-4. Set Source to GitHub Actions if it is not already enabled.
-5. Push to `main` or run the Pages workflow manually.
-6. Verify the expected URL:
+1. Open repository settings.
+2. Go to Pages.
+3. Confirm Source is GitHub Actions.
+4. Push to `main` or run the Pages workflow manually.
+5. Check Actions -> Pages for a successful run.
+6. Run:
+
+```bash
+gh workflow run pages.yml
+gh run list --workflow=pages.yml --limit 5
+python scripts/check_live_site.py --base-url https://jinjianghu19823-wq.github.io/paper-galaxy/
+```
+
+7. Verify the expected URL:
    `https://jinjianghu19823-wq.github.io/paper-galaxy/`.
 
 ## Make The Repository Public
@@ -73,11 +85,31 @@ outdated flag blindly.
 
 - Verify the repository loads anonymously.
 - Verify the Pages site loads.
+- Verify `python scripts/check_live_site.py` passes.
 - Verify the CI badge.
 - Verify issue templates.
 - Verify README links.
 - Verify license detection.
 - Verify the Pages URL.
+- Verify README badges load.
+- Verify no generated sensitive files are present.
+- Verify release notes are published or ready.
+- Verify first issue labels exist or are documented in [TRIAGE.md](TRIAGE.md).
+
+## GitHub Release
+
+Prepare but do not publish a release unless explicitly approved:
+
+```bash
+make clean-artifacts
+make release-check
+python -m build
+gh release create v0.1.0 dist/* \
+  --title "Paper Galaxy v0.1.0" \
+  --notes-file docs/LAUNCH_NOTES.md
+```
+
+Do not publish to PyPI unless explicitly requested.
 
 ## Suggested Topics
 

@@ -36,6 +36,8 @@ RUNTIME_ATTRS = {
     "audio": ("src",),
     "iframe": ("src",),
 }
+RUNTIME_LINK_RELS = {"stylesheet", "icon", "preload", "modulepreload", "manifest"}
+PUBLIC_BASE_URL = "https://jinjianghu19823-wq.github.io/paper-galaxy/"
 
 
 @dataclass(frozen=True)
@@ -77,6 +79,7 @@ def check_demo_site(
         issues.extend(_check_demo_json(data_path, corpus_dir))
 
     issues.extend(_check_runtime_assets(dist_dir))
+    issues.extend(_check_metadata(dist_dir))
     issues.extend(_check_text_tokens(dist_dir))
     if serve and not issues:
         issues.extend(_serve_smoke(dist_dir))
@@ -145,6 +148,49 @@ def _check_runtime_assets(dist_dir: Path) -> list[DemoSiteIssue]:
                         f"{html_path.relative_to(dist_dir)} {tag}[{attr}]={value}",
                     )
                 )
+    return issues
+
+
+def _check_metadata(dist_dir: Path) -> list[DemoSiteIssue]:
+    issues: list[DemoSiteIssue] = []
+    required_meta = {
+        ("name", "description"),
+        ("property", "og:title"),
+        ("property", "og:description"),
+        ("property", "og:type"),
+        ("property", "og:url"),
+        ("property", "og:image"),
+        ("name", "twitter:card"),
+    }
+    for html_path in dist_dir.rglob("*.html"):
+        relative = str(html_path.relative_to(dist_dir))
+        parser = _MetadataParser()
+        parser.feed(html_path.read_text(encoding="utf-8"))
+        present = {(kind, key) for kind, key, content in parser.meta if content.strip()}
+        for _kind, key in sorted(required_meta - present):
+            issues.append(DemoSiteIssue("metadata_missing", f"{relative} {key}"))
+        if not any(rel == "canonical" and href for rel, _, href in parser.links):
+            issues.append(DemoSiteIssue("metadata_missing", f"{relative} canonical"))
+        alternate_langs = {
+            hreflang
+            for rel, hreflang, href in parser.links
+            if rel == "alternate" and href
+        }
+        if not {"en", "zh-CN"}.issubset(alternate_langs):
+            issues.append(
+                DemoSiteIssue("metadata_missing", f"{relative} language alternates")
+            )
+        og_images = [
+            content
+            for kind, key, content in parser.meta
+            if kind == "property" and key == "og:image"
+        ]
+        for og_image in og_images:
+            local_path = _local_asset_from_url(og_image)
+            if local_path is None:
+                issues.append(DemoSiteIssue("metadata_external_image", og_image))
+            elif not (dist_dir / local_path).exists():
+                issues.append(DemoSiteIssue("metadata_image_missing", og_image))
     return issues
 
 
@@ -233,10 +279,50 @@ class _AssetParser(HTMLParser):
         if not wanted:
             return
         attr_map = {name: value or "" for name, value in attrs}
+        if tag == "link":
+            rel_tokens = {
+                token.lower()
+                for token in attr_map.get("rel", "").replace(",", " ").split()
+            }
+            if not rel_tokens.intersection(RUNTIME_LINK_RELS):
+                return
         for attr in wanted:
             value = attr_map.get(attr)
             if value:
                 self.assets.append((tag, attr, value))
+
+
+class _MetadataParser(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__()
+        self.meta: list[tuple[str, str, str]] = []
+        self.links: list[tuple[str, str, str]] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        attr_map = {name: value or "" for name, value in attrs}
+        if tag == "meta":
+            if attr_map.get("name"):
+                self.meta.append(
+                    ("name", attr_map["name"], attr_map.get("content", ""))
+                )
+            if attr_map.get("property"):
+                self.meta.append(
+                    ("property", attr_map["property"], attr_map.get("content", ""))
+                )
+        elif tag == "link":
+            href = attr_map.get("href", "")
+            hreflang = attr_map.get("hreflang", "")
+            for rel_token in attr_map.get("rel", "").replace(",", " ").split():
+                self.links.append((rel_token, hreflang, href))
+
+
+def _local_asset_from_url(value: str) -> Path | None:
+    value = value.strip()
+    if value.startswith(PUBLIC_BASE_URL):
+        return Path(value.removeprefix(PUBLIC_BASE_URL))
+    if value.startswith(("http://", "https://", "//")):
+        return None
+    return Path(value.lstrip("/"))
 
 
 def main() -> None:
