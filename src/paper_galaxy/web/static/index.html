@@ -16,27 +16,28 @@
           <div class="brand-mark" aria-hidden="true"></div>
           <div>
             <h1>Paper Galaxy</h1>
-            <p id="project-status" data-i18n="app.checking">Checking local database...</p>
+            <p data-i18n="topbar.subtitle">Local research map</p>
           </div>
         </div>
-        <div class="topbar-hint" data-i18n="topbar.hint">Local graph workspace - index from CLI</div>
         <div class="status-strip" aria-live="polite">
-          <div>
+          <span id="project-status" class="project-status" data-i18n="app.checking">Checking local database...</span>
+          <span class="status-note" data-i18n="topbar.hint">Local only - index from CLI</span>
+          <span>
             <span class="metric-label" data-i18n="metric.active">Active</span>
             <strong id="active-count">0</strong>
-          </div>
-          <div>
+          </span>
+          <span>
             <span class="metric-label" data-i18n="metric.missing">Missing</span>
             <strong id="missing-count">0</strong>
-          </div>
-          <div>
+          </span>
+          <span>
             <span class="metric-label" data-i18n="metric.unindexed">Unindexed</span>
             <strong id="unindexed-count">0</strong>
-          </div>
-          <div class="wide-metric">
+          </span>
+          <span class="wide-metric">
             <span class="metric-label" data-i18n="metric.lastScan">Last scan</span>
             <strong id="last-scan">none</strong>
-          </div>
+          </span>
         </div>
         <button
           id="language-toggle"
@@ -73,11 +74,23 @@
             <div id="search-results" class="result-list"></div>
           </section>
 
-          <section class="panel">
+          <section class="panel source-panel">
             <div class="panel-title-row">
-              <h2 data-i18n="clusters.title">Clusters</h2>
-              <span class="panel-kicker" data-i18n="clusters.kicker">groups</span>
+              <h2 data-i18n="source.title">Source</h2>
             </div>
+            <label class="range-row">
+              <span data-i18n="source.graph">Graph</span>
+              <select id="graph-source-select" class="map-run-select" aria-label="Graph source">
+                <option value="documents" selected data-i18n="graph.sourceDocuments">Documents</option>
+                <option value="zotero" data-i18n="graph.sourceZotero">Zotero</option>
+              </select>
+            </label>
+            <label class="range-row">
+              <span data-i18n="source.mapRun">Map run</span>
+              <select id="map-run-select" class="map-run-select" aria-label="Saved map run">
+                <option value="" data-i18n="graph.liveMap">Live map</option>
+              </select>
+            </label>
             <input
               id="point-filter"
               class="filter-input"
@@ -86,14 +99,7 @@
               data-i18n-placeholder="clusters.filterPlaceholder"
               autocomplete="off"
             >
-            <div id="cluster-legend" class="legend"></div>
-          </section>
-
-          <section class="panel zotero-panel">
-            <div class="panel-title-row">
-              <h2 data-i18n="zotero.title">Zotero Reading Graph</h2>
-              <span class="panel-kicker" data-i18n="zotero.kicker">local</span>
-            </div>
+            <div class="filter-subhead" data-i18n="zotero.filters">Zotero filters</div>
             <div id="zotero-status" class="zotero-status"></div>
             <label class="range-row">
               <span data-i18n="zotero.statusFilter">Reading status</span>
@@ -124,56 +130,65 @@
             <div id="zotero-empty-help" class="zotero-help" hidden></div>
           </section>
 
-          <section class="panel settings-panel">
+          <section class="panel">
             <div class="panel-title-row">
-              <h2 data-i18n="forces.title">Forces</h2>
-              <span class="panel-kicker" data-i18n="forces.kicker">local</span>
+              <h2 data-i18n="clusters.title">Clusters</h2>
             </div>
-            <label class="toggle-row">
-              <input id="animate-toggle" type="checkbox" checked>
-              <span data-i18n="forces.animate">Animate graph</span>
-            </label>
-            <label class="toggle-row">
-              <input id="arrows-toggle" type="checkbox">
-              <span data-i18n="forces.arrows">Show arrows</span>
-            </label>
-            <label class="range-row">
-              <span data-i18n="forces.center">Center</span>
-              <input id="center-force" type="range" min="0" max="20" step="1" value="7">
-            </label>
-            <label class="range-row">
-              <span data-i18n="forces.repel">Repel</span>
-              <input id="repel-force" type="range" min="200" max="3600" step="100" value="1600">
-            </label>
-            <label class="range-row">
-              <span data-i18n="forces.linkForce">Link force</span>
-              <input id="link-force" type="range" min="1" max="60" step="1" value="18">
-            </label>
-            <label class="range-row">
-              <span data-i18n="forces.linkDistance">Link distance</span>
-              <input id="link-distance" type="range" min="54" max="220" step="2" value="118">
-            </label>
-            <label class="range-row">
-              <span data-i18n="forces.nodeSize">Node size</span>
-              <input id="node-size" type="range" min="4" max="13" step="1" value="7">
-            </label>
-            <label class="range-row">
-              <span data-i18n="forces.linkWidth">Link width</span>
-              <input id="link-thickness" type="range" min="0.5" max="3" step="0.1" value="1.1">
-            </label>
-            <label class="range-row">
-              <span data-i18n="forces.labelMode">Label mode</span>
-              <select id="label-mode">
-                <option value="focus" selected data-i18n="forces.labelFocus">Focus labels only</option>
-                <option value="zoom" data-i18n="forces.labelZoom">Show at high zoom</option>
-                <option value="always" data-i18n="forces.labelAlways">Always show labels</option>
-              </select>
-            </label>
-            <label class="range-row">
-              <span data-i18n="forces.zoomLabels">Zoom labels</span>
-              <input id="label-threshold" type="range" min="0.4" max="2.2" step="0.1" value="1.4">
-            </label>
+            <div id="cluster-legend" class="legend"></div>
           </section>
+
+          <details class="panel settings-panel">
+            <summary>
+              <span data-i18n="layout.title">Layout</span>
+              <span data-i18n="layout.summary">force and labels</span>
+            </summary>
+            <div class="settings-body">
+              <label class="toggle-row">
+                <input id="animate-toggle" type="checkbox" checked>
+                <span data-i18n="layout.animate">Animate graph</span>
+              </label>
+              <label class="toggle-row">
+                <input id="arrows-toggle" type="checkbox">
+                <span data-i18n="layout.arrows">Show arrows</span>
+              </label>
+              <label class="range-row">
+                <span data-i18n="layout.center">Center</span>
+                <input id="center-force" type="range" min="0" max="20" step="1" value="7">
+              </label>
+              <label class="range-row">
+                <span data-i18n="layout.repel">Repel</span>
+                <input id="repel-force" type="range" min="200" max="3600" step="100" value="1600">
+              </label>
+              <label class="range-row">
+                <span data-i18n="layout.linkForce">Link force</span>
+                <input id="link-force" type="range" min="1" max="60" step="1" value="18">
+              </label>
+              <label class="range-row">
+                <span data-i18n="layout.linkDistance">Link distance</span>
+                <input id="link-distance" type="range" min="54" max="220" step="2" value="118">
+              </label>
+              <label class="range-row">
+                <span data-i18n="layout.nodeSize">Node size</span>
+                <input id="node-size" type="range" min="4" max="13" step="1" value="7">
+              </label>
+              <label class="range-row">
+                <span data-i18n="layout.linkWidth">Link width</span>
+                <input id="link-thickness" type="range" min="0.5" max="3" step="0.1" value="1.1">
+              </label>
+              <label class="range-row">
+                <span data-i18n="layout.labelMode">Label mode</span>
+                <select id="label-mode">
+                  <option value="focus" selected data-i18n="layout.labelFocus">Focus labels only</option>
+                  <option value="zoom" data-i18n="layout.labelZoom">Show at high zoom</option>
+                  <option value="always" data-i18n="layout.labelAlways">Always show labels</option>
+                </select>
+              </label>
+              <label class="range-row">
+                <span data-i18n="layout.zoomLabels">Zoom labels</span>
+                <input id="label-threshold" type="range" min="0.4" max="2.2" step="0.1" value="1.4">
+              </label>
+            </div>
+          </details>
         </aside>
 
         <section class="graph-stage" aria-label="Document graph">
@@ -183,13 +198,6 @@
               <p id="map-caption" data-i18n="graph.loading">Loading active indexed documents...</p>
             </div>
             <div class="graph-controls" aria-label="Graph controls">
-              <select id="graph-source-select" class="map-run-select" aria-label="Graph source">
-                <option value="documents" selected data-i18n="graph.sourceDocuments">Documents</option>
-                <option value="zotero" data-i18n="graph.sourceZotero">Zotero</option>
-              </select>
-              <select id="map-run-select" class="map-run-select" aria-label="Saved map run">
-                <option value="" data-i18n="graph.liveMap">Live map</option>
-              </select>
               <button id="reset-view" class="icon-button" type="button" data-i18n-aria="graph.resetView" aria-label="Reset view">
                 <span aria-hidden="true">⌖</span>
               </button>
@@ -214,9 +222,9 @@
           ></svg>
         </section>
 
-        <aside class="inspector" aria-label="Document inspector">
+        <aside class="inspector" aria-label="Document details">
           <section class="panel inspector-panel">
-            <h2 data-i18n="inspector.title">Inspector</h2>
+            <h2 data-i18n="inspector.title">Details</h2>
             <div id="inspector-content" class="inspector-content">
               <p class="muted" data-i18n="inspector.default">Select a document point or search result.</p>
             </div>

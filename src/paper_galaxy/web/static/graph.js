@@ -3,14 +3,14 @@
   const SETTINGS_KEY = "paper-galaxy:graph-settings:v1";
 
   const CLUSTER_COLORS = [
-    "#6ee7d8",
-    "#8aa4ff",
-    "#eab86b",
-    "#f48ca8",
-    "#b99cff",
-    "#67d4f2",
-    "#a7d779",
-    "#f39a72"
+    "#6f8f84",
+    "#7f8da8",
+    "#b29865",
+    "#a87973",
+    "#8c7f9f",
+    "#6f98a4",
+    "#8d9c69",
+    "#aa8467"
   ];
 
   const DEFAULT_SETTINGS = {
@@ -970,9 +970,11 @@
         this.controls.labelMode.value = this.settings.labelMode;
       }
       if (this.controls.pause) {
+        const pauseLabel = this.controls.pause.dataset.pauseLabel || "Pause animation";
+        const resumeLabel = this.controls.pause.dataset.resumeLabel || "Resume animation";
         this.controls.pause.setAttribute(
           "aria-label",
-          this.settings.animate ? "Pause animation" : "Resume animation"
+          this.settings.animate ? pauseLabel : resumeLabel
         );
         const icon = this.controls.pause.querySelector("span");
         if (icon) {

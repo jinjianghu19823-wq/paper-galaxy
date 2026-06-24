@@ -75,7 +75,7 @@ def test_static_graph_assets_include_dynamic_interaction_primitives() -> None:
         "renameCluster",
         "resetClusterLabel",
         "explainPair",
-        "Why?",
+        "Evidence",
         "pair-explanation",
     ]
     for token in required_tokens:
@@ -88,9 +88,57 @@ def test_graph_labels_default_to_focus_only() -> None:
 
     assert 'value="focus"' in html
     assert "Focus labels only" in html
-    assert 'data-i18n="forces.labelFocus"' in html
+    assert 'data-i18n="layout.labelFocus"' in html
     assert 'labelMode: "focus"' in graph_js
     assert 'this.settings.labelMode === "focus"' in graph_js
+
+
+def test_static_web_app_uses_quiet_research_tool_copy_and_tokens() -> None:
+    html = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
+    app_js = (STATIC_DIR / "app.js").read_text(encoding="utf-8")
+    i18n_js = (STATIC_DIR / "i18n.js").read_text(encoding="utf-8")
+    styles = (STATIC_DIR / "styles.css").read_text(encoding="utf-8")
+    combined = "\n".join([html, app_js, i18n_js, styles])
+    visible_copy = "\n".join([html, i18n_js])
+
+    required = [
+        "Details",
+        "Layout",
+        "Evidence",
+        "Related papers",
+        "Terms",
+        "similarity links",
+        "详情",
+        "布局",
+        "证据",
+        "相关论文",
+        "术语",
+        "相似度连接",
+        "paper-card",
+        "status-strip",
+        "Local research map",
+    ]
+    for token in required:
+        assert token in combined
+
+    forbidden = [
+        "Inspector",
+        "Forces",
+        "Why nearby?",
+        "Nearest neighbors",
+        "Top terms",
+        "semantic TF-IDF links",
+        "backdrop-filter",
+        "drop-shadow",
+        "text-transform",
+        "#a78bfa",
+        "#6d5bd0",
+        "#c4b5fd",
+    ]
+    for token in forbidden[:6]:
+        assert token not in visible_copy
+    for token in forbidden[6:]:
+        assert token not in styles
 
 
 def test_graph_labels_do_not_use_small_corpus_global_default() -> None:
@@ -152,7 +200,7 @@ def test_static_web_app_includes_zotero_reading_graph_controls() -> None:
         'id="zotero-status-filter"',
         'id="zotero-tag-filter"',
         'id="zotero-collection-filter"',
-        'data-i18n="zotero.title"',
+        'data-i18n="zotero.filters"',
     ]
     for token in required_html:
         assert token in html

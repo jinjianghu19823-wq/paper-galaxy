@@ -79,6 +79,7 @@ async function init() {
   i18n.apply();
   updateLanguageToggle();
   initTheme();
+  updateDynamicControlLabels();
   initGraph();
   bindEvents();
   setInspectorMessage(t("inspector.default"));
@@ -189,6 +190,7 @@ function toggleLanguage() {
   i18n.apply();
   updateLanguageToggle();
   updateThemeToggle(document.documentElement.dataset.theme || "dark");
+  updateDynamicControlLabels();
   if (state.health) {
     updateHealth(state.health);
   }
@@ -213,6 +215,14 @@ function toggleLanguage() {
 function updateLanguageToggle() {
   els.languageToggle.textContent = t("language.toggle");
   els.languageToggle.setAttribute("aria-label", t("language.aria"));
+}
+
+function updateDynamicControlLabels() {
+  els.pauseGraph.dataset.pauseLabel = t("graph.pause");
+  els.pauseGraph.dataset.resumeLabel = t("graph.resume");
+  if (state.graph && typeof state.graph.syncControls === "function") {
+    state.graph.syncControls();
+  }
 }
 
 async function loadStats() {
@@ -640,28 +650,66 @@ function renderZoteroInspector(documentId) {
   }
   const zotero = row.zotero;
   const section = inspectorSection(t("zotero.metadata"));
-  appendText(section, "div", `Key: ${zotero.zotero_key || ""}`, "meta-row");
-  appendText(section, "div", `${t("zotero.statusFilter")}: ${zotero.reading_status || "unknown"}`, "meta-row");
-  appendText(section, "div", `${t("zotero.itemType")}: ${zotero.item_type || ""}`, "meta-row");
-  appendText(section, "div", `${t("zotero.creators")}: ${zotero.creators || ""}`, "meta-row");
-  appendText(section, "div", `${t("zotero.publication")}: ${zotero.publication || ""}`, "meta-row");
-  appendText(section, "div", `${t("zotero.year")}: ${zotero.year || ""}`, "meta-row");
-  appendText(section, "div", `${t("zotero.doi")}: ${zotero.doi || ""}`, "meta-row");
-  appendText(section, "div", `${t("zotero.url")}: ${zotero.url || ""}`, "meta-row");
-  appendText(section, "div", `${t("zotero.dateModified")}: ${zotero.date_modified || ""}`, "meta-row");
-  appendText(section, "div", `${t("zotero.tags")}: ${zotero.tags || ""}`, "meta-row");
-  appendText(section, "div", `${t("zotero.collections")}: ${zotero.collections || ""}`, "meta-row");
-  appendText(section, "div", `${t("zotero.attachmentStatus")}: ${zotero.attachment_status || ""}`, "meta-row");
-  appendText(section, "div", `${t("zotero.primaryAttachment")}: ${zotero.primary_attachment_status || ""}`, "meta-row");
-  appendText(section, "div", `${t("zotero.pdfText")}: ${zotero.pdf_text_status || ""}`, "meta-row");
-  if (zotero.zotero_uri) {
+  const card = document.createElement("article");
+  card.className = "paper-card";
+
+  appendText(card, "h4", row.title || zotero.title || "", "paper-card-title");
+  const byline = [zotero.creators, zotero.year, zotero.publication]
+    .filter(Boolean)
+    .join(" · ");
+  if (byline) {
+    appendText(card, "p", byline, "paper-card-byline");
+  }
+
+  const chipRow = document.createElement("div");
+  chipRow.className = "chip-row paper-chip-row";
+  for (const value of [
+    zotero.reading_status || "unknown",
+    zotero.item_type,
+    zotero.pdf_text_status
+  ].filter(Boolean)) {
+    appendText(chipRow, "span", value, "chip");
+  }
+  if (chipRow.children.length) {
+    card.append(chipRow);
+  }
+
+  const fields = document.createElement("dl");
+  fields.className = "paper-fields";
+  appendField(fields, t("zotero.key"), zotero.zotero_key);
+  appendField(fields, t("zotero.doi"), zotero.doi);
+  appendField(fields, t("zotero.url"), zotero.url);
+  appendField(fields, t("zotero.tags"), zotero.tags);
+  appendField(fields, t("zotero.collections"), zotero.collections);
+  appendField(fields, t("zotero.dateModified"), zotero.date_modified);
+  appendField(fields, t("zotero.attachmentStatus"), zotero.attachment_status);
+  appendField(fields, t("zotero.primaryAttachment"), zotero.primary_attachment_status);
+  if (fields.children.length) {
+    card.append(fields);
+  }
+
+  if (isSafeZoteroUri(zotero.zotero_uri)) {
     const link = document.createElement("a");
     link.href = zotero.zotero_uri;
+    link.className = "zotero-open-link";
     link.textContent = t("zotero.open");
     link.rel = "noreferrer";
-    section.append(link);
+    card.append(link);
   }
+  section.append(card);
   els.inspector.append(section);
+}
+
+function appendField(parent, label, value) {
+  if (!value) {
+    return;
+  }
+  appendText(parent, "dt", label);
+  appendText(parent, "dd", value);
+}
+
+function isSafeZoteroUri(value) {
+  return typeof value === "string" && /^zotero:\/\/select\/items\/[A-Za-z0-9]+$/.test(value);
 }
 
 function renderClusterInspector(point) {
@@ -956,7 +1004,7 @@ function appendText(parent, tagName, text, className) {
 }
 
 function initTheme() {
-  const theme = localStorage.getItem(THEME_KEY) || "dark";
+  const theme = localStorage.getItem(THEME_KEY) || "light";
   document.documentElement.dataset.theme = theme;
   updateThemeToggle(theme);
 }
