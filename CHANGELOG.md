@@ -4,6 +4,10 @@
 
 ## Unreleased
 
+- Hardened the Zotero Reading Graph beta for real local libraries: no-write
+  `zotero doctor`, collection filtering by key/name/path, validated reading
+  statuses and local library aliases, explicit PDF policies, annotation import,
+  richer import summaries, and inspector metadata for DOI/URL/PDF/Zotero links.
 - Added the first Zotero Reading Graph integration: read-only local API client,
   Zotero schema v6 tables, importer, metadata/PDF/notes handling, CLI commands,
   local web API endpoints, UI filters, docs, and synthetic-only public demo

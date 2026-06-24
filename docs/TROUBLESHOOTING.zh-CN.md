@@ -73,9 +73,11 @@ paper-galaxy serve --project-dir .
 ```bash
 paper-galaxy zotero detect
 paper-galaxy zotero status
+paper-galaxy zotero doctor --project-dir .
 ```
 
 如果仍不可用，请在 Zotero Settings -> Advanced 中确认 local API 已启用。Zotero 设置里显示的 data directory 是权威路径；`paper-galaxy zotero detect` 只是 best-effort 猜测。
+`paper-galaxy zotero doctor --json-out zotero-doctor.json` 可以写出不写入数据的 readiness 报告，适合私下排查。
 
 ## Zotero 导入时 PDF 缺失
 
@@ -86,6 +88,13 @@ paper-galaxy zotero import --project-dir . --include-metadata-only --build-readi
 ```
 
 Paper Galaxy 不写回 Zotero，不上传 Zotero 数据，也不会默认复制 PDF。
+
+如果想把元数据问题和 PDF 抽取问题分开，可以运行：
+
+```bash
+paper-galaxy zotero import --project-dir . --pdf-policy metadata --dry-run
+paper-galaxy zotero import --project-dir . --pdf-policy skip-missing --dry-run
+```
 
 ## FTS5 不可用
 

@@ -39,6 +39,10 @@ class ZoteroClient(Protocol):
         """Return children for one Zotero item."""
 
     def collection_items(
-        self, collection_key: str, *, limit: int | None = None
+        self,
+        collection_key: str,
+        *,
+        limit: int | None = None,
+        since: int | None = None,
     ) -> list[dict[str, Any]]:
         """Return items in one Zotero collection."""

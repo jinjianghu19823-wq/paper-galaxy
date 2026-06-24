@@ -6,6 +6,7 @@ import hashlib
 import json
 import re
 import sqlite3
+from collections import Counter
 from collections.abc import Iterable, Mapping
 from datetime import UTC, datetime
 from pathlib import Path
@@ -1199,8 +1200,12 @@ class Repository:
               zi.zotero_key,
               zi.reading_status,
               zi.title AS zotero_title,
+              zi.item_type AS zotero_item_type,
               zi.publication_title AS zotero_publication_title,
-              zi.year AS zotero_year
+              zi.year AS zotero_year,
+              zi.doi AS zotero_doi,
+              zi.url AS zotero_url,
+              zi.date_modified AS zotero_date_modified
             FROM zotero_items zi
             JOIN zotero_document_links zdl ON zdl.zotero_item_id = zi.id
             JOIN documents d ON d.id = zdl.document_id
@@ -1363,7 +1368,7 @@ class Repository:
             "data": _json_object(row["data_json"]),
             "created_at": str(row["created_at"]),
             "updated_at": str(row["updated_at"]),
-            "zotero_uri": f"zotero://select/items/{row['zotero_key']}",
+            "zotero_uri": _zotero_select_uri(str(row["zotero_key"])),
         }
 
     def _zotero_reading_meta(self, row: sqlite3.Row) -> dict[str, object]:
@@ -1382,12 +1387,17 @@ class Repository:
         ]
         collections = self._zotero_collections(item_id)
         attachments = self._zotero_attachments(item_id)
+        attachment_counts = Counter(str(item["path_status"]) for item in attachments)
+        primary_status = attachments[0]["path_status"] if attachments else None
         return {
             "zotero_item_id": item_id,
             "zotero_key": str(row["zotero_key"]),
             "reading_status": str(row["reading_status"]),
             "title": str(row["zotero_title"]),
+            "item_type": _optional_str(row["zotero_item_type"]),
             "creators": "; ".join(name for name in creators if name),
+            "year": _optional_str(row["zotero_year"]),
+            "publication_title": _optional_str(row["zotero_publication_title"]),
             "publication": " ".join(
                 part
                 for part in (
@@ -1396,6 +1406,9 @@ class Repository:
                 )
                 if part
             ),
+            "doi": _optional_str(row["zotero_doi"]),
+            "url": _optional_str(row["zotero_url"]),
+            "date_modified": _optional_str(row["zotero_date_modified"]),
             "tags": "; ".join(str(tag["tag"]) for tag in self._zotero_tags(item_id)),
             "collections": "; ".join(
                 str(collection.get("path") or collection.get("name") or "")
@@ -1404,6 +1417,12 @@ class Repository:
             "attachment_status": "; ".join(
                 str(attachment["path_status"]) for attachment in attachments
             ),
+            "attachment_status_counts": dict(attachment_counts),
+            "primary_attachment_status": primary_status,
+            "pdf_text_status": (
+                "extracted" if str(row["file_type"]) == "pdf" else "metadata_only"
+            ),
+            "zotero_uri": _zotero_select_uri(str(row["zotero_key"])),
         }
 
     def _zotero_creators(self, item_id: str) -> list[dict[str, object]]:
@@ -2119,7 +2138,10 @@ def _zotero_filter_clauses(
         clauses.append("zi.reading_status = ?")
         params.append(status)
     if collection:
-        clauses.append("(zc.zotero_key = ? OR zc.name = ? OR zc.path = ?)")
+        clauses.append(
+            "(zc.zotero_key = ? OR zc.name = ? COLLATE NOCASE "
+            "OR zc.path = ? COLLATE NOCASE)"
+        )
         params.extend([collection, collection, collection])
     if tag:
         clauses.append("zit.tag = ?")
@@ -2131,6 +2153,12 @@ def _zotero_filter_clauses(
         )
         params.extend([like, like])
     return f"WHERE {' AND '.join(clauses)}", tuple(params)
+
+
+def _zotero_select_uri(zotero_key: str) -> str | None:
+    if re.fullmatch(r"[A-Z0-9]{8,}", zotero_key):
+        return f"zotero://select/items/{zotero_key}"
+    return None
 
 
 def _optional_str(value: object) -> str | None:

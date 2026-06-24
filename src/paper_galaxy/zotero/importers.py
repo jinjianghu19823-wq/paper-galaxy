@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import hashlib
+import sqlite3
+from collections import Counter
 from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
@@ -16,6 +18,15 @@ from paper_galaxy.storage.repository import Repository
 from paper_galaxy.storage.sqlite import connect_database, resolve_database_path
 from paper_galaxy.zotero.attachments import RESOLVED_STATUSES, resolve_attachment_path
 from paper_galaxy.zotero.client import ZoteroClient
+from paper_galaxy.zotero.filters import (
+    CollectionSelection,
+    ZoteroFilterError,
+    collection_paths,
+    filter_items,
+    normalize_reading_status,
+    resolve_collection,
+    validate_non_empty_values,
+)
 from paper_galaxy.zotero.local_api import DEFAULT_LOCAL_API_URL, LocalZoteroAPIClient
 from paper_galaxy.zotero.models import (
     AttachmentResolution,
@@ -53,6 +64,7 @@ def import_from_zotero(
     include_notes: bool = True,
     include_attachments: bool = True,
     include_metadata_only: bool = True,
+    pdf_policy: str = "extract",
     read_tags: tuple[str, ...] = DEFAULT_READ_TAGS,
     reading_tags: tuple[str, ...] = DEFAULT_READING_TAGS,
     to_read_tags: tuple[str, ...] = DEFAULT_TO_READ_TAGS,
@@ -71,6 +83,21 @@ def import_from_zotero(
     """Import Zotero top-level items into local Paper Galaxy SQLite state."""
 
     del verbose
+    if pdf_policy not in {"extract", "metadata", "skip-missing"}:
+        raise ZoteroFilterError(
+            "Invalid --pdf-policy value "
+            f"{pdf_policy!r}. Expected one of: extract, metadata, skip-missing."
+        )
+    status_selection = normalize_reading_status(
+        include_status,
+        option_name="--include-status",
+    )
+    include_status = status_selection.value
+    validate_non_empty_values(tags, option_name="--tag")
+    validate_non_empty_values(item_types, option_name="--item-type")
+    validate_non_empty_values(read_tags, option_name="--read-tag")
+    validate_non_empty_values(reading_tags, option_name="--reading-tag")
+    validate_non_empty_values(to_read_tags, option_name="--to-read-tag")
     resolved_project_dir = project_dir.expanduser().resolve()
     database_path = resolve_database_path(resolved_project_dir)
     zotero_client = client or LocalZoteroAPIClient(api_url)
@@ -79,31 +106,51 @@ def import_from_zotero(
     run_id = f"zotero_import_{uuid4().hex[:16]}"
     now = _utc_now()
     warnings: list[str] = []
+    if status_selection.warning:
+        warnings.append(status_selection.warning)
 
     collections = [normalize_collection(row) for row in zotero_client.collections()]
-    collection_paths = _collection_paths(collections)
+    collection_paths_by_key = collection_paths(collections)
+    selected_collection = _resolve_collection_filter(collections, collection)
     collection_id_by_key = {
         collection.key: stable_zotero_collection_id(source_id, collection.key)
         for collection in collections
     }
-    items = [
-        normalize_item(row)
-        for row in zotero_client.top_items(limit=limit, since=since_version)
-    ]
-    items = _filter_items(
+    fetched_rows = (
+        zotero_client.collection_items(
+            selected_collection.key,
+            limit=limit,
+            since=since_version,
+        )
+        if selected_collection
+        else zotero_client.top_items(limit=limit, since=since_version)
+    )
+    items = [normalize_item(row) for row in fetched_rows]
+    items_fetched = len(items)
+    items = filter_items(
         items,
-        collections=collections,
-        collection=collection,
+        collection_key=selected_collection.key if selected_collection else None,
         tags=tags,
         item_types=item_types,
     )
     if limit is not None:
         items = items[: max(0, limit)]
+        if items_fetched >= limit:
+            warnings.append(
+                f"Import was capped by --limit {limit}. Increase --limit or remove "
+                "it for a larger run."
+            )
     if not items:
-        warnings.append(
-            "No Zotero parent items matched the selected filters. Try removing "
-            "--collection/--tag filters or run paper-galaxy zotero items."
-        )
+        if since_version is not None:
+            warnings.append(
+                f"No Zotero parent items changed since version {since_version}. "
+                "This is a successful empty incremental result."
+            )
+        else:
+            warnings.append(
+                "No Zotero parent items matched the selected filters. Try removing "
+                "--collection/--tag filters or run paper-galaxy zotero items."
+            )
 
     enriched_items: list[ZoteroItem] = []
     for item in items:
@@ -120,7 +167,7 @@ def import_from_zotero(
         infer_reading_status(
             item,
             collection_names=[
-                collection_paths.get(collection_key, collection_key)
+                collection_paths_by_key.get(collection_key, collection_key)
                 for collection_key in item.collections
             ],
             read_tags=read_tags,
@@ -134,10 +181,22 @@ def import_from_zotero(
         for item, status in zip(enriched_items, statuses, strict=False)
         if include_status == "all" or status == include_status
     ]
+    last_version_before = _last_source_version(resolved_project_dir, source_id)
+    last_version_after = _max_version([item for item, _ in selected])
+    if last_version_after is None:
+        last_version_after = last_version_before
+    filters = _filter_payload(
+        tags=tags,
+        item_types=item_types,
+        include_status=include_status,
+        since_version=since_version,
+        pdf_policy=pdf_policy,
+    )
 
     if dry_run:
         attachment_count = sum(len(item.attachments) for item, _ in selected)
         note_count = sum(len(item.notes) for item, _ in selected)
+        annotation_count = sum(len(item.annotations) for item, _ in selected)
         return ZoteroImportRunSummary(
             run_id=run_id,
             source_id=source_id,
@@ -145,8 +204,18 @@ def import_from_zotero(
             database_path=database_path,
             dry_run=True,
             items_seen=len(enriched_items),
+            items_fetched=items_fetched,
+            items_selected=len(selected),
+            items_filtered_out=max(0, items_fetched - len(selected)),
             attachments_seen=attachment_count,
             notes_imported=note_count if include_notes else 0,
+            annotations_imported=annotation_count if include_notes else 0,
+            filters=filters,
+            selected_collection=_collection_payload(selected_collection),
+            include_status=include_status,
+            since_version=since_version,
+            last_version_before=last_version_before,
+            last_version_after=last_version_after,
             warnings=tuple(warnings),
             reading_status_counts=reading_status_counts(
                 [item for item, _ in selected],
@@ -177,7 +246,7 @@ def import_from_zotero(
                     "library_id": "0",
                     "library_type": "user",
                     "name": "Zotero Local Library",
-                    "last_version": _max_version([item for item, _ in selected]),
+                    "last_version": last_version_after,
                     "created_at": now,
                     "updated_at": now,
                 }
@@ -191,10 +260,13 @@ def import_from_zotero(
                     "include_notes": include_notes,
                     "include_attachments": include_attachments,
                     "include_metadata_only": include_metadata_only,
+                    "pdf_policy": pdf_policy,
                     "include_status": include_status,
                     "limit": limit,
                     "since_version": since_version,
                     "force": force,
+                    "filters": filters,
+                    "selected_collection": _collection_payload(selected_collection),
                 },
             )
             for collection_row in collections:
@@ -206,7 +278,7 @@ def import_from_zotero(
                         "zotero_key": collection_row.key,
                         "parent_key": collection_row.parent_key,
                         "name": collection_row.name,
-                        "path": collection_paths.get(collection_row.key),
+                        "path": collection_paths_by_key.get(collection_row.key),
                         "version": collection_row.version,
                         "data": collection_row.raw,
                     }
@@ -218,13 +290,14 @@ def import_from_zotero(
                     source_id=source_id,
                     source_corpus_id=source_corpus_id,
                     status=status,
-                    collection_paths=collection_paths,
+                    collection_paths=collection_paths_by_key,
                     collection_id_by_key=collection_id_by_key,
                     data_dir=data_dir,
                     include_pdfs=include_pdfs,
                     include_notes=include_notes,
                     include_attachments=include_attachments,
                     include_metadata_only=include_metadata_only,
+                    pdf_policy=pdf_policy,
                     min_chars=min_chars,
                     chunk_size=chunk_size,
                     chunk_overlap=chunk_overlap,
@@ -269,15 +342,31 @@ def import_from_zotero(
         database_path=database_path,
         dry_run=False,
         items_seen=counts.items_seen,
+        items_fetched=items_fetched,
+        items_selected=len(selected),
+        items_filtered_out=max(0, items_fetched - len(selected)),
         items_imported=counts.items_imported,
         items_updated=counts.items_updated,
         items_unchanged=counts.items_unchanged,
         attachments_seen=counts.attachments_seen,
         attachments_resolved=counts.attachments_resolved,
+        attachment_status_counts=dict(counts.attachment_status_counts),
+        stored_attachments=counts.stored_attachments,
+        linked_attachments=counts.linked_attachments,
+        pdfs_seen=counts.pdfs_seen,
         pdfs_extracted=counts.pdfs_extracted,
+        pdfs_missing=counts.pdfs_missing,
+        pdfs_extraction_failed=counts.pdfs_extraction_failed,
         notes_imported=counts.notes_imported,
+        annotations_imported=counts.annotations_imported,
         metadata_only_documents=counts.metadata_only_documents,
         skipped=counts.skipped,
+        filters=filters,
+        selected_collection=_collection_payload(selected_collection),
+        include_status=include_status,
+        since_version=since_version,
+        last_version_before=last_version_before,
+        last_version_after=last_version_after,
         warnings=tuple(warnings),
         reading_status_counts=reading_status_counts(
             [item for item, _ in selected],
@@ -325,8 +414,15 @@ class _ImportCounts:
         self.items_unchanged = 0
         self.attachments_seen = 0
         self.attachments_resolved = 0
+        self.attachment_status_counts: Counter[str] = Counter()
+        self.stored_attachments = 0
+        self.linked_attachments = 0
+        self.pdfs_seen = 0
         self.pdfs_extracted = 0
+        self.pdfs_missing = 0
+        self.pdfs_extraction_failed = 0
         self.notes_imported = 0
+        self.annotations_imported = 0
         self.metadata_only_documents = 0
         self.skipped = 0
 
@@ -345,6 +441,7 @@ def _import_one_item(
     include_notes: bool,
     include_attachments: bool,
     include_metadata_only: bool,
+    pdf_policy: str,
     min_chars: int,
     chunk_size: int,
     chunk_overlap: int,
@@ -374,28 +471,69 @@ def _import_one_item(
         for attachment, _ in attachments
         if str(attachment["path_status"]) in RESOLVED_STATUSES
     )
+    counts.attachment_status_counts.update(
+        str(attachment["path_status"]) for attachment, _ in attachments
+    )
+    counts.stored_attachments += sum(
+        1
+        for attachment, _ in attachments
+        if str(attachment.get("zotero_path", "")).startswith("storage:")
+    )
+    counts.linked_attachments += sum(
+        1
+        for attachment, _ in attachments
+        if attachment.get("zotero_path")
+        and not str(attachment.get("zotero_path", "")).startswith("storage:")
+    )
     notes = [note.text for note in item.notes if note.text] if include_notes else []
+    annotation_texts = (
+        [
+            text
+            for annotation in item.annotations
+            for text in (annotation.text, annotation.comment)
+            if text
+        ]
+        if include_notes
+        else []
+    )
     counts.notes_imported += len(notes)
+    counts.annotations_imported += len(item.annotations) if include_notes else 0
     pdf_text = ""
+    pdf_extract_attempted = False
+    if primary_pdf is not None:
+        counts.pdfs_seen += 1
+        if primary_resolution and primary_resolution.status not in RESOLVED_STATUSES:
+            counts.pdfs_missing += 1
     if (
         include_pdfs
+        and pdf_policy != "metadata"
         and primary_pdf is not None
         and primary_resolution is not None
         and primary_resolution.resolved_path is not None
     ):
+        pdf_extract_attempted = True
         extracted, reason = extract_pdf_file(primary_resolution.resolved_path)
         if extracted is not None and reason is None:
             pdf_text = extracted.text
             counts.pdfs_extracted += 1
         else:
+            counts.pdfs_extraction_failed += 1
             warnings.append(
                 f"PDF extraction failed for Zotero item {item.key}: "
                 f"{reason or 'unknown'}"
             )
+    if pdf_policy == "skip-missing" and primary_pdf is not None and not pdf_text:
+        counts.skipped += 1
+        warnings.append(
+            f"Skipped Zotero item {item.key}: --pdf-policy skip-missing requires "
+            "a resolvable, extractable PDF."
+        )
+        return
     text = build_zotero_document_text(
         item,
         collection_names=collection_names,
         notes=notes,
+        annotations=annotation_texts,
         pdf_text=pdf_text,
         primary_attachment=primary_pdf,
     )
@@ -405,8 +543,19 @@ def _import_one_item(
             f"Skipped Zotero item {item.key}: metadata text shorter than {min_chars}."
         )
         return
-    if not primary_pdf:
+    if not pdf_text:
         counts.metadata_only_documents += 1
+        if primary_pdf is not None:
+            reason = primary_resolution.status if primary_resolution else "unresolved"
+            action = "created metadata-only document"
+            if pdf_policy == "metadata":
+                action = "PDF extraction disabled by --pdf-policy metadata"
+            elif pdf_extract_attempted:
+                action = "created metadata-only document after PDF extraction failed"
+            warnings.append(
+                f"Zotero item {item.key} ({item.title}) has no extracted PDF text "
+                f"from attachment {primary_pdf.key} ({reason}); {action}."
+            )
     digest = hashlib.sha256(text.encode()).hexdigest()
     if existing_document is None:
         counts.items_imported += 1
@@ -422,6 +571,7 @@ def _import_one_item(
         text=text,
         primary_pdf=primary_pdf,
         primary_resolution=primary_resolution,
+        pdf_text_extracted=bool(pdf_text),
         now=now,
     )
     chunks = [
@@ -501,6 +651,7 @@ def build_zotero_document_text(
     *,
     collection_names: list[str],
     notes: list[str],
+    annotations: list[str],
     pdf_text: str,
     primary_attachment: ZoteroAttachment | None,
 ) -> str:
@@ -521,6 +672,8 @@ def build_zotero_document_text(
         collections,
         " ".join(notes),
         " ".join(notes),
+        " ".join(annotations),
+        " ".join(annotations),
         creators,
         item.publication_title or "",
         item.year or item.date or "",
@@ -542,13 +695,19 @@ def _document_record(
     text: str,
     primary_pdf: ZoteroAttachment | None,
     primary_resolution: AttachmentResolution | None,
+    pdf_text_extracted: bool,
     now: str,
 ) -> IndexedDocument:
     path = f"zotero://items/{item.key}"
     file_type = "zotero"
     size_bytes = 0
     mtime_ns = 0
-    if primary_pdf and primary_resolution and primary_resolution.resolved_path:
+    if (
+        pdf_text_extracted
+        and primary_pdf
+        and primary_resolution
+        and primary_resolution.resolved_path
+    ):
         path = str(primary_resolution.resolved_path)
         file_type = "pdf"
         if primary_resolution.resolved_path.exists():
@@ -618,72 +777,89 @@ def _attachment_records(
                 resolution,
             )
         )
-        if primary_pdf is None and _is_pdf_attachment(attachment, resolution):
+        if primary_pdf is None and _is_pdf_attachment(attachment):
             primary_pdf = attachment
             primary_resolution = resolution
     return rows, primary_pdf, primary_resolution
 
 
-def _is_pdf_attachment(
-    attachment: ZoteroAttachment, resolution: AttachmentResolution
-) -> bool:
-    if resolution.status not in RESOLVED_STATUSES:
-        return False
+def _is_pdf_attachment(attachment: ZoteroAttachment) -> bool:
     content_type = (attachment.content_type or "").lower()
     filename = (attachment.filename or attachment.path or "").lower()
     return content_type == "application/pdf" or filename.endswith(".pdf")
 
 
-def _collection_paths(collections: list[ZoteroCollection]) -> dict[str, str]:
-    by_key = {collection.key: collection for collection in collections}
-
-    def path_for(key: str, seen: set[str] | None = None) -> str:
-        seen = seen or set()
-        if key in seen or key not in by_key:
-            return key
-        seen.add(key)
-        collection = by_key[key]
-        if collection.parent_key and collection.parent_key in by_key:
-            return f"{path_for(collection.parent_key, seen)} / {collection.name}"
-        return collection.name
-
-    return {collection.key: path_for(collection.key) for collection in collections}
-
-
-def _filter_items(
-    items: list[ZoteroItem],
-    *,
-    collections: list[ZoteroCollection],
-    collection: str | None,
-    tags: tuple[str, ...],
-    item_types: tuple[str, ...],
-) -> list[ZoteroItem]:
-    collection_lookup = {row.key: row for row in collections}
-    selected: list[ZoteroItem] = []
-    allowed_types = {
-        item_type for part in item_types for item_type in part.split(",") if item_type
-    }
-    for item in items:
-        if allowed_types and item.item_type not in allowed_types:
-            continue
-        item_tags = {tag_row.tag for tag_row in item.tags}
-        if tags and any(tag not in item_tags for tag in tags):
-            continue
-        if collection:
-            collection_names = {
-                collection_lookup[key].name
-                for key in item.collections
-                if key in collection_lookup
-            }
-            if collection not in set(item.collections) | collection_names:
-                continue
-        selected.append(item)
-    return selected
-
-
 def _max_version(items: list[ZoteroItem]) -> int | None:
     versions = [item.version for item in items if item.version is not None]
     return max(versions) if versions else None
+
+
+def _resolve_collection_filter(
+    collections: list[ZoteroCollection], collection: str | None
+) -> CollectionSelection | None:
+    if collection is None:
+        return None
+    return resolve_collection(collections, collection)
+
+
+def _collection_payload(
+    selection: CollectionSelection | None,
+) -> dict[str, object] | None:
+    if selection is None:
+        return None
+    return {
+        "key": selection.key,
+        "name": selection.name,
+        "path": selection.path,
+        "matched_by": selection.matched_by,
+    }
+
+
+def _filter_payload(
+    *,
+    tags: tuple[str, ...],
+    item_types: tuple[str, ...],
+    include_status: str,
+    since_version: int | None,
+    pdf_policy: str,
+) -> dict[str, object]:
+    return {
+        "tags": list(tags),
+        "item_types": [
+            item_type.strip()
+            for part in item_types
+            for item_type in part.split(",")
+            if item_type.strip()
+        ],
+        "include_status": include_status,
+        "since_version": since_version,
+        "pdf_policy": pdf_policy,
+    }
+
+
+def _last_source_version(project_dir: Path, source_id: str) -> int | None:
+    database_path = resolve_database_path(project_dir)
+    if not database_path.exists():
+        return None
+    uri = f"file:{database_path}?mode=ro"
+    try:
+        connection = sqlite3.connect(uri, uri=True)
+        try:
+            row = connection.execute(
+                """
+                SELECT last_version
+                FROM zotero_sources
+                WHERE id = ?
+                """,
+                (source_id,),
+            ).fetchone()
+        finally:
+            connection.close()
+    except sqlite3.Error:
+        return None
+    if row is None or row[0] is None:
+        return None
+    return int(row[0])
 
 
 def _utc_now() -> str:

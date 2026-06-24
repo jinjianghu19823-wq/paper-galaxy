@@ -80,11 +80,14 @@ enabled. Start Zotero, then run:
 ```bash
 paper-galaxy zotero detect
 paper-galaxy zotero status
+paper-galaxy zotero doctor --project-dir .
 ```
 
 If the API is still unavailable, check Zotero Settings -> Advanced and confirm
 the local API is enabled. The Zotero data directory shown in Zotero settings is
 authoritative; `paper-galaxy zotero detect` only makes a best-effort guess.
+`paper-galaxy zotero doctor --json-out zotero-doctor.json` writes a no-write
+readiness report that is useful for private triage.
 
 ## Zotero Import Has Missing PDFs
 
@@ -98,6 +101,13 @@ paper-galaxy zotero import --project-dir . --include-metadata-only --build-readi
 
 Paper Galaxy does not write to Zotero, does not upload Zotero data, and does
 not copy PDFs by default.
+
+If you want to separate metadata issues from PDF extraction issues, run:
+
+```bash
+paper-galaxy zotero import --project-dir . --pdf-policy metadata --dry-run
+paper-galaxy zotero import --project-dir . --pdf-policy skip-missing --dry-run
+```
 
 ## FTS5 Unavailable
 

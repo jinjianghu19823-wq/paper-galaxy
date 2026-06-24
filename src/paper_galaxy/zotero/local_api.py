@@ -40,8 +40,15 @@ class LocalZoteroAPIClient:
     def root(self) -> dict[str, Any]:
         """Return local API root metadata if available."""
 
-        data = self.get_json("/")
-        return data if isinstance(data, dict) else {"value": data}
+        response = self.root_response()
+        if isinstance(response.data, dict):
+            return response.data
+        return {"value": response.data, "headers": response.headers}
+
+    def root_response(self) -> _APIResponse:
+        """Return the local API root response, allowing Zotero's text/plain root."""
+
+        return self._get("/", allow_non_json=True)
 
     def collections(self, *, limit: int | None = None) -> list[dict[str, Any]]:
         """Return collections from the local library."""
@@ -86,14 +93,58 @@ class LocalZoteroAPIClient:
         )
 
     def collection_items(
-        self, collection_key: str, *, limit: int | None = None
+        self,
+        collection_key: str,
+        *,
+        limit: int | None = None,
+        since: int | None = None,
     ) -> list[dict[str, Any]]:
         """Return items in one collection."""
 
+        params: dict[str, object] = {}
+        if since is not None:
+            params["since"] = since
         return self._list(
             f"{self.library_prefix}/collections/{collection_key}/items",
             limit=limit,
+            params=params,
         )
+
+    def top_items_page(
+        self,
+        *,
+        limit: int | None = None,
+        start: int = 0,
+        since: int | None = None,
+    ) -> tuple[list[dict[str, Any]], dict[str, str]]:
+        """Return one top-level item page plus response headers."""
+
+        params: dict[str, object] = {"start": max(0, start)}
+        if limit is not None:
+            params["limit"] = max(0, limit)
+        if since is not None:
+            params["since"] = since
+        return self._list_page(f"{self.library_prefix}/items/top", params=params)
+
+    def collections_page(
+        self, *, limit: int | None = None
+    ) -> tuple[list[dict[str, Any]], dict[str, str]]:
+        """Return one collections page plus response headers."""
+
+        params: dict[str, object] = {}
+        if limit is not None:
+            params["limit"] = max(0, limit)
+        return self._list_page(f"{self.library_prefix}/collections", params=params)
+
+    def tags_page(
+        self, *, limit: int | None = None
+    ) -> tuple[list[dict[str, Any]], dict[str, str]]:
+        """Return one tags page plus response headers."""
+
+        params: dict[str, object] = {}
+        if limit is not None:
+            params["limit"] = max(0, limit)
+        return self._list_page(f"{self.library_prefix}/tags", params=params)
 
     def item_children(self, item_key: str) -> list[dict[str, Any]]:
         """Return child notes and attachments for one Zotero item."""
@@ -134,8 +185,23 @@ class LocalZoteroAPIClient:
             request_params = {}
         return collected
 
+    def _list_page(
+        self, path: str, *, params: dict[str, object] | None = None
+    ) -> tuple[list[dict[str, Any]], dict[str, str]]:
+        response = self._get(path, params=params)
+        if not isinstance(response.data, list):
+            raise ZoteroAPIError(f"Expected a JSON list from Zotero path {path}.")
+        return (
+            [item for item in response.data if isinstance(item, dict)],
+            response.headers,
+        )
+
     def _get(
-        self, path_or_url: str, params: dict[str, object] | None = None
+        self,
+        path_or_url: str,
+        params: dict[str, object] | None = None,
+        *,
+        allow_non_json: bool = False,
     ) -> _APIResponse:
         url = self._url(path_or_url, params=params)
         request = Request(url, headers={"Zotero-API-Version": API_VERSION})
@@ -162,6 +228,11 @@ class LocalZoteroAPIClient:
         try:
             data = json.loads(raw.decode("utf-8")) if raw else None
         except json.JSONDecodeError as exc:
+            if allow_non_json:
+                return _APIResponse(
+                    data=raw.decode("utf-8", errors="replace"),
+                    headers=headers,
+                )
             raise ZoteroAPIError(
                 f"Zotero local API returned invalid JSON at {url}."
             ) from exc

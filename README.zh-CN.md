@@ -98,6 +98,7 @@ paper-galaxy import-project paper-galaxy-backup.zip --project-dir /path/to/resto
 paper-galaxy plugins
 paper-galaxy zotero detect
 paper-galaxy zotero status
+paper-galaxy zotero doctor --project-dir .
 paper-galaxy zotero import --project-dir . --include-pdfs --include-notes --build-reading-map
 paper-galaxy zotero graph --project-dir . --name "Zotero Reading Graph"
 paper-galaxy serve --project-dir .
@@ -116,17 +117,21 @@ Paper Galaxy 可以把本机 Zotero Desktop 库导入本地 Paper Galaxy SQLite 
 paper-galaxy init .
 paper-galaxy zotero detect
 paper-galaxy zotero status
+paper-galaxy zotero doctor --project-dir .
 paper-galaxy zotero import --project-dir . --include-pdfs --include-notes --build-reading-map
 paper-galaxy serve --project-dir .
 ```
 
 导入会创建稳定的 `doc_zotero_*` 文档 ID、Zotero 元数据表、可读本地 PDF 的文本块，以及名为 `Zotero Reading Graph` 的保存地图运行。如果 PDF 缺失、不支持或位于 Zotero data dir 之外，条目仍可作为 metadata-only 文档导入，包含题名、摘要、作者、标签、集合、笔记和 `zotero://items/<key>` 引用。
 
+真实库过滤保持显式和保守。`--collection` 可以使用 Zotero collection key、精确名称或路径；名称大小写不敏感，但歧义匹配会报清楚的错误。阅读状态过滤支持 `all`、`read`、`reading`、`to_read` 和 `unknown`；`unclassified` 仍作为 `unknown` 的旧别名接受。`--pdf-policy metadata` 可用于快速 metadata-only 导入，`--pdf-policy skip-missing` 会跳过本应有本地 PDF 但无法读取的条目。
+
 隐私边界：Zotero 连接器只使用本地 API，不写回 Zotero，不上传数据，也不会默认复制或移动 PDF。导入后的元数据和本地 PDF 抽取文本会进入 `.paper-galaxy/` 下的 Paper Galaxy 数据库，因此不要把该目录提交到 git。
 
 更多说明：
 
 - [docs/ZOTERO_INTEGRATION.zh-CN.md](docs/ZOTERO_INTEGRATION.zh-CN.md)
+- [docs/ZOTERO_REAL_WORLD_TESTING.zh-CN.md](docs/ZOTERO_REAL_WORLD_TESTING.zh-CN.md)
 - [docs/READING_GRAPH.zh-CN.md](docs/READING_GRAPH.zh-CN.md)
 
 `paper-galaxy scan` 会递归扫描本地文件夹并写出静态 HTML 地图。当前支持 `.txt`、`.md`、`.markdown`、保守解析的 `.tex`、安装可选 `pypdf` 后的基础 PDF，以及显式传入 `--include-images` 时的图片文件。

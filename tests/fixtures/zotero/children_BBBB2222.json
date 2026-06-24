@@ -9,5 +9,20 @@
       "parentItem": "BBBB2222",
       "note": "<p>Currently reading with operator approximation notes.</p>"
     }
+  },
+  {
+    "key": "ANNO2222",
+    "version": 2,
+    "data": {
+      "key": "ANNO2222",
+      "version": 2,
+      "itemType": "annotation",
+      "parentItem": "BBBB2222",
+      "annotationType": "highlight",
+      "annotationText": "<p>Branch net carries sensor values.</p>",
+      "annotationComment": "<p>Compare with trunk coordinates.</p>",
+      "annotationPageLabel": "4",
+      "annotationColor": "#ffd400"
+    }
   }
 ]

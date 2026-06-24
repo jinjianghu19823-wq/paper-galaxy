@@ -154,6 +154,7 @@ paper-galaxy import-project paper-galaxy-backup.zip --project-dir /path/to/resto
 paper-galaxy plugins
 paper-galaxy zotero detect
 paper-galaxy zotero status
+paper-galaxy zotero doctor --project-dir .
 paper-galaxy zotero import --project-dir . --include-pdfs --include-notes --build-reading-map
 paper-galaxy zotero graph --project-dir . --name "Zotero Reading Graph"
 paper-galaxy serve --project-dir .
@@ -177,6 +178,7 @@ Typical workflow:
 paper-galaxy init .
 paper-galaxy zotero detect
 paper-galaxy zotero status
+paper-galaxy zotero doctor --project-dir .
 paper-galaxy zotero import --project-dir . --include-pdfs --include-notes --build-reading-map
 paper-galaxy serve --project-dir .
 ```
@@ -188,6 +190,14 @@ or outside the Zotero data directory, the item can still become a metadata-only
 document with notes, abstract, creators, tags, collections, and a
 `zotero://items/<key>` reference.
 
+Real-library filters are intentionally explicit. `--collection` accepts a
+Zotero collection key, exact name, or path; names are case-insensitive and
+ambiguous matches fail with a clear error. Reading status filters accept
+`all`, `read`, `reading`, `to_read`, and `unknown`; `unclassified` is accepted
+as a deprecated alias for `unknown`. `--pdf-policy metadata` keeps imports fast
+and metadata-only, while `--pdf-policy skip-missing` skips items whose expected
+local PDF cannot be read.
+
 Privacy boundary: the connector uses the Zotero local API, does not write to
 Zotero, performs no upload, and does not copy or move PDFs by default. Imported
 metadata and extracted local PDF text live inside the Paper Galaxy project
@@ -196,6 +206,7 @@ database under `.paper-galaxy/`, so do not commit that directory.
 More details:
 
 - [docs/ZOTERO_INTEGRATION.md](docs/ZOTERO_INTEGRATION.md)
+- [docs/ZOTERO_REAL_WORLD_TESTING.md](docs/ZOTERO_REAL_WORLD_TESTING.md)
 - [docs/READING_GRAPH.md](docs/READING_GRAPH.md)
 
 `paper-galaxy scan` recursively scans a local folder and writes a static HTML

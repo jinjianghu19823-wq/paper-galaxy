@@ -66,7 +66,7 @@ Zotero 支持把 Zotero Desktop 只读导入 Paper Galaxy 本地项目：
 
 ```text
 Zotero Desktop local API
-  -> 规范化 Zotero 条目、集合、笔记和附件
+  -> 规范化 Zotero 条目、集合、笔记、annotations 和附件
   -> 解析本地附件路径但不复制 PDF
   -> 写入 Zotero 元数据和 Paper Galaxy 文档
   -> 建立文本块和 FTS 索引
@@ -77,6 +77,8 @@ Zotero Desktop local API
 主要路径是 Zotero 本地 API。直接读取 `zotero.sqlite` 只用于只读诊断和路径提示。Paper Galaxy 不写回 Zotero，不上传 Zotero 数据，也不会默认复制 PDF。
 
 导入的 Zotero 条目会根据 source 和 Zotero key 生成稳定 ID。metadata-only 条目使用 `zotero://items/<key>` 作为文档路径。可读本地 PDF 的抽取文本和文本块会存入 Paper Galaxy SQLite，但原 PDF 文件保持在 Zotero 原位置。
+
+真实库 beta 增加了 `paper-galaxy zotero doctor` 不写入 readiness 检查、按 key/name/path 解析 collection、校验 reading-status 过滤、本地 user-library 校验，以及 PDF 抽取、metadata-only 或跳过缺失 PDF 的显式策略。
 
 ## Phase 4 抽取质量
 

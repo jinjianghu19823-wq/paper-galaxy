@@ -24,6 +24,7 @@ from paper_galaxy.storage.migrations import initialize_database
 from paper_galaxy.storage.repository import Repository
 from paper_galaxy.storage.sqlite import connect_database, resolve_database_path
 from paper_galaxy.web.map_builder import build_map_payload
+from paper_galaxy.zotero.filters import ZoteroFilterError, normalize_reading_status
 from paper_galaxy.zotero.reading import build_zotero_reading_map_payload
 
 
@@ -46,6 +47,26 @@ def register_api_routes(app: Any, config: WebAppConfig) -> None:
     """Register JSON API routes on a FastAPI app instance."""
 
     from fastapi.responses import JSONResponse
+
+    def normalize_zotero_status_query(raw: str) -> tuple[str, list[str], Any | None]:
+        try:
+            selection = normalize_reading_status(raw, option_name="status")
+        except ZoteroFilterError as exc:
+            return (
+                "all",
+                [],
+                JSONResponse(
+                    status_code=422,
+                    content={
+                        "database_exists": True,
+                        "error": {
+                            "code": "invalid_zotero_status",
+                            "message": str(exc),
+                        },
+                    },
+                ),
+            )
+        return selection.value, ([selection.warning] if selection.warning else []), None
 
     @app.get("/api/health")
     def health() -> dict[str, object]:
@@ -138,18 +159,23 @@ def register_api_routes(app: Any, config: WebAppConfig) -> None:
                 "items": [],
                 **missing,
             }
+        normalized_status, status_warnings, error = normalize_zotero_status_query(
+            status
+        )
+        if error is not None:
+            return error
         repository = _repository(config.project_dir)
         try:
             items = repository.list_zotero_items(
                 limit=max(0, limit),
-                status=status,
+                status=normalized_status,
                 collection=collection,
                 tag=tag,
                 q=q,
             )
         finally:
             repository.connection.close()
-        return {"database_exists": True, "items": items, "warnings": []}
+        return {"database_exists": True, "items": items, "warnings": status_warnings}
 
     @app.get("/api/zotero/item/{zotero_item_id}")
     def zotero_item_detail(zotero_item_id: str) -> Any:
@@ -215,12 +241,17 @@ def register_api_routes(app: Any, config: WebAppConfig) -> None:
                         },
                     },
                 )
+        normalized_status, status_warnings, error = normalize_zotero_status_query(
+            status
+        )
+        if error is not None:
+            return error
         repository = _repository(config.project_dir)
         try:
             payload = build_zotero_reading_map_payload(
                 repository=repository,
                 project_dir=config.project_dir,
-                status=status,
+                status=normalized_status,
                 collection=collection,
                 tag=tag,
                 seed=config.seed if seed is None else seed,
@@ -252,7 +283,11 @@ def register_api_routes(app: Any, config: WebAppConfig) -> None:
             )
         finally:
             repository.connection.close()
-        return {"database_exists": True, **payload}
+        payload_warnings = payload.get("warnings", [])
+        if not isinstance(payload_warnings, list):
+            payload_warnings = []
+        warnings = [*status_warnings, *[str(item) for item in payload_warnings]]
+        return {"database_exists": True, **payload, "warnings": warnings}
 
     @app.get("/api/search")
     def search(

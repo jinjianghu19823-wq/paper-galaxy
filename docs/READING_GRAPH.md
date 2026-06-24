@@ -28,11 +28,14 @@ The first version infers a simple local status from tags:
 - `read`
 - `reading`
 - `to_read`
-- `unclassified`
+- `unknown`
 
 The import command accepts repeatable `--read-tag`, `--reading-tag`, and
 `--to-read-tag` options so users can map their own Zotero tag vocabulary without
 writing to Zotero.
+
+The old `unclassified` spelling is accepted as a deprecated alias for
+`unknown`, but new scripts should use `unknown`.
 
 ## Saved Map Run
 

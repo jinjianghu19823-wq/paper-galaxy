@@ -31,9 +31,12 @@ Paper Galaxy is local-first by default.
 - Zotero import uses the Zotero Desktop local API as a read-only connector. It
   does not write to Zotero, performs no upload, and Zotero PDFs are not copied
   by default.
-- Imported Zotero metadata, notes, extracted local PDF text, chunks, and saved
-  reading maps live in the local Paper Galaxy SQLite database under
-  `.paper-galaxy/`.
+- Imported Zotero metadata, notes, annotations, extracted local PDF text,
+  chunks, and saved reading maps live in the local Paper Galaxy SQLite database
+  under `.paper-galaxy/`.
+- `paper-galaxy zotero doctor` is a no-write local readiness check. Its JSON
+  report may still include private local paths, item titles, tags, DOI/URL
+  values, and attachment status summaries, so review it before sharing.
 - Missing and unindexed records may preserve previously extracted local text and
   chunks so the local index can recover document history without rescanning
   unavailable content.

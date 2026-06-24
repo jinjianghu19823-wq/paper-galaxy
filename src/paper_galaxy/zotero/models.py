@@ -81,6 +81,21 @@ class ZoteroNote:
 
 
 @dataclass(frozen=True)
+class ZoteroAnnotation:
+    """A child annotation item."""
+
+    key: str
+    version: int | None
+    annotation_type: str | None
+    text: str
+    comment: str
+    page_label: str | None
+    color: str | None
+    parent_key: str | None
+    raw: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
 class ZoteroItem:
     """A normalized top-level Zotero item."""
 
@@ -106,6 +121,7 @@ class ZoteroItem:
     parent_key: str | None = None
     attachments: tuple[ZoteroAttachment, ...] = ()
     notes: tuple[ZoteroNote, ...] = ()
+    annotations: tuple[ZoteroAnnotation, ...] = ()
     raw: dict[str, Any] = field(default_factory=dict)
 
 
@@ -146,10 +162,26 @@ class ZoteroImportRunSummary:
     items_unchanged: int = 0
     attachments_seen: int = 0
     attachments_resolved: int = 0
+    attachment_status_counts: dict[str, int] = field(default_factory=dict)
+    stored_attachments: int = 0
+    linked_attachments: int = 0
+    pdfs_seen: int = 0
     pdfs_extracted: int = 0
+    pdfs_missing: int = 0
+    pdfs_extraction_failed: int = 0
     notes_imported: int = 0
+    annotations_imported: int = 0
     metadata_only_documents: int = 0
     skipped: int = 0
+    items_fetched: int = 0
+    items_selected: int = 0
+    items_filtered_out: int = 0
+    filters: dict[str, object] = field(default_factory=dict)
+    selected_collection: dict[str, object] | None = None
+    include_status: str = "all"
+    since_version: int | None = None
+    last_version_before: int | None = None
+    last_version_after: int | None = None
     warnings: tuple[str, ...] = ()
     reading_status_counts: dict[str, int] = field(default_factory=dict)
     map_run_id: str | None = None

@@ -642,13 +642,24 @@ function renderZoteroInspector(documentId) {
   const section = inspectorSection(t("zotero.metadata"));
   appendText(section, "div", `Key: ${zotero.zotero_key || ""}`, "meta-row");
   appendText(section, "div", `${t("zotero.statusFilter")}: ${zotero.reading_status || "unknown"}`, "meta-row");
+  appendText(section, "div", `${t("zotero.itemType")}: ${zotero.item_type || ""}`, "meta-row");
   appendText(section, "div", `${t("zotero.creators")}: ${zotero.creators || ""}`, "meta-row");
   appendText(section, "div", `${t("zotero.publication")}: ${zotero.publication || ""}`, "meta-row");
+  appendText(section, "div", `${t("zotero.year")}: ${zotero.year || ""}`, "meta-row");
+  appendText(section, "div", `${t("zotero.doi")}: ${zotero.doi || ""}`, "meta-row");
+  appendText(section, "div", `${t("zotero.url")}: ${zotero.url || ""}`, "meta-row");
+  appendText(section, "div", `${t("zotero.dateModified")}: ${zotero.date_modified || ""}`, "meta-row");
   appendText(section, "div", `${t("zotero.tags")}: ${zotero.tags || ""}`, "meta-row");
   appendText(section, "div", `${t("zotero.collections")}: ${zotero.collections || ""}`, "meta-row");
   appendText(section, "div", `${t("zotero.attachmentStatus")}: ${zotero.attachment_status || ""}`, "meta-row");
-  if (zotero.zotero_key) {
-    appendText(section, "code", `zotero://select/items/${zotero.zotero_key}`);
+  appendText(section, "div", `${t("zotero.primaryAttachment")}: ${zotero.primary_attachment_status || ""}`, "meta-row");
+  appendText(section, "div", `${t("zotero.pdfText")}: ${zotero.pdf_text_status || ""}`, "meta-row");
+  if (zotero.zotero_uri) {
+    const link = document.createElement("a");
+    link.href = zotero.zotero_uri;
+    link.textContent = t("zotero.open");
+    link.rel = "noreferrer";
+    section.append(link);
   }
   els.inspector.append(section);
 }

@@ -25,12 +25,12 @@ from paper_galaxy.records import IndexedDocument
 from paper_galaxy.storage.migrations import initialize_database
 from paper_galaxy.storage.repository import Repository
 from paper_galaxy.storage.sqlite import connect_database, resolve_database_path
+from paper_galaxy.zotero.filters import VALID_READING_STATUSES
 from paper_galaxy.zotero.models import ZoteroItem
 
 DEFAULT_READ_TAGS = ("read", "Read", "finished")
 DEFAULT_READING_TAGS = ("reading", "Reading", "current")
 DEFAULT_TO_READ_TAGS = ("to read", "To Read", "unread", "queue")
-VALID_READING_STATUSES = {"read", "reading", "to_read", "unknown", "all"}
 
 
 def infer_reading_status(

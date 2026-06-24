@@ -13,6 +13,7 @@ PDFs are not copied by default.
 paper-galaxy init .
 paper-galaxy zotero detect
 paper-galaxy zotero status
+paper-galaxy zotero doctor --project-dir .
 paper-galaxy zotero import --project-dir . --include-pdfs --include-notes --build-reading-map
 paper-galaxy serve --project-dir .
 ```
@@ -25,7 +26,7 @@ Open the local app and switch the graph source to Zotero to inspect the saved
 - Zotero item metadata: title, item type, year, publication title, DOI, URL,
   abstract, date, version, and Zotero key.
 - Creators, tags, and collection membership.
-- Child notes when `--include-notes` is enabled.
+- Child notes and annotation text when `--include-notes` is enabled.
 - Attachment metadata and local PDF extraction when `--include-pdfs` is enabled
   and the file can be resolved locally.
 - Metadata-only documents for items without readable PDFs.
@@ -53,6 +54,10 @@ Web API sync path, no cloud sync, and no hosted account system in this feature.
   detection.
 - `paper-galaxy zotero status`: check whether Zotero Desktop local API is
   reachable.
+- `paper-galaxy zotero doctor`: no-write real-machine readiness check for the
+  local API, collections, tags, attachment samples, optional `pypdf`, and
+  existing project state.
+- `paper-galaxy zotero validate-local`: alias for `zotero doctor`.
 - `paper-galaxy zotero collections`: list local API collections.
 - `paper-galaxy zotero items`: preview top-level items without importing.
 - `paper-galaxy zotero import`: import items into local Paper Galaxy SQLite
@@ -66,8 +71,21 @@ Web API sync path, no cloud sync, and no hosted account system in this feature.
 Useful import options include `--collection`, repeatable `--tag`, repeatable
 `--item-type`, `--include-pdfs/--no-include-pdfs`,
 `--include-notes/--no-include-notes`, `--include-metadata-only`,
-`--include-status`, `--limit`, `--since-version`, `--dry-run`, `--force`, and
-`--build-reading-map`.
+`--pdf-policy`, `--include-status`, `--limit`, `--since-version`, `--dry-run`,
+`--force`, and `--build-reading-map`.
+
+`--collection` accepts a collection key, exact collection name, or slash-style
+path. Matching is case-insensitive for names and paths; ambiguous names and
+missing collections fail before import. The local beta supports only the Zotero
+Desktop user library aliases `local`, `user`, `users/0`, and `/users/0`.
+
+`--include-status` accepts `all`, `read`, `reading`, `to_read`, and `unknown`.
+The old `unclassified` spelling is accepted as a deprecated alias for
+`unknown`.
+
+`--pdf-policy extract` is the default. `metadata` records attachment metadata
+without extracting PDF text. `skip-missing` skips items that appear to have a
+PDF but cannot produce local PDF text.
 
 ## Data Location
 
@@ -94,4 +112,6 @@ to inspect counts and consistency without printing full source text.
   never copied by default.
 - Extraction errors: the import records a warning and continues with metadata.
 
-For deeper graph behavior, see [READING_GRAPH.md](READING_GRAPH.md).
+For a real-library checklist, see
+[ZOTERO_REAL_WORLD_TESTING.md](ZOTERO_REAL_WORLD_TESTING.md). For deeper graph
+behavior, see [READING_GRAPH.md](READING_GRAPH.md).

@@ -49,6 +49,16 @@ from paper_galaxy.validation import (
 )
 from paper_galaxy.web.map_builder import build_map_payload
 from paper_galaxy.zotero.detect import detect_zotero, detection_payload
+from paper_galaxy.zotero.doctor import ZoteroDoctorReport, validate_local_zotero
+from paper_galaxy.zotero.filters import (
+    ZoteroFilterError,
+    collection_paths,
+    filter_items,
+    normalize_local_library,
+    normalize_reading_status,
+    resolve_collection,
+    validate_non_empty_values,
+)
 from paper_galaxy.zotero.importers import import_from_zotero
 from paper_galaxy.zotero.local_api import (
     DEFAULT_LOCAL_API_URL,
@@ -1660,6 +1670,76 @@ def zotero_status_command(
     console.print(table)
 
 
+@zotero_app.command("doctor")
+def zotero_doctor_command(
+    project_dir: Annotated[Path, typer.Option("--project-dir")] = Path("."),
+    api_url: Annotated[
+        str,
+        typer.Option("--api-url", help="Zotero local API base URL."),
+    ] = DEFAULT_LOCAL_API_URL,
+    data_dir: Annotated[
+        Path | None,
+        typer.Option("--data-dir", help="Explicit Zotero data directory."),
+    ] = None,
+    timeout: Annotated[
+        float,
+        typer.Option("--timeout", help="Local API timeout in seconds."),
+    ] = 2.0,
+    limit: Annotated[int, typer.Option("--limit")] = 20,
+    verbose: Annotated[bool, typer.Option("--verbose")] = False,
+    json_output: Annotated[
+        bool,
+        typer.Option("--json", help="Print JSON instead of a table."),
+    ] = False,
+    json_out: Annotated[Path | None, typer.Option("--json-out")] = None,
+) -> None:
+    """Run a no-write real-machine Zotero readiness check."""
+
+    _print_zotero_doctor(
+        project_dir=project_dir,
+        api_url=api_url,
+        data_dir=data_dir,
+        timeout=timeout,
+        limit=limit,
+        verbose=verbose,
+        json_output=json_output,
+        json_out=json_out,
+    )
+
+
+@zotero_app.command("validate-local")
+def zotero_validate_local_command(
+    project_dir: Annotated[Path, typer.Option("--project-dir")] = Path("."),
+    api_url: Annotated[
+        str,
+        typer.Option("--api-url", help="Zotero local API base URL."),
+    ] = DEFAULT_LOCAL_API_URL,
+    data_dir: Annotated[
+        Path | None,
+        typer.Option("--data-dir", help="Explicit Zotero data directory."),
+    ] = None,
+    timeout: Annotated[
+        float,
+        typer.Option("--timeout", help="Local API timeout in seconds."),
+    ] = 2.0,
+    limit: Annotated[int, typer.Option("--limit")] = 20,
+    json_output: Annotated[bool, typer.Option("--json")] = False,
+    json_out: Annotated[Path | None, typer.Option("--json-out")] = None,
+) -> None:
+    """Alias for `paper-galaxy zotero doctor`."""
+
+    _print_zotero_doctor(
+        project_dir=project_dir,
+        api_url=api_url,
+        data_dir=data_dir,
+        timeout=timeout,
+        limit=limit,
+        verbose=False,
+        json_output=json_output,
+        json_out=json_out,
+    )
+
+
 @zotero_app.command("collections")
 def zotero_collections_command(
     api_url: Annotated[str, typer.Option("--api-url")] = DEFAULT_LOCAL_API_URL,
@@ -1679,10 +1759,12 @@ def zotero_collections_command(
     except ZoteroAPIError as exc:
         console.print(str(exc))
         raise typer.Exit(1) from exc
+    paths = collection_paths(rows)
     payload = [
         {
             "key": row.key,
             "name": row.name,
+            "path": paths.get(row.key),
             "parent_key": row.parent_key,
             "version": row.version,
         }
@@ -1694,9 +1776,15 @@ def zotero_collections_command(
     table = Table(title="Zotero Collections")
     table.add_column("Key")
     table.add_column("Name")
+    table.add_column("Path", overflow="fold")
     table.add_column("Parent")
     for row in payload:
-        table.add_row(str(row["key"]), str(row["name"]), str(row["parent_key"] or ""))
+        table.add_row(
+            str(row["key"]),
+            str(row["name"]),
+            str(row["path"] or ""),
+            str(row["parent_key"] or ""),
+        )
     console.print(table)
 
 
@@ -1711,20 +1799,32 @@ def zotero_items_command(
 ) -> None:
     """Preview Zotero items from the read-only local API without importing."""
 
-    del collection
     console = get_console()
+    client = LocalZoteroAPIClient(api_url)
     try:
-        rows = [
-            normalize_item(row)
-            for row in LocalZoteroAPIClient(api_url).top_items(limit=limit)
-        ]
-    except ZoteroAPIError as exc:
+        collections = [normalize_collection(row) for row in client.collections()]
+        selected_collection = (
+            resolve_collection(collections, collection) if collection else None
+        )
+        raw_rows = (
+            client.collection_items(selected_collection.key, limit=limit)
+            if selected_collection
+            else client.top_items(limit=limit)
+        )
+        rows = [normalize_item(row) for row in raw_rows]
+        if tag:
+            validate_non_empty_values((tag,), option_name="--tag")
+        if item_type:
+            validate_non_empty_values((item_type,), option_name="--item-type")
+        rows = filter_items(
+            rows,
+            collection_key=selected_collection.key if selected_collection else None,
+            tags=(tag,) if tag else (),
+            item_types=(item_type,) if item_type else (),
+        )
+    except (ZoteroAPIError, ZoteroFilterError) as exc:
         console.print(str(exc))
         raise typer.Exit(1) from exc
-    if tag:
-        rows = [row for row in rows if tag in {item.tag for item in row.tags}]
-    if item_type:
-        rows = [row for row in rows if row.item_type == item_type]
     payload = [
         {
             "key": row.key,
@@ -1762,7 +1862,16 @@ def zotero_import_command(
     project_dir: Annotated[Path, typer.Option("--project-dir")] = Path("."),
     api_url: Annotated[str, typer.Option("--api-url")] = DEFAULT_LOCAL_API_URL,
     data_dir: Annotated[Path | None, typer.Option("--data-dir")] = None,
-    library: Annotated[str, typer.Option("--library")] = "local",
+    library: Annotated[
+        str,
+        typer.Option(
+            "--library",
+            help=(
+                "Beta supports only Zotero Desktop local user library aliases: "
+                "local, user, users/0, /users/0."
+            ),
+        ),
+    ] = "local",
     collection: Annotated[str | None, typer.Option("--collection")] = None,
     tag: Annotated[list[str] | None, typer.Option("--tag")] = None,
     item_type: Annotated[list[str] | None, typer.Option("--item-type")] = None,
@@ -1782,6 +1891,13 @@ def zotero_import_command(
         bool,
         typer.Option("--include-metadata-only/--no-include-metadata-only"),
     ] = True,
+    pdf_policy: Annotated[
+        str,
+        typer.Option(
+            "--pdf-policy",
+            help="PDF handling policy: extract, metadata, or skip-missing.",
+        ),
+    ] = "extract",
     read_tag: Annotated[list[str] | None, typer.Option("--read-tag")] = None,
     reading_tag: Annotated[list[str] | None, typer.Option("--reading-tag")] = None,
     to_read_tag: Annotated[list[str] | None, typer.Option("--to-read-tag")] = None,
@@ -1801,9 +1917,9 @@ def zotero_import_command(
 ) -> None:
     """Import Zotero items into Paper Galaxy local SQLite state."""
 
-    del library
     console = get_console()
     try:
+        normalize_local_library(library)
         summary = import_from_zotero(
             project_dir=project_dir,
             api_url=api_url,
@@ -1815,6 +1931,7 @@ def zotero_import_command(
             include_notes=include_notes,
             include_attachments=include_attachments,
             include_metadata_only=include_metadata_only,
+            pdf_policy=pdf_policy,
             read_tags=tuple(read_tag or ("read", "Read", "finished")),
             reading_tags=tuple(reading_tag or ("reading", "Reading", "current")),
             to_read_tags=tuple(
@@ -1830,7 +1947,7 @@ def zotero_import_command(
             min_chars=min_chars,
             verbose=verbose,
         )
-    except ZoteroAPIError as exc:
+    except (ZoteroAPIError, ZoteroFilterError) as exc:
         console.print(str(exc))
         raise typer.Exit(1) from exc
     payload = _zotero_import_summary_payload(summary)
@@ -1873,10 +1990,17 @@ def zotero_graph_command(
 
     del show
     console = get_console()
+    try:
+        status_selection = normalize_reading_status(status, option_name="--status")
+    except ZoteroFilterError as exc:
+        console.print(str(exc))
+        raise typer.Exit(1) from exc
+    if status_selection.warning:
+        console.print(f"Warning: {status_selection.warning}")
     saved = build_and_store_zotero_reading_map(
         project_dir=project_dir,
         name=name,
-        status=status,
+        status=status_selection.value,
         collection=collection,
         tag=tag,
         seed=seed,
@@ -1903,11 +2027,18 @@ def zotero_imported_command(
     """List Zotero items already imported into Paper Galaxy."""
 
     console = get_console()
+    try:
+        status_selection = normalize_reading_status(status, option_name="--status")
+    except ZoteroFilterError as exc:
+        console.print(str(exc))
+        raise typer.Exit(1) from exc
+    if status_selection.warning:
+        console.print(f"Warning: {status_selection.warning}")
     repository = _open_repository(project_dir.expanduser().resolve())
     try:
         items = repository.list_zotero_items(
             limit=limit,
-            status=status,
+            status=status_selection.value,
             collection=collection,
             tag=tag,
         )
@@ -2069,6 +2200,58 @@ def serve_command(
         raise typer.Exit(1) from None
 
 
+def _print_zotero_doctor(
+    *,
+    project_dir: Path,
+    api_url: str,
+    data_dir: Path | None,
+    timeout: float,
+    limit: int,
+    verbose: bool,
+    json_output: bool,
+    json_out: Path | None,
+) -> None:
+    console = get_console()
+    report = validate_local_zotero(
+        project_dir=project_dir,
+        api_url=api_url,
+        data_dir=data_dir,
+        timeout=timeout,
+        limit=limit,
+        verbose=verbose,
+    )
+    payload = report.payload()
+    if json_out is not None:
+        json_out.expanduser().resolve().write_text(
+            json.dumps(payload, indent=2, sort_keys=True),
+            encoding="utf-8",
+        )
+    if json_output:
+        console.print_json(json.dumps(payload, sort_keys=True))
+        return
+    table = _zotero_doctor_table(report)
+    console.print(table)
+    if report.next_steps:
+        console.print("Next steps:")
+        for step in report.next_steps:
+            console.print(f"- {step}")
+    if json_out is not None:
+        console.print(f"JSON output: {json_out.expanduser().resolve()}")
+
+
+def _zotero_doctor_table(report: ZoteroDoctorReport) -> Table:
+    table = Table(title=f"Paper Galaxy Zotero Doctor: {report.readiness}")
+    table.add_column("Check", style="bold")
+    table.add_column("Status")
+    table.add_column("Severity")
+    table.add_column("Message", overflow="fold")
+    for check in report.checks:
+        table.add_row(check.name, check.status, check.severity, check.message)
+    table.add_row("API URL", "info", "info", report.api_url)
+    table.add_row("Project DB", "info", "info", str(report.database_path))
+    return table
+
+
 def _print_embeddings_dependency_error() -> None:
     get_console().print(
         "Missing optional dependency for Phase 5 embeddings. Install with: "
@@ -2087,15 +2270,31 @@ def _zotero_import_summary_payload(
         "database_path": str(summary.database_path),
         "dry_run": bool(summary.dry_run),
         "items_seen": int(summary.items_seen),
+        "items_fetched": int(summary.items_fetched),
+        "items_selected": int(summary.items_selected),
+        "items_filtered_out": int(summary.items_filtered_out),
         "items_imported": int(summary.items_imported),
         "items_updated": int(summary.items_updated),
         "items_unchanged": int(summary.items_unchanged),
         "attachments_seen": int(summary.attachments_seen),
         "attachments_resolved": int(summary.attachments_resolved),
+        "attachment_status_counts": dict(summary.attachment_status_counts),
+        "stored_attachments": int(summary.stored_attachments),
+        "linked_attachments": int(summary.linked_attachments),
+        "pdfs_seen": int(summary.pdfs_seen),
         "pdfs_extracted": int(summary.pdfs_extracted),
+        "pdfs_missing": int(summary.pdfs_missing),
+        "pdfs_extraction_failed": int(summary.pdfs_extraction_failed),
         "notes_imported": int(summary.notes_imported),
+        "annotations_imported": int(summary.annotations_imported),
         "metadata_only_documents": int(summary.metadata_only_documents),
         "skipped": int(summary.skipped),
+        "filters": dict(summary.filters),
+        "selected_collection": summary.selected_collection,
+        "include_status": str(summary.include_status),
+        "since_version": summary.since_version,
+        "last_version_before": summary.last_version_before,
+        "last_version_after": summary.last_version_after,
         "warnings": list(summary.warnings),
         "reading_status_counts": dict(summary.reading_status_counts),
         "map_run_id": summary.map_run_id,

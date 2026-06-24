@@ -7,6 +7,7 @@ from html.parser import HTMLParser
 from typing import Any
 
 from paper_galaxy.zotero.models import (
+    ZoteroAnnotation,
     ZoteroAttachment,
     ZoteroCollection,
     ZoteroCreator,
@@ -70,7 +71,9 @@ def normalize_collection(payload: dict[str, Any]) -> ZoteroCollection:
     )
 
 
-def normalize_child(payload: dict[str, Any]) -> ZoteroAttachment | ZoteroNote | None:
+def normalize_child(
+    payload: dict[str, Any],
+) -> ZoteroAttachment | ZoteroNote | ZoteroAnnotation | None:
     """Normalize a child note or attachment."""
 
     data = _data(payload)
@@ -98,11 +101,23 @@ def normalize_child(payload: dict[str, Any]) -> ZoteroAttachment | ZoteroNote | 
             parent_key=parent_key,
             raw=payload,
         )
+    if item_type == "annotation":
+        return ZoteroAnnotation(
+            key=key,
+            version=version,
+            annotation_type=_optional_text(data.get("annotationType")),
+            text=html_to_text(_optional_text(data.get("annotationText")) or ""),
+            comment=html_to_text(_optional_text(data.get("annotationComment")) or ""),
+            page_label=_optional_text(data.get("annotationPageLabel")),
+            color=_optional_text(data.get("annotationColor")),
+            parent_key=parent_key,
+            raw=payload,
+        )
     return None
 
 
 def attach_children(
-    item: ZoteroItem, children: list[ZoteroAttachment | ZoteroNote]
+    item: ZoteroItem, children: list[ZoteroAttachment | ZoteroNote | ZoteroAnnotation]
 ) -> ZoteroItem:
     """Return a copy of an item with normalized child records attached."""
 
@@ -131,6 +146,9 @@ def attach_children(
             child for child in children if isinstance(child, ZoteroAttachment)
         ),
         notes=tuple(child for child in children if isinstance(child, ZoteroNote)),
+        annotations=tuple(
+            child for child in children if isinstance(child, ZoteroAnnotation)
+        ),
         raw=item.raw,
     )
 

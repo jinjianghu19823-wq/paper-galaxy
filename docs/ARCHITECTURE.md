@@ -251,7 +251,7 @@ project state:
 
 ```text
 Zotero Desktop local API
-  -> normalize Zotero items, collections, notes, and attachments
+  -> normalize Zotero items, collections, notes, annotations, and attachments
   -> resolve local attachment paths without copying PDFs
   -> upsert Zotero metadata and Paper Galaxy documents
   -> chunk/index imported text
@@ -267,6 +267,11 @@ Imported Zotero items use stable IDs derived from the source and Zotero key.
 Metadata-only items use `zotero://items/<key>` as their document path. Items
 with readable local PDFs can store extracted PDF text and chunks in the Paper
 Galaxy SQLite database, but the original PDF file stays in place.
+
+The real-library beta adds no-write local readiness checks through
+`paper-galaxy zotero doctor`, explicit collection resolution by key/name/path,
+validated reading-status filters, local user-library validation, and explicit
+PDF policies for extraction, metadata-only imports, or skipping missing PDFs.
 
 The reading graph uses the same high-dimensional TF-IDF similarity, layout,
 cluster label, nearest-neighbor, and saved-map infrastructure as the document

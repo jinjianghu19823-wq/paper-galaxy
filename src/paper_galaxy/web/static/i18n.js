@@ -118,9 +118,17 @@
       "zotero.metadata": "Zotero metadata",
       "zotero.creators": "Creators",
       "zotero.publication": "Publication",
+      "zotero.itemType": "Item type",
+      "zotero.year": "Year",
+      "zotero.doi": "DOI",
+      "zotero.url": "URL",
+      "zotero.dateModified": "Date modified",
       "zotero.tags": "Tags",
       "zotero.collections": "Collections",
-      "zotero.attachmentStatus": "Attachment status"
+      "zotero.attachmentStatus": "Attachment status",
+      "zotero.primaryAttachment": "Primary attachment",
+      "zotero.pdfText": "PDF text",
+      "zotero.open": "Open in Zotero"
     },
     "zh-CN": {
       "app.checking": "正在检查本地数据库...",
@@ -236,9 +244,17 @@
       "zotero.metadata": "Zotero 元数据",
       "zotero.creators": "作者",
       "zotero.publication": "出版信息",
+      "zotero.itemType": "条目类型",
+      "zotero.year": "年份",
+      "zotero.doi": "DOI",
+      "zotero.url": "URL",
+      "zotero.dateModified": "修改时间",
       "zotero.tags": "标签",
       "zotero.collections": "Collections",
-      "zotero.attachmentStatus": "附件状态"
+      "zotero.attachmentStatus": "附件状态",
+      "zotero.primaryAttachment": "主附件",
+      "zotero.pdfText": "PDF 文本",
+      "zotero.open": "在 Zotero 中打开"
     }
   };
 
