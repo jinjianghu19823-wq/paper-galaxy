@@ -1,9 +1,14 @@
 from __future__ import annotations
 
 import json
+import threading
+from contextlib import contextmanager
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, ClassVar
+from urllib.parse import parse_qs, urlparse
 
+import pytest
 from fastapi.testclient import TestClient
 from typer.testing import CliRunner
 
@@ -295,6 +300,33 @@ def test_local_api_collection_items_passes_since(monkeypatch: object) -> None:
     )
 
 
+def test_local_api_client_against_fake_http_server() -> None:
+    with _fake_zotero_http_server() as server:
+        client = LocalZoteroAPIClient(server["base_url"], timeout=1.0)
+
+        assert client.root()["value"] == "Nothing to see here."
+        assert [row["key"] for row in client.top_items(since=9)] == [
+            "AAAA1111",
+            "BBBB2222",
+        ]
+        assert client.collections()[0]["key"] == "COLLREAD"
+        assert client.collection_items("COLLREAD")[0]["key"] == "AAAA1111"
+        assert client.item_children("AAAA1111")[0]["key"] == "NOTE1111"
+
+        with pytest.raises(ZoteroAPIError, match="HTTP 500"):
+            client.get_json("/users/0/fail")
+
+        paths = [row["path"] for row in server["seen"]]
+        assert "/api/users/0/items/top" in paths
+        assert "/api/users/0/collections/COLLREAD/items" in paths
+        assert all(row["version"] == "3" for row in server["seen"])
+        top_queries = [
+            row["query"] for row in server["seen"] if row["path"].endswith("/items/top")
+        ]
+        assert {"since": ["9"], "start": ["0"]} in top_queries
+        assert {"since": ["9"], "start": ["1"]} in top_queries
+
+
 def test_import_creates_zotero_rows_documents_and_map_run(tmp_path: Path) -> None:
     data_dir = tmp_path / "Zotero"
     pdf_dir = data_dir / "storage" / "ATTACH11"
@@ -386,6 +418,34 @@ def test_import_collection_name_is_idempotent(tmp_path: Path) -> None:
     assert client.children_calls == ["AAAA1111", "BBBB2222"]
 
 
+def test_import_pdf_policy_metadata_and_skip_missing(tmp_path: Path) -> None:
+    metadata_summary = import_from_zotero(
+        project_dir=tmp_path / "metadata",
+        data_dir=tmp_path / "missing-zotero",
+        client=FakeZoteroClient(),
+        pdf_policy="metadata",
+        build_reading_map=False,
+        min_chars=20,
+    )
+    skip_summary = import_from_zotero(
+        project_dir=tmp_path / "skip",
+        data_dir=tmp_path / "missing-zotero",
+        client=FakeZoteroClient(),
+        pdf_policy="skip-missing",
+        build_reading_map=False,
+        min_chars=20,
+    )
+
+    assert metadata_summary.items_imported == 3
+    assert metadata_summary.pdfs_seen == 1
+    assert metadata_summary.pdfs_extracted == 0
+    assert metadata_summary.metadata_only_documents == 3
+    assert any("PDF extraction disabled" in row for row in metadata_summary.warnings)
+    assert skip_summary.items_imported == 2
+    assert skip_summary.skipped == 1
+    assert any("--pdf-policy skip-missing" in row for row in skip_summary.warnings)
+
+
 def test_import_dry_run_writes_nothing(tmp_path: Path) -> None:
     summary = import_from_zotero(
         project_dir=tmp_path,
@@ -423,6 +483,30 @@ def test_import_invalid_status_and_alias(tmp_path: Path) -> None:
     assert any("deprecated" in warning for warning in summary.warnings)
 
 
+def test_import_filters_by_tag_status_and_empty_filters(tmp_path: Path) -> None:
+    selected = import_from_zotero(
+        project_dir=tmp_path / "selected",
+        client=FakeZoteroClient(),
+        tags=("operator learning",),
+        include_status="read",
+        dry_run=True,
+    )
+    empty = import_from_zotero(
+        project_dir=tmp_path / "empty",
+        client=FakeZoteroClient(),
+        tags=("not-a-real-tag",),
+        dry_run=True,
+    )
+
+    assert selected.items_fetched == 3
+    assert selected.items_selected == 1
+    assert selected.items_filtered_out == 2
+    assert selected.filters["tags"] == ["operator learning"]
+    assert selected.include_status == "read"
+    assert empty.items_selected == 0
+    assert any("No Zotero parent items matched" in row for row in empty.warnings)
+
+
 def test_zotero_items_cli_filters_collection_key_and_name(
     monkeypatch: object,
 ) -> None:
@@ -446,6 +530,101 @@ def test_zotero_items_cli_filters_collection_key_and_name(
     assert "BBBB2222" in by_name.output
     assert "CCCC3333" not in by_name.output
     assert "Queue Paper About Sparse Solvers" not in by_name.output
+
+
+def test_zotero_cli_rejects_invalid_library_and_status(tmp_path: Path) -> None:
+    runner = CliRunner()
+
+    invalid_library = runner.invoke(
+        app,
+        [
+            "zotero",
+            "import",
+            "--project-dir",
+            str(tmp_path),
+            "--library",
+            "groups/1",
+            "--dry-run",
+        ],
+    )
+    invalid_graph_status = runner.invoke(
+        app,
+        [
+            "zotero",
+            "graph",
+            "--project-dir",
+            str(tmp_path),
+            "--status",
+            "finished",
+        ],
+    )
+    invalid_imported_status = runner.invoke(
+        app,
+        [
+            "zotero",
+            "imported",
+            "--project-dir",
+            str(tmp_path),
+            "--status",
+            "finished",
+        ],
+    )
+
+    assert invalid_library.exit_code == 1
+    assert "Only Zotero Desktop local user library" in invalid_library.output
+    assert invalid_graph_status.exit_code == 1
+    assert "Invalid --status value" in invalid_graph_status.output
+    assert invalid_imported_status.exit_code == 1
+    assert "Invalid --status value" in invalid_imported_status.output
+
+
+def test_zotero_items_cli_reports_collection_errors(monkeypatch: object) -> None:
+    runner = CliRunner()
+
+    class DuplicateCollectionClient(FakeZoteroClient):
+        def __init__(self, api_url: str) -> None:
+            del api_url
+            super().__init__()
+
+        def collections(self, *, limit: int | None = None) -> list[dict[str, Any]]:
+            del limit
+            return [
+                {
+                    "key": "DUPA1111",
+                    "version": 1,
+                    "data": {"key": "DUPA1111", "name": "Duplicate"},
+                },
+                {
+                    "key": "DUPB2222",
+                    "version": 1,
+                    "data": {"key": "DUPB2222", "name": "Duplicate"},
+                },
+            ]
+
+    class NormalCollectionClient(FakeZoteroClient):
+        def __init__(self, api_url: str) -> None:
+            del api_url
+            super().__init__()
+
+    monkeypatch.setattr(
+        "paper_galaxy.cli.LocalZoteroAPIClient",
+        DuplicateCollectionClient,
+    )
+    ambiguous = runner.invoke(app, ["zotero", "items", "--collection", "Duplicate"])
+
+    monkeypatch.setattr(
+        "paper_galaxy.cli.LocalZoteroAPIClient",
+        NormalCollectionClient,
+    )
+    missing = runner.invoke(app, ["zotero", "items", "--collection", "Nope"])
+
+    assert ambiguous.exit_code == 1
+    assert "ambiguous" in ambiguous.output
+    assert "DUPA1111" in ambiguous.output
+    assert "DUPB2222" in ambiguous.output
+    assert missing.exit_code == 1
+    assert "No Zotero collection matched" in missing.output
+    assert "paper-galaxy zotero collections" in missing.output
 
 
 def test_zotero_doctor_json_out_does_not_create_project_db(
@@ -527,6 +706,21 @@ def test_zotero_doctor_json_out_does_not_create_project_db(
     assert payload["counts"]["top_items_total"] == 3
     assert not resolve_database_path(tmp_path / "project").exists()
 
+    json_result = runner.invoke(
+        app,
+        [
+            "zotero",
+            "doctor",
+            "--project-dir",
+            str(tmp_path / "json-project"),
+            "--json",
+        ],
+    )
+    stdout_payload = json.loads(json_result.output)
+    assert json_result.exit_code == 0, json_result.output
+    assert stdout_payload["counts"]["collections_total"] == 2
+    assert not resolve_database_path(tmp_path / "json-project").exists()
+
 
 def test_zotero_cli_help_commands() -> None:
     runner = CliRunner()
@@ -588,6 +782,15 @@ def test_zotero_web_api_empty_and_imported_states(tmp_path: Path) -> None:
     client = TestClient(create_app(tmp_path))
     status = client.get("/api/zotero/status").json()
     items = client.get("/api/zotero/items").json()
+    read_items = client.get("/api/zotero/items", params={"status": "read"}).json()
+    tag_items = client.get(
+        "/api/zotero/items",
+        params={"tag": "operator learning"},
+    ).json()
+    collection_items = client.get(
+        "/api/zotero/items",
+        params={"collection": "Read Papers"},
+    ).json()
     fno_id = next(
         item["id"]
         for item in items["items"]
@@ -595,17 +798,204 @@ def test_zotero_web_api_empty_and_imported_states(tmp_path: Path) -> None:
     )
     detail = client.get(f"/api/zotero/item/{fno_id}").json()
     reading_map = client.get("/api/zotero/reading-map").json()
+    filtered_map = client.get(
+        "/api/zotero/reading-map",
+        params={"status": "read", "collection": "Read Papers"},
+    ).json()
     invalid = client.get("/api/zotero/items?status=finished")
 
     assert status["zotero"]["imported_item_count"] == 3
     assert len(items["items"]) == 3
+    assert [item["reading_status"] for item in read_items["items"]] == ["read"]
+    assert [item["title"] for item in tag_items["items"]] == [
+        "Fourier Neural Operator Memory"
+    ]
+    assert {item["title"] for item in collection_items["items"]} == {
+        "Fourier Neural Operator Memory",
+        "Deep Operator Network Reading Note",
+    }
     assert detail["item"]["id"] == fno_id
     assert detail["item"]["doi"] == "10.0000/fno"
     assert detail["item"]["zotero_uri"] == "zotero://select/items/AAAA1111"
+    assert detail["item"]["creators"]
+    assert detail["item"]["tags"]
+    assert detail["item"]["collections"]
+    assert detail["item"]["attachments"]
     assert len(reading_map["points"]) == 3
     assert reading_map["clusters"]
     assert reading_map["documents"][0]["zotero"]["item_type"]
+    assert len(filtered_map["points"]) == 1
     assert invalid.status_code == 422
+
+
+def test_attachment_resolution_covers_real_world_path_statuses(tmp_path: Path) -> None:
+    data_dir = tmp_path / "Zotero"
+    outside_dir = tmp_path / "outside"
+    relative_dir = data_dir / "linked"
+    outside_dir.mkdir()
+    relative_dir.mkdir(parents=True)
+    outside_pdf = outside_dir / "paper.pdf"
+    relative_pdf = relative_dir / "relative.pdf"
+    outside_pdf.write_bytes(b"%PDF-1.4 outside")
+    relative_pdf.write_bytes(b"%PDF-1.4 relative")
+
+    linked_outside = resolve_attachment_path(
+        ZoteroAttachment(
+            key="LINKOUT1",
+            version=1,
+            title="Linked outside",
+            filename="paper.pdf",
+            content_type="application/pdf",
+            path=str(outside_pdf),
+            link_mode="linked_file",
+            parent_key="AAAA1111",
+        ),
+        data_dir=data_dir,
+    )
+    linked_missing = resolve_attachment_path(
+        ZoteroAttachment(
+            key="LINKMISS",
+            version=1,
+            title="Linked missing",
+            filename="missing.pdf",
+            content_type="application/pdf",
+            path=str(outside_dir / "missing.pdf"),
+            link_mode="linked_file",
+            parent_key="AAAA1111",
+        ),
+        data_dir=data_dir,
+    )
+    linked_relative = resolve_attachment_path(
+        ZoteroAttachment(
+            key="LINKREL1",
+            version=1,
+            title="Linked relative",
+            filename="relative.pdf",
+            content_type="application/pdf",
+            path="linked/relative.pdf",
+            link_mode="linked_file",
+            parent_key="AAAA1111",
+        ),
+        data_dir=data_dir,
+    )
+    no_local_file = resolve_attachment_path(
+        ZoteroAttachment(
+            key="NOLOCAL1",
+            version=1,
+            title="Web snapshot",
+            filename=None,
+            content_type="text/html",
+            path=None,
+            link_mode="linked_url",
+            parent_key="AAAA1111",
+        ),
+        data_dir=data_dir,
+    )
+
+    assert linked_outside.status == "linked_outside_data_dir"
+    assert linked_missing.status == "missing"
+    assert linked_relative.status == "resolved"
+    assert linked_relative.resolved_path == relative_pdf.resolve()
+    assert no_local_file.status == "no_local_file"
+
+
+@contextmanager
+def _fake_zotero_http_server() -> Any:
+    seen: list[dict[str, object]] = []
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            parsed = urlparse(self.path)
+            query = parse_qs(parsed.query)
+            seen.append(
+                {
+                    "path": parsed.path,
+                    "query": query,
+                    "version": self.headers.get("Zotero-API-Version"),
+                }
+            )
+            if parsed.path == "/api/":
+                self._send_text(
+                    "Nothing to see here.",
+                    headers={"Zotero-API-Version": "3"},
+                )
+                return
+            if parsed.path == "/api/users/0/items/top":
+                start = query.get("start", ["0"])[0]
+                if start == "0":
+                    next_url = (
+                        f"http://{self.server.server_address[0]}:"
+                        f"{self.server.server_address[1]}"
+                        "/api/users/0/items/top?start=1&since=9"
+                    )
+                    self._send_json(
+                        [_load("top_items.json")[0]],
+                        headers={"Link": f'<{next_url}>; rel="next"'},
+                    )
+                    return
+                self._send_json([_load("top_items.json")[1]])
+                return
+            if parsed.path == "/api/users/0/collections":
+                self._send_json(_load("collections.json"))
+                return
+            if parsed.path == "/api/users/0/collections/COLLREAD/items":
+                self._send_json([_load("top_items.json")[0]])
+                return
+            if parsed.path == "/api/users/0/items/AAAA1111/children":
+                self._send_json(_load("children_AAAA1111.json")[1:])
+                return
+            if parsed.path == "/api/users/0/fail":
+                self._send_json({"error": "boom"}, status=500)
+                return
+            self._send_json({"error": "missing"}, status=404)
+
+        def log_message(self, *_args: object) -> None:
+            return
+
+        def _send_json(
+            self,
+            payload: object,
+            *,
+            status: int = 200,
+            headers: dict[str, str] | None = None,
+        ) -> None:
+            raw = json.dumps(payload).encode("utf-8")
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Zotero-API-Version", "3")
+            for key, value in (headers or {}).items():
+                self.send_header(key, value)
+            self.end_headers()
+            self.wfile.write(raw)
+
+        def _send_text(
+            self,
+            payload: str,
+            *,
+            headers: dict[str, str] | None = None,
+        ) -> None:
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain")
+            for key, value in (headers or {}).items():
+                self.send_header(key, value)
+            self.end_headers()
+            self.wfile.write(payload.encode("utf-8"))
+
+    try:
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    except PermissionError as exc:
+        pytest.skip(f"Loopback HTTP server unavailable in this sandbox: {exc}")
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield {
+            "base_url": f"http://{server.server_address[0]}:{server.server_address[1]}/api",
+            "seen": seen,
+        }
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
 
 
 def _load(name: str) -> list[dict[str, Any]]:
