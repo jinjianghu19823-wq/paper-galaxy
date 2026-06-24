@@ -83,9 +83,20 @@ python scripts/check_demo_site.py --dist site_dist
 
 ## Quickstart
 
-## Development Setup
+Paper Galaxy is useful in two current modes:
+
+1. Import a Zotero Desktop library or collection into a local reading graph.
+2. Index your own local folder of papers, notes, and drafts without Zotero.
+
+In both modes, Paper Galaxy writes local project state to `.paper-galaxy/` and
+opens a browser app from your own machine. It does not upload documents or run a
+hosted backend.
+
+## Install From Source
 
 ```bash
+git clone https://github.com/jinjianghu19823-wq/paper-galaxy.git
+cd paper-galaxy
 python -m venv .venv
 source .venv/bin/activate
 python -m pip install -e ".[dev,ml,pdf,app]"
@@ -121,6 +132,90 @@ uv pip install -e ".[dev,ml,pdf,app]"
 paper-galaxy doctor
 python -m pytest
 ```
+
+## Build Your First Galaxy
+
+### Option A: Import From Zotero Desktop
+
+Open Zotero Desktop first so its local API is available. Paper Galaxy uses the
+Zotero local API at `http://localhost:23119/api/` and treats Zotero as
+read-only.
+
+```bash
+paper-galaxy init .
+paper-galaxy zotero detect
+paper-galaxy zotero status
+paper-galaxy zotero collections
+paper-galaxy zotero import --project-dir . --include-pdfs --include-notes --build-reading-map
+paper-galaxy serve --project-dir . --open
+```
+
+To import one collection, pass a Zotero collection name, path, or key:
+
+```bash
+paper-galaxy zotero import \
+  --project-dir . \
+  --collection "Dissertation" \
+  --include-pdfs \
+  --include-notes \
+  --build-reading-map
+```
+
+Useful Zotero import options:
+
+- `--collection "Name"` imports a specific collection.
+- `--tag "tag name"` imports items with a tag.
+- `--item-type journalArticle` narrows by Zotero item type.
+- `--include-status read|reading|to_read|unknown|all` filters by reading status
+  tags.
+- `--pdf-policy extract` extracts local PDF text when possible.
+- `--pdf-policy metadata` imports metadata quickly without extracting PDFs.
+- `--pdf-policy skip-missing` skips items whose expected local PDFs cannot be
+  read.
+
+If a PDF is missing or unsupported, the Zotero item can still appear as a
+metadata-only document with title, creators, abstract, tags, collections, notes,
+and a `zotero://items/<key>` link. Imported Zotero data and extracted text live
+inside `.paper-galaxy/`, so do not commit that directory.
+
+### Option B: Import A Local Folder Without Zotero
+
+Yes: Paper Galaxy can already index papers and notes directly from a local
+folder. This is the best path if your papers are in a directory rather than a
+Zotero library.
+
+```bash
+paper-galaxy init .
+paper-galaxy index /path/to/your/papers --project-dir . --min-chars 40
+paper-galaxy db-stats --project-dir .
+paper-galaxy search "neural operator" --project-dir .
+paper-galaxy serve --project-dir . --open
+```
+
+The source folder may be outside the Paper Galaxy repo. Paper Galaxy does not
+copy or move your source files by default; it stores extracted text, chunks,
+metadata, labels, vectors when requested, and map runs under `.paper-galaxy/`.
+
+For a quick smoke test with the bundled synthetic corpus:
+
+```bash
+paper-galaxy init . --force
+paper-galaxy index examples/tiny_corpus --project-dir . --min-chars 40
+paper-galaxy serve --project-dir . --open
+```
+
+Current local-folder formats:
+
+- `.txt`
+- `.md`
+- `.markdown`
+- `.tex` with conservative structure extraction
+- `.pdf` when the `pdf` extra has installed `pypdf`
+- images such as `.png`, `.jpg`, `.webp`, and `.tiff` only when
+  `--include-images --ocr` is used with local OCR dependencies
+
+Use `paper-galaxy scan /path/to/your/papers --out galaxy.html --force` when you
+want a one-file offline HTML export instead of a SQLite-backed local web app.
 
 ## CLI
 
@@ -359,9 +454,9 @@ install feedback, extraction quality feedback, graph usability fixes, and
 privacy-safe issue triage. The future personal cloud library is design-only and
 not implemented; see [docs/CLOUD_LIBRARY_DESIGN.md](docs/CLOUD_LIBRARY_DESIGN.md).
 
-There is still no cloud dependency, Zotero integration, desktop packaging,
-account system, telemetry, LLM chat, mandatory LLM labeling, remote plugin
-loading, or React/Node frontend in the local app.
+There is still no cloud dependency, Zotero write-back, Zotero online sync,
+desktop packaging, account system, telemetry, LLM chat, mandatory LLM labeling,
+remote plugin loading, or React/Node frontend in the local app.
 
 ## Public Alpha Resources
 
