@@ -129,7 +129,11 @@ def _shared_terms(
     shared_scores = source_values * target_values
     ordered = sorted(
         range(len(terms)),
-        key=lambda index: (-round(float(shared_scores[index]), 4), terms[index]),
+        key=lambda index: (
+            -float(shared_scores[index]),
+            terms[index].casefold(),
+            terms[index],
+        ),
     )
     result: list[TermScore] = []
     for index in ordered:
@@ -173,15 +177,27 @@ def _chunk_matches(
     source_matrix = matrix[: len(source_chunks)]
     target_matrix = matrix[len(source_chunks) :]
     scores = cosine_similarity(source_matrix, target_matrix)
-    candidates: list[tuple[float, int, int]] = []
+    candidates: list[tuple[float, int, str, int, str, int, int]] = []
     for source_index in range(scores.shape[0]):
         for target_index in range(scores.shape[1]):
             score = float(scores[source_index][target_index])
             if score > 0:
-                candidates.append((score, source_index, target_index))
-    candidates.sort(key=lambda item: (-item[0], item[1], item[2]))
+                source = source_chunks[source_index]
+                target = target_chunks[target_index]
+                candidates.append(
+                    (
+                        score,
+                        source.chunk_index,
+                        source.id,
+                        target.chunk_index,
+                        target.id,
+                        source_index,
+                        target_index,
+                    )
+                )
+    candidates.sort(key=lambda item: (-item[0], *item[1:5]))
     matches: list[ChunkMatch] = []
-    for score, source_index, target_index in candidates[:limit]:
+    for score, _, _, _, _, source_index, target_index in candidates[:limit]:
         source = source_chunks[source_index]
         target = target_chunks[target_index]
         shared = _shared_chunk_terms(source.text, target.text)

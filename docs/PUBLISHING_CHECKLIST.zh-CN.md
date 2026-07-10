@@ -22,7 +22,9 @@ python scripts/check_live_site.py --allow-not-deployed
 `clean-build`（以及兼容的 `clean` / `clean-artifacts` target）只删除明确的
 构建产物和工具 cache，不会删除本地项目、数据库、Zotero 数据、备份、向量
 索引或用户导出。默认 demo 构建只写 `site_dist/`，并且必须保持 tracked source
-不变。
+不变。Demo 只从已校验的 sibling staging 目录发布；仅空目录或带受支持 build
+marker 的输出可被替换，symlink、危险路径和非空未认领目录必须失败。公开 JSON
+数值必须有限并规范为小数点后最多八位。
 
 也可以运行：
 

@@ -28,6 +28,17 @@ def test_top_terms_keep_small_positive_scores_after_zero_ties() -> None:
     assert [term.term for term in result] == ["alpha-positive", "zeta-positive"]
 
 
+def test_top_terms_use_exact_score_before_tie_breaking_at_limit() -> None:
+    from scipy.sparse import csr_matrix
+
+    terms = ["alpha-signal", "zeta-signal"]
+    row = csr_matrix([[0.50001, 0.50002]])
+
+    result = _top_terms(row, terms, limit=1)
+
+    assert [term.term for term in result] == ["zeta-signal"]
+
+
 def test_ctfidf_labels_filter_generic_filler_and_preserve_evidence() -> None:
     documents = [
         Document(

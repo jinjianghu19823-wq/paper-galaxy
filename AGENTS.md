@@ -116,6 +116,9 @@ runtime features unless explicitly asked.
 - Default demo builds write generated data only inside the requested output
   directory. Source fixture refreshes must be explicit and must not run in CI,
   Pages, release checks, or default builds.
+- Demo publication must use a validated sibling staging directory. It may
+  replace only an empty directory or a supported build-marked output; never
+  follow output symlinks or replace an unowned non-empty directory.
 - Do not commit `.paper-galaxy/`, `*.sqlite3`, `galaxy.html`, `galaxy.json`,
   `extraction-report.json`, `validation.json`, `map-run*.json`,
   `paper-galaxy-backup*.zip`, local vector index files, downloaded model files,

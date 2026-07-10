@@ -6,6 +6,12 @@
 
 ## Unreleased
 
+- 用先 staging、后校验、再发布的流程替换 demo 输出目录的破坏性覆盖。只有空目录或
+  带受支持 Paper Galaxy 构建 marker 的输出可被替换；symlink、危险路径和未认领
+  目录会被拒绝，并支持失败回滚与中断恢复。
+- 主题词和 pair explanation 先按精确分数排序，再使用稳定 secondary key；公开
+  demo 浮点统一为小数点后最多八位、有限 JSON 数值和正零，并规范 cluster ID 与
+  UTF-8 序列化。
 - 将发布清理收窄为仅清理构建产物：`clean`、`clean-build`、发布检查和兼容的
   `clean-artifacts` target 都会保留本地项目、数据库、Zotero 数据、备份、
   向量索引和用户导出。

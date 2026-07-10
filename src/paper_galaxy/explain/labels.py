@@ -107,6 +107,8 @@ def label_clusters_ctfidf(
     cluster_documents: dict[int, list[Document]] = {}
     for document, cluster_id in zip(documents, cluster_ids, strict=True):
         cluster_documents.setdefault(cluster_id, []).append(document)
+    for cluster_docs in cluster_documents.values():
+        cluster_docs.sort(key=lambda document: (document.relative_path, document.id))
 
     ordered_cluster_ids = sorted(cluster_documents)
     cluster_texts = [
@@ -187,6 +189,7 @@ def fallback_cluster_labels(
             for document, assigned in zip(documents, cluster_ids, strict=True)
             if assigned == cluster_id
         ]
+        cluster_docs.sort(key=lambda document: (document.relative_path, document.id))
         signature = cluster_signature([document.id for document in cluster_docs])
         generated = generated_labels.get(cluster_id) or f"Cluster {cluster_id}"
         labels.append(
@@ -215,7 +218,11 @@ def _top_terms(row: Any, terms: list[str], *, limit: int) -> list[TermScore]:
     scores = row.toarray()[0]
     ordered = sorted(
         range(len(terms)),
-        key=lambda index: (-round(float(scores[index]), 4), terms[index]),
+        key=lambda index: (
+            -float(scores[index]),
+            terms[index].casefold(),
+            terms[index],
+        ),
     )
     result: list[TermScore] = []
     seen: set[str] = set()
@@ -248,7 +255,7 @@ def _representatives(
     limit: int,
 ) -> list[DocumentSummary]:
     term_values = [term.term.lower() for term in terms]
-    scored: list[DocumentSummary] = []
+    scored: list[tuple[float, DocumentSummary]] = []
     for document in documents:
         searchable = (
             f"{document.title} {document.relative_path} {document.text}".lower()
@@ -256,16 +263,21 @@ def _representatives(
         score = sum(1.0 for term in term_values if term in searchable)
         score += min(document.char_count / 10000, 0.5)
         scored.append(
-            DocumentSummary(
-                document_id=document.id,
-                title=document.title,
-                relative_path=document.relative_path,
-                score=round(score, 4),
+            (
+                score,
+                DocumentSummary(
+                    document_id=document.id,
+                    title=document.title,
+                    relative_path=document.relative_path,
+                    score=round(score, 4),
+                ),
             )
         )
-    return sorted(scored, key=lambda item: (-item.score, item.relative_path))[
-        : max(0, limit)
-    ]
+    ranked = sorted(
+        scored,
+        key=lambda item: (-item[0], item[1].relative_path, item[1].document_id),
+    )
+    return [summary for _, summary in ranked[: max(0, limit)]]
 
 
 def _is_informative_term(term: str) -> bool:

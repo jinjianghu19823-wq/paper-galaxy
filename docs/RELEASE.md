@@ -70,6 +70,13 @@ git status --porcelain
 
 The default build writes generated JSON only to
 `site_dist/data/tiny-map.json`; `site_dist/` is generated and gitignored. The
+builder publishes with crash-recoverable sibling renames only after validating
+a staging directory. It can
+replace an empty directory or a supported build-marked output, but refuses
+symlinks, dangerous paths, and non-empty unowned directories. The initial
+`make clean-build` removes a legacy unmarked build output without touching
+project data. Public floats use the documented finite, at-most-eight-decimal
+contract. The
 committed `site/data/tiny-map.json` fixture may be updated only when an
 intentional payload change requires it:
 

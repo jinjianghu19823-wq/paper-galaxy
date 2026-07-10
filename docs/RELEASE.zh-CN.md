@@ -69,7 +69,12 @@ python scripts/check_live_site.py --allow-not-deployed
 
 这是一项版本控制/公开内容审计，不是删除本机数据的指令。被 Git 忽略的本地
 项目状态应保留；`clean-build` 不会触碰它。默认 demo 构建只写
-`site_dist/data/tiny-map.json`，不会修改 `site/`。只有在明确更新 committed
+`site_dist/data/tiny-map.json`，不会修改 `site/`。构建器先在 sibling staging
+目录完成构建和校验，再用可崩溃恢复的 sibling rename 发布；它只能替换空目录或
+带受支持 marker 的构建输出，并拒绝 symlink、危险路径和非空未认领目录。开头的
+`make clean-build` 可清理旧的无 marker 构建产物，但不会触碰项目数据。公开浮点
+采用有限数值、小数点后最多八位的契约。
+只有在明确更新 committed
 fixture 时才运行：
 
 ```bash

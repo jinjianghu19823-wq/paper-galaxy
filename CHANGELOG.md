@@ -4,6 +4,14 @@
 
 ## Unreleased
 
+- Replaced destructive demo output replacement with a staged, validated
+  publisher. Only empty directories or outputs carrying a supported Paper
+  Galaxy build marker can be replaced; symlinked, dangerous, and unowned
+  destinations are rejected with rollback-safe recovery.
+- Restored exact-score ranking before stable tie-breaks for cluster terms and
+  pair explanations, and rounded public demo floats to at most eight decimal
+  places with finite JSON numbers, positive zero, canonical cluster IDs, and
+  stable UTF-8 serialization.
 - Made release cleanup build-only: `clean`, `clean-build`, release checks, and
   the compatibility `clean-artifacts` target preserve local projects,
   databases, Zotero data, backups, vector indexes, and user exports.

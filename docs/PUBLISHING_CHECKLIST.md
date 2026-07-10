@@ -21,7 +21,11 @@ python scripts/check_live_site.py --allow-not-deployed
 removes only explicit build outputs and tool caches. It does not delete local
 projects, databases, Zotero data, backups, vector indexes, or user exports.
 The default demo build writes generated data only inside `site_dist/` and must
-leave tracked sources unchanged.
+leave tracked sources unchanged. Demo publication happens from a validated
+sibling staging directory. Only empty or supported build-marked outputs are
+replaceable; symlinks, dangerous paths, and non-empty unowned directories are
+hard failures. Public JSON numbers are finite and rounded to at most eight
+decimal places.
 
 Also useful:
 
