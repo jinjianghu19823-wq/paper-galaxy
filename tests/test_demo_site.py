@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import shutil
 from pathlib import Path
 from typing import Any
 
-from scripts.build_demo_site import build_demo_payload, build_demo_site
+from paper_galaxy.ml.tfidf import top_terms_for_documents
+from scripts.build_demo_site import DEMO_NAMESPACE, build_demo_payload, build_demo_site
 from scripts.check_demo_site import check_demo_site
 
 
@@ -16,11 +18,12 @@ def test_build_demo_site_creates_static_output(tmp_path: Path) -> None:
     source_data = site_copy / "data" / "tiny-map.json"
     source_fixture = b'{"source_fixture":"must-not-change"}\n'
     source_data.write_bytes(source_fixture)
+    source_tree_before = _tree_contents(site_copy)
 
     output = build_demo_site(site_dir=site_copy, output_dir=dist)
 
     assert output == dist.resolve()
-    assert source_data.read_bytes() == source_fixture
+    assert _tree_contents(site_copy) == source_tree_before
     assert (dist / "index.html").exists()
     assert (dist / "demo" / "index.html").exists()
     assert (dist / "zh-cn" / "index.html").exists()
@@ -108,6 +111,16 @@ def test_demo_payload_is_identical_across_repeated_builds(tmp_path: Path) -> Non
     assert first == second
 
 
+def test_document_top_terms_use_term_as_a_tie_breaker() -> None:
+    from scipy.sparse import csr_matrix
+
+    matrix = csr_matrix([[1.0, 1.0, 0.5]])
+
+    assert top_terms_for_documents(matrix, ["zeta", "alpha", "beta"]) == [
+        ["alpha", "zeta", "beta"]
+    ]
+
+
 def test_demo_payload_uses_only_demo_namespaced_external_ids() -> None:
     payload = build_demo_payload(corpus_dir=Path("examples/tiny_corpus"))
     documents = payload["documents"]
@@ -116,6 +129,10 @@ def test_demo_payload_uses_only_demo_namespaced_external_ids() -> None:
     explanations = payload["explanations"]
 
     document_ids = {str(document["document_id"]) for document in documents}
+    relative_path_by_id = {
+        str(document["document_id"]): str(document["relative_path"])
+        for document in documents
+    }
     cluster_signatures = {str(cluster["cluster_signature"]) for cluster in clusters}
 
     assert all(document_id.startswith("demo_doc_") for document_id in document_ids)
@@ -140,6 +157,17 @@ def test_demo_payload_uses_only_demo_namespaced_external_ids() -> None:
 
     for cluster in clusters:
         assert set(cluster["document_ids"]).issubset(document_ids)
+        assert cluster["document_ids"] == sorted(
+            cluster["document_ids"], key=relative_path_by_id.__getitem__
+        )
+        assert cluster["cluster_signature"] == _expected_demo_id(
+            "demo_cluster",
+            "cluster",
+            *(
+                relative_path_by_id[document_id]
+                for document_id in cluster["document_ids"]
+            ),
+        )
         assert all(
             representative["document_id"] in document_ids
             for representative in cluster["representatives"]
@@ -157,8 +185,18 @@ def test_demo_payload_uses_only_demo_namespaced_external_ids() -> None:
             key=lambda term: (-term["score"], term["term"]),
         )
         for match in explanation["chunk_matches"]:
-            assert match["source_chunk_id"].startswith("demo_chunk_")
-            assert match["target_chunk_id"].startswith("demo_chunk_")
+            assert match["source_chunk_id"] == _expected_demo_id(
+                "demo_chunk",
+                "chunk",
+                explanation["source"]["relative_path"],
+                f"{match['source_chunk_index']:06d}",
+            )
+            assert match["target_chunk_id"] == _expected_demo_id(
+                "demo_chunk",
+                "chunk",
+                explanation["target"]["relative_path"],
+                f"{match['target_chunk_index']:06d}",
+            )
 
 
 def test_check_demo_site_accepts_generated_site(tmp_path: Path) -> None:
@@ -218,3 +256,21 @@ def _serialize_payload(payload: dict[str, Any]) -> bytes:
         separators=(",", ":"),
         sort_keys=True,
     ).encode("utf-8")
+
+
+def _expected_demo_id(prefix: str, kind: str, *parts: str) -> str:
+    stable_input = json.dumps(
+        [DEMO_NAMESPACE, kind, *parts],
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+    digest = hashlib.sha256(stable_input.encode("utf-8")).hexdigest()
+    return f"{prefix}_{digest[:16]}"
+
+
+def _tree_contents(root: Path) -> dict[Path, bytes]:
+    return {
+        path.relative_to(root): path.read_bytes()
+        for path in sorted(root.rglob("*"))
+        if path.is_file()
+    }

@@ -26,10 +26,13 @@ def label_clusters(
             cluster_labels[cluster_id] = f"Cluster {cluster_id}"
             continue
         scores = np.asarray(matrix[row_indices].sum(axis=0)).ravel()
-        ordered = scores.argsort()[::-1]
-        top_terms = [terms[int(index)] for index in ordered if scores[int(index)] > 0][
-            :limit
+        scored_terms = [
+            (float(score), terms[index])
+            for index, score in enumerate(scores)
+            if float(score) > 0
         ]
+        scored_terms.sort(key=lambda item: (-item[0], item[1]))
+        top_terms = [term for _, term in scored_terms[:limit]]
         cluster_labels[cluster_id] = (
             " / ".join(top_terms) if top_terms else f"Cluster {cluster_id}"
         )

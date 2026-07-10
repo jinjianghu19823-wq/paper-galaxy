@@ -213,14 +213,17 @@ def fallback_cluster_labels(
 
 def _top_terms(row: Any, terms: list[str], *, limit: int) -> list[TermScore]:
     scores = row.toarray()[0]
-    ordered = scores.argsort()[::-1]
+    ordered = sorted(
+        range(len(terms)),
+        key=lambda index: (-round(float(scores[index]), 4), terms[index]),
+    )
     result: list[TermScore] = []
     seen: set[str] = set()
     for index in ordered:
-        score = float(scores[int(index)])
+        score = float(scores[index])
         if score <= 0:
-            break
-        term = terms[int(index)]
+            continue
+        term = terms[index]
         if not _is_informative_term(term):
             continue
         key = term.lower()

@@ -127,13 +127,16 @@ def _shared_terms(
     source_values = matrix.getrow(0).toarray()[0]
     target_values = matrix.getrow(1).toarray()[0]
     shared_scores = source_values * target_values
-    ordered = shared_scores.argsort()[::-1]
+    ordered = sorted(
+        range(len(terms)),
+        key=lambda index: (-round(float(shared_scores[index]), 4), terms[index]),
+    )
     result: list[TermScore] = []
     for index in ordered:
-        value = float(shared_scores[int(index)])
+        value = float(shared_scores[index])
         if value <= 0:
-            break
-        term = terms[int(index)]
+            continue
+        term = terms[index]
         if not _is_informative_term(term):
             continue
         result.append(TermScore(term=term, score=round(value, 4)))

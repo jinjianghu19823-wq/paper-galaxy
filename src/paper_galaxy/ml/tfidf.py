@@ -50,6 +50,10 @@ def top_terms_for_documents(
         if row.nnz == 0:
             result.append([])
             continue
-        ordered = row.data.argsort()[::-1][:limit]
-        result.append([terms[int(row.indices[index])] for index in ordered])
+        scored_terms = [
+            (float(score), terms[int(term_index)])
+            for score, term_index in zip(row.data, row.indices, strict=True)
+        ]
+        scored_terms.sort(key=lambda item: (-item[0], item[1]))
+        result.append([term for _, term in scored_terms[:limit]])
     return result

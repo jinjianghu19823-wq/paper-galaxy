@@ -3,6 +3,7 @@ from pathlib import Path
 import pytest
 
 from paper_galaxy.explain.labels import (
+    _top_terms,
     apply_label_overrides,
     cluster_signature,
     label_clusters_ctfidf,
@@ -14,6 +15,17 @@ from paper_galaxy.models import Document
 def test_cluster_signature_is_deterministic_for_sorted_document_ids() -> None:
     assert cluster_signature(["b", "a", "c"]) == cluster_signature(["c", "b", "a"])
     assert cluster_signature(["a", "b"]) != cluster_signature(["a", "c"])
+
+
+def test_top_terms_keep_small_positive_scores_after_zero_ties() -> None:
+    from scipy.sparse import csr_matrix
+
+    terms = ["aardvark-zero", "alpha-positive", "zeta-positive"]
+    row = csr_matrix([[0.0, 0.00001, 0.00001]])
+
+    result = _top_terms(row, terms, limit=3)
+
+    assert [term.term for term in result] == ["alpha-positive", "zeta-positive"]
 
 
 def test_ctfidf_labels_filter_generic_filler_and_preserve_evidence() -> None:
