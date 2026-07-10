@@ -7,7 +7,9 @@
 
 ## 它如何工作
 
-演示由合成 `examples/tiny_corpus` fixture 生成。构建脚本会在临时项目中索引该语料，生成 TF-IDF 地图 payload，移除本地路径和数据库细节，并把静态 JSON 写入 `site/data/tiny-map.json`。
+演示由合成 `examples/tiny_corpus` fixture 生成。构建脚本会在临时项目中索引该
+语料，生成 TF-IDF 地图 payload，移除本地路径和数据库细节，把 `site/` 复制到
+指定输出目录，并在默认情况下只写 `site_dist/data/tiny-map.json`。
 
 ## 哪些内容是合成的
 
@@ -26,4 +28,16 @@ python scripts/build_demo_site.py --out site_dist
 python scripts/check_demo_site.py --dist site_dist --serve
 ```
 
-然后打开检查命令打印的本地 server URL，或查看生成的 `site_dist/` 目录。不要提交 `site_dist/`；它是生成产物。
+然后打开检查命令打印的本地 server URL，或查看生成的 `site_dist/` 目录。不要
+提交 `site_dist/`；它是生成产物。默认构建不会修改 `site/`。
+
+只有在明确、已 review 的 payload 变更需要更新 committed source fixture 时，才
+显式运行一次：
+
+```bash
+python scripts/build_demo_site.py --out site_dist --refresh-source-data
+git diff -- site/data/tiny-map.json
+```
+
+CI、Pages、release checks 和普通 demo 构建不得使用
+`--refresh-source-data`。

@@ -8,7 +8,7 @@ of `jinjianghu19823-wq/paper-galaxy`.
 ## Local Checks
 
 ```bash
-make clean-artifacts
+make clean-build
 make check
 make build
 make public-check
@@ -16,6 +16,12 @@ python scripts/build_demo_site.py --out site_dist
 python scripts/check_demo_site.py --dist site_dist --serve
 python scripts/check_live_site.py --allow-not-deployed
 ```
+
+`clean-build` (and the compatibility `clean` / `clean-artifacts` targets)
+removes only explicit build outputs and tool caches. It does not delete local
+projects, databases, Zotero data, backups, vector indexes, or user exports.
+The default demo build writes generated data only inside `site_dist/` and must
+leave tracked sources unchanged.
 
 Also useful:
 
@@ -26,21 +32,29 @@ make post-public-check
 make release-check
 ```
 
-## Verify Before Public
+## Verify Tracked And Public Content
 
-- No `.paper-galaxy/`.
-- No SQLite databases.
-- No backup zip files.
-- No generated `galaxy.html`, `galaxy.json`, extraction reports, validation
-  reports, or map run exports.
-- No secrets, tokens, `.env` files, private keys, or API keys.
-- No downloaded model files or vector indexes.
-- No user documents.
-- No real Zotero data: no `zotero.sqlite`, Zotero `storage/` folders, PDFs,
-  `zotero://items/...` records, or private Zotero paths in public demo data.
+Treat these as version-control and public-artifact checks, not instructions to
+delete ignored local data:
+
+- No tracked `.paper-galaxy/` project state or SQLite databases.
+- No tracked backup zip files, downloaded models, or vector indexes.
+- No tracked generated `galaxy.html`, `galaxy.json`, extraction reports,
+  validation reports, or map run exports.
+- No tracked secrets, tokens, `.env` files, private keys, or API keys.
+- No tracked user documents.
+- No real Zotero data: no tracked `zotero.sqlite`, Zotero `storage/` folders,
+  PDFs, `zotero://items/...` records, or private Zotero paths in public demo
+  data.
 - No external runtime assets in the public demo site.
 - Demo data comes from synthetic `examples/tiny_corpus` only.
 - English and Simplified Chinese static pages load.
+
+`site/data/tiny-map.json` is a reviewed source fixture. Refresh it only for an
+intentional payload change with
+`python scripts/build_demo_site.py --out site_dist --refresh-source-data`, then
+review its diff. Never use that flag in CI, Pages, release checks, or a default
+build.
 
 ## GitHub Pages
 
@@ -103,7 +117,7 @@ outdated flag blindly.
 Prepare but do not publish a release unless explicitly approved:
 
 ```bash
-make clean-artifacts
+make clean-build
 make release-check
 python -m build
 gh release create v0.1.0 dist/* \

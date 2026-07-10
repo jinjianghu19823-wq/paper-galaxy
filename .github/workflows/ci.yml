@@ -56,6 +56,13 @@ jobs:
       - name: Build demo site
         run: python scripts/build_demo_site.py --out site_dist
 
+      - name: Verify demo build leaves sources unchanged
+        run: |
+          git diff --exit-code
+          status="$(git status --porcelain)"
+          printf '%s\n' "$status"
+          test -z "$status"
+
       - name: Check demo site
         run: python scripts/check_demo_site.py --dist site_dist
 

@@ -16,3 +16,10 @@ def test_build_dependency_is_in_dev_extra() -> None:
     dev = pyproject["project"]["optional-dependencies"]["dev"]
 
     assert any(requirement.startswith("build>=") for requirement in dev)
+
+
+def test_package_license_uses_spdx_string_metadata() -> None:
+    pyproject = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
+
+    assert pyproject["project"]["license"] == "MIT"
+    assert pyproject["build-system"]["requires"] == ["setuptools>=77"]

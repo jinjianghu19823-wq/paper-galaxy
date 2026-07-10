@@ -428,7 +428,8 @@ Node, npm, React, Vite, external fonts, analytics, or remote runtime assets.
 ```text
 examples/tiny_corpus
   -> scripts/build_demo_site.py
-  -> site/data/tiny-map.json
+  -> site_dist/data/tiny-map.json
+site/
   -> site_dist/
   -> GitHub Pages artifact
 ```
@@ -436,8 +437,11 @@ examples/tiny_corpus
 `scripts/build_demo_site.py` indexes the synthetic tiny corpus in a temporary
 project directory, builds the same TF-IDF map payload used by the local web app,
 adds short precomputed pair explanations, strips local database paths, replaces
-machine-dependent document IDs with stable demo IDs, and writes a JSON payload
-without full source text.
+machine-dependent document, chunk, and cluster IDs with namespaced demo IDs,
+and writes a JSON payload without full source text. Default builds write only
+inside `site_dist/`; refreshing the committed `site/data/tiny-map.json` fixture
+requires the explicit `--refresh-source-data` flag and never runs in CI, Pages,
+or release targets.
 
 `scripts/check_demo_site.py` verifies the generated static site, demo JSON
 shape, local asset policy, absence of absolute paths, absence of full source

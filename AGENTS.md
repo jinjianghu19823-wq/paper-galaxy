@@ -70,6 +70,7 @@ runtime features unless explicitly asked.
 - `python scripts/public_readiness_check.py --strict`
 - `python scripts/public_readiness_check.py --strict --require-site-dist`
 - `python scripts/check_live_site.py --base-url https://jinjianghu19823-wq.github.io/paper-galaxy/`
+- `make clean-build`
 - `make launch-check`
 - `make post-public-check`
 - `make release-check`
@@ -109,6 +110,12 @@ runtime features unless explicitly asked.
 - Public demo social preview assets must remain local files under `site/assets/`.
 - Graph movement, force settings, labels, and manual layout persistence are
   local browser UI state only. Do not write graph positions to SQLite.
+- Build cleanup targets may remove only explicit build outputs and caches. They
+  must never remove local projects, databases, Zotero data, backups, vector
+  indexes, or user-generated exports.
+- Default demo builds write generated data only inside the requested output
+  directory. Source fixture refreshes must be explicit and must not run in CI,
+  Pages, release checks, or default builds.
 - Do not commit `.paper-galaxy/`, `*.sqlite3`, `galaxy.html`, `galaxy.json`,
   `extraction-report.json`, `validation.json`, `map-run*.json`,
   `paper-galaxy-backup*.zip`, local vector index files, downloaded model files,

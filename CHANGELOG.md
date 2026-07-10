@@ -4,6 +4,13 @@
 
 ## Unreleased
 
+- Made release cleanup build-only: `clean`, `clean-build`, release checks, and
+  the compatibility `clean-artifacts` target preserve local projects,
+  databases, Zotero data, backups, vector indexes, and user exports.
+- Made default demo builds write only to the output directory, added an
+  explicit source-fixture refresh mode, stabilized every public demo ID across
+  absolute corpus paths, and added a CI clean-worktree gate.
+- Updated package license metadata to the current SPDX string format.
 - Hardened the Zotero Reading Graph beta for real local libraries: no-write
   `zotero doctor`, collection filtering by key/name/path, validated reading
   statuses and local library aliases, explicit PDF policies, annotation import,

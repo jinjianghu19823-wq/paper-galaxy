@@ -6,6 +6,12 @@
 
 ## Unreleased
 
+- 将发布清理收窄为仅清理构建产物：`clean`、`clean-build`、发布检查和兼容的
+  `clean-artifacts` target 都会保留本地项目、数据库、Zotero 数据、备份、
+  向量索引和用户导出。
+- 默认 demo 构建现在只写输出目录；新增显式 source fixture 刷新模式、跨绝对
+  语料路径稳定的全部公开 demo ID，以及 CI clean-worktree 门禁。
+- 将包许可证元数据更新为当前 SPDX 字符串格式。
 - 强化 Zotero Reading Graph beta 以适配真实本地库：新增不写入的 `zotero doctor`、按 key/name/path 过滤 collection、校验 reading status 和本地 library 别名、显式 PDF 策略、annotation 导入、更完整的导入 summary，以及 DOI/URL/PDF/Zotero 链接等 inspector 元数据。
 - 增加第一版 Zotero Reading Graph 集成：只读 local API client、Zotero schema v6 表、导入器、元数据/PDF/笔记处理、CLI 命令、本地 web API、UI 过滤器、文档，以及只使用合成数据的公开演示边界。
 - 增加公开发布后的 activation 文档、FAQ、故障排查、演示指南、反馈指南、triage guide、发布说明和 live-site 验证。

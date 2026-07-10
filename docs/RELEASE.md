@@ -4,11 +4,17 @@
 
 1. Update `CHANGELOG.md`.
 2. Verify `pyproject.toml` and `src/paper_galaxy/__init__.py` versions match.
-3. Remove generated artifacts:
+3. Remove build outputs and tool caches only:
 
 ```bash
-make clean-artifacts
+make clean-build
 ```
+
+`clean-build` removes only known build directories, package metadata, and
+Python/pytest/Ruff/Mypy caches. The `clean` and compatibility
+`clean-artifacts` targets have the same build-only boundary. They never remove
+`.paper-galaxy/`, SQLite or Zotero databases, backups, vector indexes, map
+exports, or other user project state.
 
 4. Run checks:
 
@@ -21,16 +27,19 @@ python -m pytest
 python -m build
 ```
 
-5. Run a local example validation:
+5. Run a local example validation in an explicit temporary project, not in the
+   repository root:
 
 ```bash
-paper-galaxy init . --force
-paper-galaxy index examples/tiny_corpus --project-dir . --min-chars 40
-paper-galaxy validate-project --project-dir .
-paper-galaxy build-map-run --project-dir . --name "Release smoke"
+release_project="$(mktemp -d "${TMPDIR:-/tmp}/paper-galaxy-release.XXXXXX")"
+paper-galaxy init "$release_project" --force
+paper-galaxy index examples/tiny_corpus --project-dir "$release_project" --min-chars 40
+paper-galaxy validate-project --project-dir "$release_project"
+paper-galaxy build-map-run --project-dir "$release_project" --name "Release smoke"
 paper-galaxy zotero detect
-paper-galaxy zotero smoke-test --project-dir . || true
-paper-galaxy export-project --project-dir . --out paper-galaxy-backup.zip --yes
+paper-galaxy zotero smoke-test --project-dir "$release_project" || true
+paper-galaxy export-project --project-dir "$release_project" \
+  --out "$release_project/paper-galaxy-backup.zip" --yes
 ```
 
 The Zotero smoke test is optional because CI and release machines may not have
@@ -52,8 +61,26 @@ python scripts/check_live_site.py --allow-not-deployed
 make launch-check
 ```
 
-8. Remove generated local artifacts before committing. `site/data/tiny-map.json`
-is committed source data; `site_dist/` is generated and gitignored.
+8. Confirm the default demo build leaves tracked sources unchanged:
+
+```bash
+git diff --exit-code
+git status --porcelain
+```
+
+The default build writes generated JSON only to
+`site_dist/data/tiny-map.json`; `site_dist/` is generated and gitignored. The
+committed `site/data/tiny-map.json` fixture may be updated only when an
+intentional payload change requires it:
+
+```bash
+python scripts/build_demo_site.py --out site_dist --refresh-source-data
+git diff -- site/data/tiny-map.json
+```
+
+Review that fixture diff explicitly. CI, Pages, `release-check`,
+`launch-check`, and normal demo builds must never use
+`--refresh-source-data`.
 
 Phase 7 releases are Python package releases only. They do not include desktop
 packaging, cloud services, account systems, or remote plugin loading.
@@ -68,7 +95,7 @@ a package registry launch.
 1. Confirm all checks pass:
 
 ```bash
-make clean-artifacts
+make clean-build
 make release-check
 make post-public-check
 ```

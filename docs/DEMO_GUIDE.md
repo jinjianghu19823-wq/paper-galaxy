@@ -9,8 +9,9 @@ The public demo is a static GitHub Pages site:
 
 The demo is generated from the synthetic `examples/tiny_corpus` fixture. The
 build script indexes that corpus in a temporary project, builds a TF-IDF map
-payload, strips local paths and database details, and writes static JSON to
-`site/data/tiny-map.json`.
+payload, strips local paths and database details, copies `site/` to the
+requested output directory, and writes generated JSON only to
+`site_dist/data/tiny-map.json` by default.
 
 ## What Is Synthetic
 
@@ -40,3 +41,15 @@ python scripts/check_demo_site.py --dist site_dist --serve
 
 Then open the local server URL printed by the check command, or inspect the
 generated `site_dist/` directory. Do not commit `site_dist/`; it is generated.
+The default build does not modify `site/`.
+
+To intentionally refresh the committed source fixture after a reviewed payload
+change, run this explicit operation once and inspect the diff:
+
+```bash
+python scripts/build_demo_site.py --out site_dist --refresh-source-data
+git diff -- site/data/tiny-map.json
+```
+
+CI, Pages, release checks, and normal demo builds must not use
+`--refresh-source-data`.
