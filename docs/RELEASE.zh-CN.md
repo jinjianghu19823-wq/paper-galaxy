@@ -7,6 +7,7 @@
 ## 基础检查
 
 ```bash
+make clean-build
 make release-check
 python -m ruff check .
 python -m ruff format . --check
@@ -15,23 +16,33 @@ python -m pytest
 python -m build
 ```
 
+`clean-build` 只删除明确的构建目录、包 metadata 和
+Python/pytest/Ruff/Mypy cache。`clean` 与兼容的 `clean-artifacts` 具有相同的
+build-only 边界；它们绝不会删除 `.paper-galaxy/`、SQLite 或 Zotero 数据库、
+备份、向量索引、地图导出或其他用户项目状态。
+
 ## 本地功能检查
 
 ```bash
+release_project="$(mktemp -d "${TMPDIR:-/tmp}/paper-galaxy-release.XXXXXX")"
 paper-galaxy doctor
-paper-galaxy scan examples/tiny_corpus --out galaxy.html --json-out galaxy.json --force --min-chars 40
-paper-galaxy init . --force
-paper-galaxy index examples/tiny_corpus --project-dir . --min-chars 40
-paper-galaxy search "neural operator" --project-dir .
-paper-galaxy db-stats --project-dir .
-paper-galaxy validate-project --project-dir .
-paper-galaxy build-map-run --project-dir . --name "Tiny corpus map"
-paper-galaxy map-runs --project-dir .
-paper-galaxy export-project --project-dir . --out paper-galaxy-backup.zip --yes
-paper-galaxy import-project paper-galaxy-backup.zip --project-dir /tmp/paper-galaxy-restore --dry-run
+paper-galaxy scan examples/tiny_corpus \
+  --out "$release_project/galaxy.html" \
+  --json-out "$release_project/galaxy.json" --force --min-chars 40
+paper-galaxy init "$release_project" --force
+paper-galaxy index examples/tiny_corpus --project-dir "$release_project" --min-chars 40
+paper-galaxy search "neural operator" --project-dir "$release_project"
+paper-galaxy db-stats --project-dir "$release_project"
+paper-galaxy validate-project --project-dir "$release_project"
+paper-galaxy build-map-run --project-dir "$release_project" --name "Tiny corpus map"
+paper-galaxy map-runs --project-dir "$release_project"
+paper-galaxy export-project --project-dir "$release_project" \
+  --out "$release_project/paper-galaxy-backup.zip" --yes
+paper-galaxy import-project "$release_project/paper-galaxy-backup.zip" \
+  --project-dir "$release_project/restore" --dry-run
 paper-galaxy plugins
 paper-galaxy zotero detect
-paper-galaxy zotero smoke-test --project-dir . || true
+paper-galaxy zotero smoke-test --project-dir "$release_project" || true
 paper-galaxy serve --help
 ```
 
@@ -46,16 +57,33 @@ python scripts/public_readiness_check.py --strict --require-site-dist
 python scripts/check_live_site.py --allow-not-deployed
 ```
 
-发布前删除生成的本地产物：
+发布前审计 Git 已跟踪内容和公开构建产物，确认其中没有：
 
 - `galaxy.html`
 - `galaxy.json`
-- `site_dist/`
 - `.paper-galaxy/`
 - `paper-galaxy-backup.zip`
 - 任意 `*.sqlite3`
 - `zotero.sqlite`、Zotero `storage/` 文件夹、PDF 或真实 Zotero 路径
 - 任意本地模型或向量下载
+
+这是一项版本控制/公开内容审计，不是删除本机数据的指令。被 Git 忽略的本地
+项目状态应保留；`clean-build` 不会触碰它。默认 demo 构建只写
+`site_dist/data/tiny-map.json`，不会修改 `site/`。构建器先在 sibling staging
+目录完成构建和校验，再用可崩溃恢复的 sibling rename 发布；它只能替换空目录或
+带受支持 marker 的构建输出，并拒绝 symlink、危险路径和非空未认领目录。开头的
+`make clean-build` 可清理旧的无 marker 构建产物，但不会触碰项目数据。公开浮点
+采用有限数值、小数点后最多八位的契约。
+只有在明确更新 committed
+fixture 时才运行：
+
+```bash
+python scripts/build_demo_site.py --out site_dist --refresh-source-data
+git diff -- site/data/tiny-map.json
+```
+
+CI、Pages、`release-check`、`launch-check` 和普通构建不得使用
+`--refresh-source-data`。
 
 ## 发布原则
 
@@ -71,7 +99,7 @@ python scripts/check_live_site.py --allow-not-deployed
 1. 确认检查通过：
 
 ```bash
-make clean-artifacts
+make clean-build
 make release-check
 make post-public-check
 ```

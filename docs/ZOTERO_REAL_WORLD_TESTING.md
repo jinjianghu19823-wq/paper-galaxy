@@ -157,14 +157,7 @@ local Paper Galaxy project database under `.paper-galaxy/`.
 Before sharing bug reports, remove private titles, paths, tags, DOI/URL values,
 or document excerpts from JSON reports.
 
-Remove local Paper Galaxy state when you want a clean retry:
-
-```bash
-rm -rf .paper-galaxy
-```
-
-Windows PowerShell:
-
-```powershell
-Remove-Item -Recurse -Force .paper-galaxy
-```
+For a clean retry, use a new, explicit Paper Galaxy project directory. Build
+and release cleanup targets never delete local project state. A future project
+reset command should provide a dry run and require both an explicit project
+path and `--yes`; it is intentionally outside the current release tooling.

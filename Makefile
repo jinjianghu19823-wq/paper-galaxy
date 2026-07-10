@@ -1,4 +1,21 @@
-.PHONY: install-dev install-embeddings test lint format typecheck check doctor build check-build clean-artifacts validate-example demo-site public-check live-check post-public-check release-check launch-report launch-check zotero-smoke zotero-demo-test zotero-check
+.PHONY: install-dev install-embeddings test lint format typecheck check doctor build check-build clean clean-build clean-artifacts validate-example demo-site public-check live-check post-public-check release-check launch-report launch-check zotero-smoke zotero-demo-test zotero-check
+
+CLEAN_BUILD_ARTIFACTS = \
+	dist \
+	build \
+	site_dist \
+	*.egg-info \
+	src/*.egg-info \
+	.pytest_cache \
+	.ruff_cache \
+	.mypy_cache \
+	.coverage \
+	htmlcov \
+	__pycache__ \
+	scripts/__pycache__ \
+	tests/__pycache__ \
+	src/paper_galaxy/__pycache__ \
+	src/paper_galaxy/*/__pycache__
 
 install-dev:
 	python -m pip install -e ".[dev,ml,pdf,app]"
@@ -34,12 +51,12 @@ check-build: build
 	python -m pip install --force-reinstall dist/*.whl
 	paper-galaxy doctor
 
-clean-artifacts:
-	rm -rf .paper-galaxy galaxy.html galaxy.json extraction-report.json validation.json map-run*.json paper-galaxy-backup*.zip public-readiness.json live-site-check.json launch-report.md release-notes.generated.md site_dist dist build *.egg-info src/*.egg-info
-	find . -name "zotero.sqlite" -delete
-	find . -name "*.sqlite3" -delete
-	find . -name "*.faiss" -delete
-	find . -name "*.index" -delete
+clean: clean-build
+
+clean-build:
+	rm -rf $(CLEAN_BUILD_ARTIFACTS)
+
+clean-artifacts: clean-build
 
 zotero-smoke:
 	paper-galaxy zotero detect
@@ -77,7 +94,7 @@ post-public-check:
 	python scripts/public_readiness_check.py --strict --require-site-dist
 	python scripts/check_live_site.py --allow-not-deployed
 
-release-check: clean-artifacts
+release-check: clean-build
 	python -m ruff check .
 	python -m ruff format . --check
 	python -m mypy src
@@ -92,7 +109,7 @@ launch-report:
 	python scripts/public_readiness_check.py --strict --require-site-dist --json-out public-readiness.json
 	python scripts/launch_report.py --require-site-dist --out launch-report.md
 
-launch-check: clean-artifacts
+launch-check: clean-build
 	python -m ruff check .
 	python -m ruff format . --check
 	python -m mypy src

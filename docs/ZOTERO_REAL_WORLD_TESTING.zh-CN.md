@@ -132,14 +132,6 @@ Paper Galaxy 不写回 Zotero，不上传 Zotero 数据，不使用 Zotero onlin
 
 分享 bug report 前，请从 JSON 报告中移除私人题名、路径、标签、DOI/URL 或文档摘录。
 
-想干净重试时，可以删除本地 Paper Galaxy 状态：
-
-```bash
-rm -rf .paper-galaxy
-```
-
-Windows PowerShell：
-
-```powershell
-Remove-Item -Recurse -Force .paper-galaxy
-```
+想干净重试时，请使用一个新的、路径明确的 Paper Galaxy 项目目录。构建和发布
+清理 target 永远不会删除本地项目状态。未来的项目重置命令应默认 dry run，并
+同时要求明确的 project path 和 `--yes`；它不属于当前 release tooling。

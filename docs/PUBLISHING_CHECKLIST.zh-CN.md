@@ -7,6 +7,7 @@
 ## 本地检查
 
 ```bash
+make clean-build
 python -m ruff check .
 python -m ruff format . --check
 python -m mypy src
@@ -18,6 +19,13 @@ python scripts/public_readiness_check.py --strict --require-site-dist
 python scripts/check_live_site.py --allow-not-deployed
 ```
 
+`clean-build`（以及兼容的 `clean` / `clean-artifacts` target）只删除明确的
+构建产物和工具 cache，不会删除本地项目、数据库、Zotero 数据、备份、向量
+索引或用户导出。默认 demo 构建只写 `site_dist/`，并且必须保持 tracked source
+不变。Demo 只从已校验的 sibling staging 目录发布；仅空目录或带受支持 build
+marker 的输出可被替换，symlink、危险路径和非空未认领目录必须失败。公开 JSON
+数值必须有限并规范为小数点后最多八位。
+
 也可以运行：
 
 ```bash
@@ -26,16 +34,24 @@ make post-public-check
 make release-check
 ```
 
-## 公开前确认
+## 审计已跟踪和公开内容
 
-- 仓库里没有 `.paper-galaxy/`。
-- 仓库里没有 `*.sqlite3`。
-- 仓库里没有 `galaxy.html`、`galaxy.json`、`extraction-report.json` 或本地备份 zip。
-- 仓库里没有用户文档、私人路径、API key 或 tokens。
-- 仓库和公开演示里没有真实 Zotero 数据：没有 `zotero.sqlite`、Zotero `storage/` 文件夹、PDF、`zotero://items/...` 记录或私人 Zotero 路径。
+以下项目是版本控制和公开产物审计，不是删除被 Git 忽略的本机数据的指令：
+
+- 已跟踪内容中没有 `.paper-galaxy/` 或 `*.sqlite3`。
+- 已跟踪内容中没有 `galaxy.html`、`galaxy.json`、
+  `extraction-report.json`、本地备份 zip、下载模型或向量索引。
+- 已跟踪内容中没有用户文档、私人路径、API key 或 tokens。
+- 已跟踪内容和公开演示里没有真实 Zotero 数据：没有 `zotero.sqlite`、Zotero
+  `storage/` 文件夹、PDF、`zotero://items/...` 记录或私人 Zotero 路径。
 - README、隐私、安全、贡献和路线图文档是最新的。
 - 公开演示只包含合成 tiny corpus 数据。
 - 静态资源没有 CDN、远程字体、远程图片或远程运行时依赖。
+
+`site/data/tiny-map.json` 是需要 review 的 source fixture。只有在明确更新 payload
+时才运行
+`python scripts/build_demo_site.py --out site_dist --refresh-source-data`，随后审查
+fixture diff。CI、Pages、release checks 和默认构建不得使用该 flag。
 
 ## GitHub Pages
 
@@ -72,7 +88,7 @@ python scripts/check_live_site.py --base-url https://jinjianghu19823-wq.github.i
 除非用户明确批准，否则只准备 release，不创建真实 release：
 
 ```bash
-make clean-artifacts
+make clean-build
 make release-check
 python -m build
 gh release create v0.1.0 dist/* \

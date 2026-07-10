@@ -2,6 +2,7 @@ from pathlib import Path
 
 import pytest
 
+import paper_galaxy.explain.pairs as pairs_module
 from paper_galaxy.explain.pairs import explain_pair, pair_explanation_payload
 from paper_galaxy.indexer import index_corpus
 from paper_galaxy.storage.migrations import initialize_database
@@ -71,6 +72,48 @@ def test_pair_explanation_reports_unknown_documents(tmp_path: Path) -> None:
             explain_pair(repository, "missing", "also-missing")
     finally:
         repository.connection.close()
+
+
+def test_shared_terms_use_exact_score_before_tie_breaking_at_limit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from scipy.sparse import csr_matrix
+
+    matrix = csr_matrix(
+        [
+            [1.0, 1.0],
+            [0.50001, 0.50002],
+        ]
+    )
+
+    class FakeVectorizer:
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            del args, kwargs
+
+        def fit_transform(self, texts: list[str]) -> object:
+            assert texts == ["source", "target"]
+            return matrix
+
+        def get_feature_names_out(self) -> list[str]:
+            return ["alpha-signal", "zeta-signal"]
+
+    monkeypatch.setattr(
+        "sklearn.feature_extraction.text.TfidfVectorizer",
+        FakeVectorizer,
+    )
+
+    def fake_cosine_similarity(*args: object, **kwargs: object) -> list[list[float]]:
+        del args, kwargs
+        return [[0.5]]
+
+    monkeypatch.setattr(
+        "sklearn.metrics.pairwise.cosine_similarity",
+        fake_cosine_similarity,
+    )
+
+    _, terms = pairs_module._shared_terms("source", "target", term_limit=1)
+
+    assert [term.term for term in terms] == ["zeta-signal"]
 
 
 def _repository(project_dir: Path) -> Repository:
