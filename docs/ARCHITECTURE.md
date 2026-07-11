@@ -27,6 +27,7 @@ source for nearest-neighbor search and proximity explanations.
 
 - `cli`: command-line entrypoints.
 - `config`: project and runtime configuration models.
+- `projects`: atomic, no-clobber local project creation and safe reopen.
 - `paths`: project path and metadata helpers.
 - `logging`: shared console and logging setup.
 - `models`: dataclasses shared by the Phase 1 pipeline.
@@ -77,10 +78,19 @@ source for nearest-neighbor search and proximity explanations.
 - `backup.bundle`: portable v2 backup orchestration with strict v1 inspection.
 - `storage.locking`: cross-process shared operation and exclusive maintenance
   locks, including legacy-project claim and database-handle drain.
+- `services.sources`: persistent, path-private corpus and read-only Zotero
+  source registry with use-time locator revalidation.
+- `services.jobs`: bounded durable single-writer jobs, cooperative cancellation,
+  safe summaries, and restart recovery; `services.worker_lease` serializes the
+  background worker across processes.
+- `services.launch`: idempotent project/source/job preparation for one-command
+  local startup.
 - `plugins`: static built-in local plugin metadata.
 - `zotero`: read-only local Zotero connector, normalization, attachment path
   resolution, importer, SQLite diagnostics, and reading graph builder.
 - `web.server`: lazy FastAPI/Uvicorn app creation and local server startup.
+- `web.security`: loopback Host allowlisting, same-origin write enforcement,
+  per-process write tokens, and browser security headers.
 - `web.api`: local JSON routes with read-only GET repositories and explicit
   writer repositories for mutation endpoints.
 - `web.map_builder`: ephemeral map generation from active indexed documents.
@@ -173,7 +183,7 @@ The static Phase 1 `scan` command remains file-based and independent.
 
 ### SQLite lifecycle and connection boundaries
 
-Schema version 8 replaces implicit `CREATE IF NOT EXISTS` initialization with
+Schema version 9 replaces implicit `CREATE IF NOT EXISTS` initialization with
 an explicit, forward-only lifecycle:
 
 - A new database is bootstrapped directly at the current schema in one explicit
@@ -181,14 +191,17 @@ an explicit, forward-only lifecycle:
   `schema_migrations` and commits before returning.
 - The oldest supported historical schema is v6. Its fixture is reconstructed
   from repository history and upgraded only through the registered v6 -> v7
-  -> v8 sequence. v7 adds migration history and structured `error_code` /
+  -> v8 -> v9 sequence. v7 adds migration history and structured `error_code` /
   `error_message` fields to scan, embedding, and Zotero import runs, plus a
   private child-version manifest for monotonic Zotero-derived documents. v8
   records a document content revision over title, relative path, and extracted
   text, plus chunk hashes, model fingerprints, vector source/model/algorithm
   provenance, run owner PIDs, and vector-index provenance. Existing vectors
   whose freshness cannot be reconstructed remain marked `legacy-unknown` and
-  are excluded from semantic results until rebuilt.
+  are excluded from semantic results until rebuilt. v9 adds path-private
+  registered corpus/Zotero sources and a durable, bounded local job state
+  machine with exact partial-index capability checks and deterministic legacy
+  Zotero-profile backfill.
 - Migration takes a unique, mode-`0600` snapshot with SQLite's online backup
   API before changing schema, then verifies the snapshot with `quick_check` and
   `foreign_key_check`. It never replaces an existing backup or the live

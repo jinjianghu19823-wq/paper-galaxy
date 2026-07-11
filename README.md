@@ -94,6 +94,42 @@ hosted backend.
 
 ## Install From Source
 
+For a local workstation install, clone the repository and install the `full`
+extra in an isolated environment. It combines the local web app, TF-IDF/map
+dependencies, and PDF extraction support:
+
+```bash
+git clone https://github.com/jinjianghu19823-wq/paper-galaxy.git
+cd paper-galaxy
+python -m venv .venv
+source .venv/bin/activate  # Windows PowerShell: .venv\Scripts\Activate.ps1
+python -m pip install ".[full]"
+paper-galaxy doctor
+```
+
+`pipx install ".[full]"` and `uv tool install ".[full]"` are also supported
+when run from the repository checkout. They keep the command in a dedicated
+environment without requiring manual activation. See
+[docs/INSTALL.md](docs/INSTALL.md) for the complete installation choices.
+
+Create or reopen a local project, register a source folder without copying it,
+and start the workstation with one command:
+
+```bash
+paper-galaxy launch \
+  --project-dir ~/PaperGalaxy \
+  --corpus ~/Papers \
+  --no-open
+```
+
+The server remains on loopback (`127.0.0.1`) by default. `--no-open` suppresses
+automatic browser opening; use `--open` for an interactive desktop session.
+Repeated launches reuse the project and source registration. Paper Galaxy does
+not modify the source folder or automatically download OCR or embedding
+models.
+
+For contributor development, install the development tools as well:
+
 ```bash
 git clone https://github.com/jinjianghu19823-wq/paper-galaxy.git
 cd paper-galaxy
@@ -222,6 +258,7 @@ want a one-file offline HTML export instead of a SQLite-backed local web app.
 ```bash
 paper-galaxy --help
 paper-galaxy doctor
+paper-galaxy launch --project-dir ~/PaperGalaxy --corpus ~/Papers --no-open
 paper-galaxy init
 paper-galaxy init /path/to/project
 paper-galaxy scan examples/tiny_corpus --out galaxy.html --force
@@ -405,6 +442,12 @@ python -m pip install -e ".[dev,ml,pdf,app]"
 ```
 
 Typical local app usage is:
+
+```bash
+paper-galaxy launch --project-dir ~/PaperGalaxy --corpus ~/Papers --open
+```
+
+The equivalent fine-grained CLI workflow is:
 
 ```bash
 paper-galaxy init .

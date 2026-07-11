@@ -8,6 +8,8 @@ const API = {
   zoteroReadingMap: "/api/zotero/reading-map",
   search: "/api/search",
   documents: "/api/documents",
+  sources: "/api/sources",
+  jobs: "/api/jobs",
   clusters: "/api/clusters",
   explainPair: "/api/explain/pair"
 };
@@ -27,6 +29,9 @@ const state = {
   graph: null,
   selectedId: null,
   selectedDetail: null,
+  sources: [],
+  jobs: [],
+  jobsTimer: null,
   filter: "",
   searchTimer: null,
   lastSearchPayload: null
@@ -44,6 +49,9 @@ const els = {
   searchInput: document.querySelector("#search-input"),
   includeMissing: document.querySelector("#include-missing"),
   searchResults: document.querySelector("#search-results"),
+  sourceRegistry: document.querySelector("#source-registry"),
+  jobList: document.querySelector("#job-list"),
+  workRefresh: document.querySelector("#work-refresh"),
   pointFilter: document.querySelector("#point-filter"),
   clusterLegend: document.querySelector("#cluster-legend"),
   graphSourceSelect: document.querySelector("#graph-source-select"),
@@ -87,6 +95,7 @@ async function init() {
     state.health = await fetchJson(API.health);
     state.config = await fetchJson(API.config);
     updateHealth(state.health);
+    await loadSourcesAndJobs();
     await loadStats();
     await loadZoteroStatus();
     await loadMapRuns();
@@ -131,6 +140,7 @@ function initGraph() {
 function bindEvents() {
   els.languageToggle.addEventListener("click", toggleLanguage);
   els.themeToggle.addEventListener("click", toggleTheme);
+  els.workRefresh.addEventListener("click", loadSourcesAndJobs);
   els.searchForm.addEventListener("submit", (event) => {
     event.preventDefault();
     runSearch();
@@ -198,6 +208,7 @@ function toggleLanguage() {
     updateStats(state.stats);
   }
   renderZoteroStatus();
+  renderSourcesAndJobs();
   renderMapRunSelect();
   if (state.map) {
     renderMap();
@@ -222,6 +233,150 @@ function updateDynamicControlLabels() {
   els.pauseGraph.dataset.resumeLabel = t("graph.resume");
   if (state.graph && typeof state.graph.syncControls === "function") {
     state.graph.syncControls();
+  }
+}
+
+async function loadSourcesAndJobs() {
+  window.clearTimeout(state.jobsTimer);
+  try {
+    const [sourcesPayload, jobsPayload] = await Promise.all([
+      fetchJson(`${API.sources}?limit=100&offset=0`),
+      fetchJson(`${API.jobs}?limit=100&offset=0`)
+    ]);
+    state.sources = sourcesPayload.sources || [];
+    state.jobs = jobsPayload.jobs || [];
+    renderSourcesAndJobs();
+    if (state.jobs.some((job) => ["queued", "running", "cancelling"].includes(job.status))) {
+      state.jobsTimer = window.setTimeout(loadSourcesAndJobs, 1200);
+    }
+  } catch (error) {
+    state.sources = [];
+    state.jobs = [];
+    els.sourceRegistry.replaceChildren();
+    els.jobList.replaceChildren();
+    appendText(els.jobList, "p", t("work.failed", { message: error.message }), "muted");
+  }
+}
+
+function renderSourcesAndJobs() {
+  els.sourceRegistry.replaceChildren();
+  if (!state.sources.length) {
+    appendText(els.sourceRegistry, "p", t("work.noSources"), "muted");
+  }
+  for (const source of state.sources) {
+    const row = document.createElement("article");
+    row.className = "result-item";
+    appendText(row, "strong", source.display_name || source.id);
+    appendText(row, "span", `${source.kind} - ${source.status}`, "result-meta");
+    appendText(
+      row,
+      "span",
+      source.last_success_at
+        ? t("work.lastSuccess", { time: safeLocalTimestamp(source.last_success_at) })
+        : t("work.noSuccessfulRun"),
+      "result-meta"
+    );
+    if (source.last_error) {
+      appendText(
+        row,
+        "span",
+        t("work.sourceError", { code: safeErrorCode(source.last_error) }),
+        "result-meta"
+      );
+      appendText(row, "span", t("work.errorAction"), "result-meta");
+    }
+    if (source.status === "active") {
+      const action = document.createElement("button");
+      action.type = "button";
+      action.textContent = source.kind === "zotero_profile"
+        ? t("work.sync")
+        : t("work.rescan");
+      action.addEventListener("click", () => queueSourceJob(source, action));
+      row.append(action);
+    }
+    els.sourceRegistry.append(row);
+  }
+
+  els.jobList.replaceChildren();
+  if (!state.jobs.length) {
+    appendText(els.jobList, "p", t("work.noJobs"), "muted");
+  }
+  for (const job of state.jobs) {
+    const row = document.createElement("article");
+    row.className = "result-item";
+    appendText(row, "strong", `${job.kind} - ${job.status}`);
+    const total = job.total === null || job.total === undefined ? "?" : job.total;
+    appendText(
+      row,
+      "span",
+      `${t("work.progress", { current: job.current, total })} - ${t(`work.job.${job.status}`)}`,
+      "result-meta"
+    );
+    if (job.error) {
+      appendText(
+        row,
+        "span",
+        t("work.jobError", { code: safeErrorCode(job.error) }),
+        "result-meta"
+      );
+      appendText(row, "span", t("work.errorAction"), "result-meta");
+    }
+    if (["queued", "running", "cancelling"].includes(job.status)) {
+      const cancel = document.createElement("button");
+      cancel.type = "button";
+      cancel.textContent = t("work.cancel");
+      cancel.disabled = job.status === "cancelling";
+      cancel.addEventListener("click", () => cancelLocalJob(job.id, cancel));
+      row.append(cancel);
+    }
+    els.jobList.append(row);
+  }
+}
+
+function safeErrorCode(error) {
+  const code = error && typeof error.code === "string" ? error.code : "";
+  return /^[a-z0-9_]{1,64}$/.test(code) ? code : "local_job_failed";
+}
+
+function safeLocalTimestamp(value) {
+  if (typeof value !== "string" || value.length > 64) {
+    return t("work.unknownTime");
+  }
+  const timestamp = new Date(value);
+  if (Number.isNaN(timestamp.getTime())) {
+    return t("work.unknownTime");
+  }
+  return timestamp.toLocaleString();
+}
+
+async function queueSourceJob(source, button) {
+  button.disabled = true;
+  const endpoint = source.kind === "zotero_profile"
+    ? `${API.jobs}/zotero-sync`
+    : `${API.jobs}/index`;
+  try {
+    await fetchJson(endpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ source_id: source.id })
+    });
+    await loadSourcesAndJobs();
+  } catch (error) {
+    button.disabled = false;
+    button.title = error.message;
+  }
+}
+
+async function cancelLocalJob(jobId, button) {
+  button.disabled = true;
+  try {
+    await fetchJson(`${API.jobs}/${encodeURIComponent(jobId)}/cancel`, {
+      method: "POST"
+    });
+    await loadSourcesAndJobs();
+  } catch (error) {
+    button.disabled = false;
+    button.title = error.message;
   }
 }
 
@@ -1032,10 +1187,15 @@ function t(key, values = {}) {
 }
 
 async function fetchJson(url, options = {}) {
+  const method = String(options.method || "GET").toUpperCase();
+  const writeHeaders = ["POST", "PUT", "PATCH", "DELETE"].includes(method)
+    ? { "X-Paper-Galaxy-Write-Token": state.config?.write_token || "" }
+    : {};
   const response = await fetch(url, {
     ...options,
     headers: {
       Accept: "application/json",
+      ...writeHeaders,
       ...(options.headers || {})
     }
   });

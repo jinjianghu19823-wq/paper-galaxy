@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any
@@ -16,7 +17,11 @@ from paper_galaxy.storage.sqlite import (
     ensure_database_ready,
     resolve_database_path,
 )
-from paper_galaxy.web.map_builder import build_map_payload
+from paper_galaxy.web.map_builder import MapPayloadCancelled, build_map_payload
+
+
+class MapBuildCancelled(RuntimeError):
+    """Raised before publication when a local analysis job is cancelled."""
 
 
 def build_and_store_map_run(
@@ -29,6 +34,7 @@ def build_and_store_map_run(
     limit: int = 1000,
     similarity_mode: str = "tfidf",
     model_id: str | None = None,
+    cancel_requested: Callable[[], bool] | None = None,
 ) -> dict[str, object]:
     """Build a live map payload and persist it as a saved run."""
 
@@ -36,15 +42,21 @@ def build_and_store_map_run(
         raise ValueError("Phase 7 saved map runs support similarity_mode=tfidf only.")
     if model_id:
         raise ValueError("model_id is reserved for future dense map runs.")
+    _raise_if_map_cancelled(cancel_requested)
 
     resolved_project_dir = project_dir.expanduser().resolve()
-    payload = build_map_payload(
-        project_dir=resolved_project_dir,
-        seed=seed,
-        clusters=clusters,
-        neighbors=neighbors,
-        limit=limit,
-    )
+    try:
+        payload = build_map_payload(
+            project_dir=resolved_project_dir,
+            seed=seed,
+            clusters=clusters,
+            neighbors=neighbors,
+            limit=limit,
+            cancel_requested=cancel_requested,
+        )
+    except MapPayloadCancelled as exc:
+        raise MapBuildCancelled(str(exc)) from exc
+    _raise_if_map_cancelled(cancel_requested)
     timestamp = _utc_now()
     run_name = name.strip() if name and name.strip() else f"Map run {timestamp}"
     points = _dict_list(payload.get("points"))
@@ -71,6 +83,7 @@ def build_and_store_map_run(
         },
     }
 
+    _raise_if_map_cancelled(cancel_requested)
     ensure_database_ready(resolved_project_dir)
     connection = connect_read_write(resolved_project_dir)
     try:
@@ -106,6 +119,13 @@ def build_and_store_map_run(
         "stats": payload.get("stats"),
         "warnings": warnings,
     }
+
+
+def _raise_if_map_cancelled(
+    cancel_requested: Callable[[], bool] | None,
+) -> None:
+    if cancel_requested is not None and cancel_requested():
+        raise MapBuildCancelled("Analysis cancelled before snapshot publication.")
 
 
 def persisted_map_payload(*, project_dir: Path, run_id: str) -> dict[str, object]:

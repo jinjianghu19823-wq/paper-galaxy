@@ -6,7 +6,7 @@ import hashlib
 import json
 import sqlite3
 from collections import Counter
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -34,7 +34,11 @@ from paper_galaxy.zotero.filters import (
     resolve_collection,
     validate_non_empty_values,
 )
-from paper_galaxy.zotero.local_api import DEFAULT_LOCAL_API_URL, LocalZoteroAPIClient
+from paper_galaxy.zotero.local_api import (
+    DEFAULT_LOCAL_API_URL,
+    LocalZoteroAPIClient,
+    canonical_local_api_url,
+)
 from paper_galaxy.zotero.models import (
     AttachmentResolution,
     ZoteroAnnotation,
@@ -58,6 +62,10 @@ from paper_galaxy.zotero.reading import (
     infer_reading_status,
     reading_status_counts,
 )
+
+
+class ZoteroImportCancelled(RuntimeError):
+    """Raised between records when a durable Zotero sync is cancelled."""
 
 
 def import_from_zotero(
@@ -88,6 +96,9 @@ def import_from_zotero(
     chunk_size: int = 2000,
     chunk_overlap: int = 200,
     verbose: bool = False,
+    cancel_requested: Callable[[], bool] | None = None,
+    commit_guard: Callable[[], None] | None = None,
+    progress_callback: Callable[[int, int, str], None] | None = None,
 ) -> ZoteroImportRunSummary:
     """Import Zotero top-level items into local Paper Galaxy SQLite state."""
 
@@ -107,8 +118,14 @@ def import_from_zotero(
     validate_non_empty_values(read_tags, option_name="--read-tag")
     validate_non_empty_values(reading_tags, option_name="--reading-tag")
     validate_non_empty_values(to_read_tags, option_name="--to-read-tag")
+    api_url = canonical_local_api_url(api_url)
     resolved_project_dir = project_dir.expanduser().resolve()
     database_path = resolve_database_path(resolved_project_dir)
+    _preflight_zotero_project_paths(
+        project_dir=resolved_project_dir,
+        database_path=database_path,
+        data_dir=data_dir,
+    )
     zotero_client = client or LocalZoteroAPIClient(api_url)
     source_id = stable_zotero_source_id(api_url, "0")
     source_corpus_id = stable_zotero_corpus_id(source_id)
@@ -144,6 +161,7 @@ def import_from_zotero(
         "requested_collection": collection,
     }
     if not dry_run:
+        _raise_if_zotero_cancelled(cancel_requested)
         connection = connect_read_write(resolved_project_dir)
         repository = Repository(connection, database_path)
         try:
@@ -174,6 +192,7 @@ def import_from_zotero(
             raise
 
     try:
+        _raise_if_zotero_cancelled(cancel_requested)
         prepared = _prepare_zotero_import(
             client=zotero_client,
             collection=collection,
@@ -216,6 +235,7 @@ def import_from_zotero(
     if connection is not None and repository is not None:
         run_config["selected_collection"] = _collection_payload(selected_collection)
         try:
+            _raise_if_zotero_cancelled(cancel_requested)
             with connection:
                 repository.update_zotero_import_run_config(run_id, run_config)
         except BaseException as exc:
@@ -272,6 +292,7 @@ def import_from_zotero(
     assert connection is not None and repository is not None
     map_run_id: str | None = None
     try:
+        _raise_if_zotero_cancelled(cancel_requested)
         with connection:
             for collection_row in collections:
                 collection_id = collection_id_by_key[collection_row.key]
@@ -289,7 +310,15 @@ def import_from_zotero(
                 )
                 if not accepted:
                     raise ZoteroVersionConflictError("collection", collection_row.key)
-        for item, status in selected:
+        selected_count = len(selected)
+        for item_index, (item, status) in enumerate(selected):
+            _raise_if_zotero_cancelled(cancel_requested)
+            if progress_callback is not None:
+                progress_callback(
+                    item_index,
+                    selected_count,
+                    f"Syncing local Zotero item {item_index + 1} of {selected_count}.",
+                )
             count_snapshot = counts.snapshot()
             try:
                 with connection:
@@ -314,6 +343,7 @@ def import_from_zotero(
                         now=now,
                         counts=counts,
                         warnings=warnings,
+                        commit_guard=commit_guard,
                     )
             except BaseException:
                 counts.restore(count_snapshot)
@@ -321,6 +351,7 @@ def import_from_zotero(
             if not accepted:
                 counts.restore(count_snapshot)
                 counts.items_unchanged += 1
+        _raise_if_zotero_cancelled(cancel_requested)
         with connection:
             repository.upsert_zotero_source(
                 _zotero_source_payload(
@@ -565,7 +596,11 @@ def _mark_zotero_run_failed(
     warnings: list[str],
     error: BaseException,
 ) -> None:
-    status = "interrupted" if isinstance(error, KeyboardInterrupt) else "failed"
+    status = (
+        "interrupted"
+        if isinstance(error, (KeyboardInterrupt, ZoteroImportCancelled))
+        else "failed"
+    )
     error_message = _safe_error_message(error)
     warnings.append(f"Zotero import failed ({type(error).__name__}).")
     with connection:
@@ -585,6 +620,47 @@ def _mark_zotero_run_failed(
             warnings=warnings,
             error_code=type(error).__name__,
             error_message=error_message,
+        )
+
+
+def _raise_if_zotero_cancelled(
+    cancel_requested: Callable[[], bool] | None,
+) -> None:
+    if cancel_requested is not None and cancel_requested():
+        raise ZoteroImportCancelled("Zotero sync cancelled at an item boundary.")
+
+
+def _preflight_zotero_project_paths(
+    *,
+    project_dir: Path,
+    database_path: Path,
+    data_dir: Path | None,
+) -> None:
+    """Prevent project writes anywhere inside a read-only Zotero data tree."""
+
+    if data_dir is None:
+        return
+    lexical_data = data_dir.expanduser().absolute()
+    if lexical_data.is_symlink():
+        raise ValueError("Zotero data directory must not be a symbolic link.")
+    resolved_data = lexical_data.resolve(strict=False)
+    metadata = project_dir / ".paper-galaxy"
+    mutable_roots = (
+        project_dir,
+        metadata,
+        metadata / "backups",
+        database_path,
+    )
+    data_is_metadata = resolved_data == metadata or resolved_data.is_relative_to(
+        metadata
+    )
+    if data_is_metadata or any(
+        root == resolved_data or root.is_relative_to(resolved_data)
+        for root in mutable_roots
+    ):
+        raise ValueError(
+            "Paper Galaxy project metadata or database cannot be stored inside "
+            "the read-only Zotero data directory. Choose a separate project."
         )
 
 
@@ -671,6 +747,7 @@ def _import_one_item(
     now: str,
     counts: _ImportCounts,
     warnings: list[str],
+    commit_guard: Callable[[], None] | None,
 ) -> bool:
     zotero_item_id = stable_zotero_item_id(source_id, item.key)
     document_id = stable_zotero_document_id(source_id, item.key)
@@ -844,6 +921,8 @@ def _import_one_item(
             chunk_text(text, chunk_size=chunk_size, chunk_overlap=chunk_overlap)
         )
     ]
+    if commit_guard is not None:
+        commit_guard()
     accepted = repository.upsert_zotero_item(
         {
             "id": zotero_item_id,

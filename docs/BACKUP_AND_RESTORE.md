@@ -112,6 +112,12 @@ retry if the maintenance lock or active SQLite sidecars are reported.
 After a hard process kill or power loss, the durable transaction also blocks
 all ordinary project connections until the next real import recovers it.
 
+The durable background job worker has a separate exclusive lease. Restore
+checks that lease while holding maintenance and refuses even an idle workspace
+worker, preventing queued work from racing restored state. Stop
+`paper-galaxy launch` or `paper-galaxy serve` before a real import; dry-run
+inspection remains read-only.
+
 Export, inspection, and restore staging roots are private and carry a strict
 operation/target/PID ownership marker. A normal exit removes them. A hard kill
 can leave sensitive staging bytes until the next matching invocation, which

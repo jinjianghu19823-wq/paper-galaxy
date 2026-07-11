@@ -72,6 +72,8 @@ REQUIRED_TABLES = {
     "zotero_item_tags",
     "zotero_attachments",
     "zotero_document_links",
+    "registered_sources",
+    "jobs",
     "documents_fts",
 }
 
@@ -151,6 +153,31 @@ REQUIRED_COLUMNS: dict[str, set[str]] = {
         "data_json",
         "child_manifest_json",
     },
+    "registered_sources": {
+        "id",
+        "kind",
+        "root_path",
+        "zotero_source_id",
+        "profile_signature",
+        "config_json",
+        "removed_at",
+    },
+    "jobs": {
+        "id",
+        "queue_sequence",
+        "kind",
+        "source_id",
+        "request_key",
+        "status",
+        "params_json",
+        "result_summary_json",
+        "cancel_requested",
+        "owner_pid",
+        "owner_instance_id",
+        "heartbeat_at",
+        "started_at",
+        "finished_at",
+    },
 }
 
 
@@ -177,6 +204,7 @@ def validate_project(project_dir: Path, *, check_stale: bool = True) -> dict[str
         "fts": _empty_fts_status(),
         "vector_consistency": _empty_vector_consistency(),
         "zotero_consistency": _empty_zotero_consistency(),
+        "source_job_consistency": _empty_source_job_consistency(),
         "optional_dependencies": _optional_dependency_status(),
         "issues": issues,
     }
@@ -363,6 +391,14 @@ def validate_project(project_dir: Path, *, check_stale: bool = True) -> dict[str
                 "warning",
                 "zotero_child_manifest_unknown",
                 "Some migrated Zotero items need an explicit full reconciliation.",
+            )
+        report["source_job_consistency"] = _source_job_consistency(connection)
+        if any(int(value) for value in report["source_job_consistency"].values()):
+            _issue(
+                issues,
+                "error",
+                "source_job_consistency_failed",
+                "Registered source or durable job state is inconsistent.",
             )
         report["map_runs"] = _safe_repository_call(
             lambda: _map_run_status(connection),
@@ -1101,6 +1137,95 @@ def _valid_zotero_child_manifest(entries: list[object]) -> bool:
     return True
 
 
+def _empty_source_job_consistency() -> dict[str, int]:
+    return {
+        "check_errors": 0,
+        "invalid_source_config_json": 0,
+        "invalid_job_params_json": 0,
+        "invalid_job_result_json": 0,
+        "jobs_missing_required_source": 0,
+        "jobs_with_unexpected_source": 0,
+        "job_source_kind_mismatches": 0,
+        "active_jobs_for_removed_sources": 0,
+        "invalid_job_state_rows": 0,
+    }
+
+
+def _source_job_consistency(connection: sqlite3.Connection) -> dict[str, int]:
+    status = _empty_source_job_consistency()
+    try:
+        source_cursor = connection.execute(
+            "SELECT config_json FROM registered_sources ORDER BY id"
+        )
+        for rows in iter(lambda: source_cursor.fetchmany(256), []):
+            for row in rows:
+                try:
+                    load_json_object(row["config_json"])
+                except StoredJSONError:
+                    status["invalid_source_config_json"] += 1
+
+        job_cursor = connection.execute(
+            "SELECT params_json, result_summary_json FROM jobs ORDER BY queue_sequence"
+        )
+        for rows in iter(lambda: job_cursor.fetchmany(256), []):
+            for row in rows:
+                try:
+                    load_json_object(row["params_json"])
+                except StoredJSONError:
+                    status["invalid_job_params_json"] += 1
+                try:
+                    load_json_object(row["result_summary_json"])
+                except StoredJSONError:
+                    status["invalid_job_result_json"] += 1
+
+        queries = {
+            "jobs_missing_required_source": """
+                SELECT COUNT(*) FROM jobs
+                WHERE kind IN ('index_corpus', 'zotero_sync')
+                  AND source_id IS NULL
+            """,
+            "jobs_with_unexpected_source": """
+                SELECT COUNT(*) FROM jobs
+                WHERE kind IN ('rebuild_analysis', 'backup_project')
+                  AND source_id IS NOT NULL
+            """,
+            "job_source_kind_mismatches": """
+                SELECT COUNT(*)
+                FROM jobs j
+                JOIN registered_sources s ON s.id = j.source_id
+                WHERE (j.kind = 'index_corpus' AND s.kind != 'corpus_directory')
+                   OR (j.kind = 'zotero_sync' AND s.kind != 'zotero_profile')
+            """,
+            "active_jobs_for_removed_sources": """
+                SELECT COUNT(*)
+                FROM jobs j
+                JOIN registered_sources s ON s.id = j.source_id
+                WHERE j.status IN ('queued', 'running', 'cancelling')
+                  AND s.removed_at IS NOT NULL
+            """,
+            "invalid_job_state_rows": """
+                SELECT COUNT(*) FROM jobs
+                WHERE (status = 'queued' AND cancel_requested != 0)
+                   OR (status = 'running' AND cancel_requested != 0)
+                   OR (status = 'cancelled' AND cancel_requested != 1)
+                   OR (
+                     status IN ('completed', 'failed', 'interrupted', 'cancelled')
+                     AND (
+                       owner_pid IS NOT NULL
+                       OR owner_instance_id IS NOT NULL
+                       OR heartbeat_at IS NOT NULL
+                     )
+                   )
+            """,
+        }
+        for key, query in queries.items():
+            row = connection.execute(query).fetchone()
+            status[key] = int(row[0]) if row else 0
+    except sqlite3.Error:
+        status["check_errors"] += 1
+    return status
+
+
 def _text_sha256(text: str) -> str:
     import hashlib
 
@@ -1162,7 +1287,15 @@ def _counts(repository: Repository) -> dict[str, int]:
         "zotero_attachments",
         "zotero_document_links",
     )
-    return {table_name: repository.count_rows(table_name) for table_name in table_names}
+    counts = {
+        table_name: repository.count_rows(table_name) for table_name in table_names
+    }
+    for table_name in ("registered_sources", "jobs"):
+        row = repository.connection.execute(
+            f'SELECT COUNT(*) FROM "{table_name}"'
+        ).fetchone()
+        counts[table_name] = int(row[0]) if row else 0
+    return counts
 
 
 def _table_status(connection: sqlite3.Connection) -> dict[str, bool]:

@@ -3,14 +3,18 @@
 from __future__ import annotations
 
 import hashlib
+import ipaddress
+import json
 import os
 import re
 import sqlite3
+import unicodedata
 from collections.abc import Iterable
 from dataclasses import dataclass
 from importlib.resources import files
 from pathlib import Path
 from typing import Protocol
+from urllib.parse import SplitResult, urlsplit, urlunsplit
 from uuid import uuid4
 
 from paper_galaxy.errors import (
@@ -21,9 +25,12 @@ from paper_galaxy.errors import (
     FutureSchemaError,
     UnsupportedSchemaError,
 )
-from paper_galaxy.storage.provenance import document_content_revision_sha256
+from paper_galaxy.storage.provenance import (
+    document_content_revision_sha256,
+    registered_source_identity,
+)
 
-CURRENT_SCHEMA_VERSION = 8
+CURRENT_SCHEMA_VERSION = 9
 SCHEMA_VERSION = str(CURRENT_SCHEMA_VERSION)
 OLDEST_SUPPORTED_SCHEMA_VERSION = 6
 LEGACY_UNKNOWN_PROVENANCE = "legacy-unknown"
@@ -132,7 +139,7 @@ _V7_REQUIRED_COLUMNS = {
     | _columns("child_manifest_json"),
 }
 
-_CURRENT_REQUIRED_COLUMNS = {
+_V8_REQUIRED_COLUMNS = {
     **_V7_REQUIRED_COLUMNS,
     "scan_runs": _V7_REQUIRED_COLUMNS["scan_runs"] | _columns("owner_pid"),
     "documents": _V7_REQUIRED_COLUMNS["documents"]
@@ -148,6 +155,22 @@ _CURRENT_REQUIRED_COLUMNS = {
     | _columns("model_fingerprint algorithm_version vector_set_sha256"),
     "zotero_import_runs": _V7_REQUIRED_COLUMNS["zotero_import_runs"]
     | _columns("owner_pid"),
+}
+
+_CURRENT_REQUIRED_COLUMNS = {
+    **_V8_REQUIRED_COLUMNS,
+    "registered_sources": _columns(
+        "id kind display_name root_path zotero_source_id profile_signature "
+        "config_json last_success_at last_error_code last_error_message "
+        "created_at updated_at removed_at"
+    ),
+    "jobs": _columns(
+        "id queue_sequence kind source_id request_key status params_json "
+        "progress_current "
+        "progress_total message result_summary_json error_code error_message "
+        "cancel_requested owner_pid owner_instance_id heartbeat_at writer_slot "
+        "revision created_at started_at finished_at updated_at"
+    ),
 }
 
 _V6_FORBIDDEN_COLUMNS: dict[str, frozenset[str]] = {
@@ -172,6 +195,8 @@ _V7_FORBIDDEN_COLUMNS: dict[str, frozenset[str]] = {
     "vector_indexes": _columns("model_fingerprint algorithm_version vector_set_sha256"),
     "zotero_import_runs": _columns("owner_pid"),
 }
+
+_V8_FORBIDDEN_TABLES = frozenset({"registered_sources", "jobs"})
 
 _REQUIRED_INDEXES: dict[str, tuple[str, tuple[str, ...]]] = {
     "idx_chunks_document_id": ("chunks", ("document_id",)),
@@ -247,9 +272,36 @@ _REQUIRED_INDEXES: dict[str, tuple[str, tuple[str, ...]]] = {
     "idx_zotero_items_title": ("zotero_items", ("title",)),
 }
 
-_CURRENT_REQUIRED_INDEXES = {
+_V8_REQUIRED_INDEXES = {
     **_REQUIRED_INDEXES,
     "idx_chunks_text_sha256": ("chunks", ("text_sha256",)),
+}
+
+_CURRENT_REQUIRED_INDEXES = {
+    **_V8_REQUIRED_INDEXES,
+    "idx_registered_sources_active": (
+        "registered_sources",
+        ("kind", "removed_at", "display_name", "id"),
+    ),
+    "idx_registered_sources_zotero": (
+        "registered_sources",
+        ("zotero_source_id",),
+    ),
+    "idx_jobs_status_created_at": ("jobs", ("status", "queue_sequence")),
+    "idx_jobs_active_dedupe": ("jobs", ("request_key",)),
+    "idx_jobs_single_writer": ("jobs", ("writer_slot",)),
+    "idx_jobs_source_created_at": ("jobs", ("source_id", "created_at")),
+}
+
+_CURRENT_REQUIRED_INDEX_SQL: dict[str, str] = {
+    "idx_jobs_active_dedupe": (
+        "create unique index idx_jobs_active_dedupe on jobs(request_key) "
+        "where status in('queued','running','cancelling')"
+    ),
+    "idx_jobs_single_writer": (
+        "create unique index idx_jobs_single_writer on jobs(writer_slot) "
+        "where status in('running','cancelling')"
+    ),
 }
 
 _V6_REQUIRED_PRIMARY_KEYS: dict[str, tuple[str, ...]] = {
@@ -285,7 +337,13 @@ _V7_REQUIRED_PRIMARY_KEYS = {
     "schema_migrations": ("version",),
 }
 
-_CURRENT_REQUIRED_PRIMARY_KEYS = _V7_REQUIRED_PRIMARY_KEYS
+_V8_REQUIRED_PRIMARY_KEYS = _V7_REQUIRED_PRIMARY_KEYS
+
+_CURRENT_REQUIRED_PRIMARY_KEYS = {
+    **_V8_REQUIRED_PRIMARY_KEYS,
+    "registered_sources": ("id",),
+    "jobs": ("id",),
+}
 
 _V6_REQUIRED_UNIQUE_KEYS: dict[str, tuple[tuple[str, ...], ...]] = {
     "documents": (("corpus_id", "relative_path"),),
@@ -303,7 +361,13 @@ _V7_REQUIRED_UNIQUE_KEYS = {
     "schema_migrations": (("name",),),
 }
 
-_CURRENT_REQUIRED_UNIQUE_KEYS = _V7_REQUIRED_UNIQUE_KEYS
+_V8_REQUIRED_UNIQUE_KEYS = _V7_REQUIRED_UNIQUE_KEYS
+
+_CURRENT_REQUIRED_UNIQUE_KEYS = {
+    **_V8_REQUIRED_UNIQUE_KEYS,
+    "registered_sources": (("kind", "profile_signature"),),
+    "jobs": (("queue_sequence",),),
+}
 
 _REQUIRED_FOREIGN_KEYS: dict[
     str,
@@ -380,6 +444,10 @@ _REQUIRED_FOREIGN_KEYS: dict[
             (("attachment_id",), "zotero_attachments", ("id",), "SET NULL"),
         }
     ),
+    "registered_sources": frozenset(
+        {(("zotero_source_id",), "zotero_sources", ("id",), "RESTRICT")}
+    ),
+    "jobs": frozenset({(("source_id",), "registered_sources", ("id",), "RESTRICT")}),
 }
 
 _FTS_COLUMNS = ("document_id", "title", "relative_path", "text")
@@ -564,9 +632,277 @@ def _migrate_v8(connection: sqlite3.Connection) -> None:
     connection.execute("CREATE INDEX idx_chunks_text_sha256 ON chunks(text_sha256)")
 
 
+def _migrate_v9(connection: sqlite3.Connection) -> None:
+    """Add registered local sources and the durable single-writer job queue."""
+
+    connection.execute(
+        """
+        CREATE TABLE registered_sources (
+          id TEXT PRIMARY KEY,
+          kind TEXT NOT NULL CHECK(kind IN ('corpus_directory', 'zotero_profile')),
+          display_name TEXT NOT NULL,
+          root_path TEXT,
+          zotero_source_id TEXT,
+          profile_signature TEXT NOT NULL,
+          config_json TEXT NOT NULL DEFAULT '{}',
+          last_success_at TEXT,
+          last_error_code TEXT,
+          last_error_message TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          removed_at TEXT,
+          CHECK(
+            (kind = 'corpus_directory' AND root_path IS NOT NULL
+              AND zotero_source_id IS NULL)
+            OR
+            (kind = 'zotero_profile' AND root_path IS NULL
+              AND zotero_source_id IS NOT NULL)
+          ),
+          UNIQUE(kind, profile_signature),
+          FOREIGN KEY(zotero_source_id)
+            REFERENCES zotero_sources(id) ON DELETE RESTRICT
+        )
+        """
+    )
+    connection.execute(
+        """
+        CREATE TABLE jobs (
+          id TEXT PRIMARY KEY,
+          queue_sequence INTEGER NOT NULL UNIQUE CHECK(queue_sequence > 0),
+          kind TEXT NOT NULL CHECK(kind IN (
+            'index_corpus', 'zotero_sync', 'rebuild_analysis', 'backup_project'
+          )),
+          source_id TEXT,
+          request_key TEXT NOT NULL,
+          status TEXT NOT NULL CHECK(status IN (
+            'queued', 'running', 'cancelling', 'completed', 'failed',
+            'interrupted', 'cancelled'
+          )),
+          params_json TEXT NOT NULL DEFAULT '{}',
+          progress_current INTEGER NOT NULL DEFAULT 0 CHECK(progress_current >= 0),
+          progress_total INTEGER CHECK(progress_total IS NULL OR progress_total >= 0),
+          message TEXT NOT NULL DEFAULT '',
+          result_summary_json TEXT NOT NULL DEFAULT '{}',
+          error_code TEXT,
+          error_message TEXT,
+          cancel_requested INTEGER NOT NULL DEFAULT 0
+            CHECK(cancel_requested IN (0, 1)),
+          owner_pid INTEGER,
+          owner_instance_id TEXT,
+          heartbeat_at TEXT,
+          writer_slot INTEGER NOT NULL DEFAULT 1 CHECK(writer_slot = 1),
+          revision INTEGER NOT NULL DEFAULT 0 CHECK(revision >= 0),
+          created_at TEXT NOT NULL,
+          started_at TEXT,
+          finished_at TEXT,
+          updated_at TEXT NOT NULL,
+          CHECK(progress_total IS NULL OR progress_current <= progress_total),
+          CHECK(status != 'cancelling' OR cancel_requested = 1),
+          CHECK(
+            (status = 'queued' AND started_at IS NULL AND finished_at IS NULL
+              AND owner_pid IS NULL AND owner_instance_id IS NULL)
+            OR
+            (status IN ('running', 'cancelling') AND started_at IS NOT NULL
+              AND finished_at IS NULL AND owner_pid IS NOT NULL
+              AND owner_instance_id IS NOT NULL)
+            OR
+            (status IN ('completed', 'failed', 'interrupted', 'cancelled')
+              AND finished_at IS NOT NULL)
+          ),
+          FOREIGN KEY(source_id)
+            REFERENCES registered_sources(id) ON DELETE RESTRICT
+        )
+        """
+    )
+    connection.execute(
+        """
+        CREATE INDEX idx_registered_sources_active
+        ON registered_sources(kind, removed_at, display_name, id)
+        """
+    )
+    connection.execute(
+        """
+        CREATE INDEX idx_registered_sources_zotero
+        ON registered_sources(zotero_source_id)
+        """
+    )
+    connection.execute(
+        "CREATE INDEX idx_jobs_status_created_at ON jobs(status, queue_sequence)"
+    )
+    connection.execute(
+        """
+        CREATE UNIQUE INDEX idx_jobs_active_dedupe
+        ON jobs(request_key)
+        WHERE status IN ('queued', 'running', 'cancelling')
+        """
+    )
+    connection.execute(
+        """
+        CREATE UNIQUE INDEX idx_jobs_single_writer
+        ON jobs(writer_slot)
+        WHERE status IN ('running', 'cancelling')
+        """
+    )
+    connection.execute(
+        "CREATE INDEX idx_jobs_source_created_at ON jobs(source_id, created_at)"
+    )
+    _backfill_registered_sources(connection)
+
+
+def _backfill_registered_sources(connection: sqlite3.Connection) -> None:
+    corpus_rows = connection.execute(
+        """
+        SELECT id, root_path, created_at, updated_at
+        FROM corpora
+        WHERE root_path NOT LIKE 'zotero://sources/%'
+        ORDER BY created_at, id
+        """
+    ).fetchall()
+    for row in corpus_rows:
+        root_path = os.path.normpath(str(row[1]))
+        config = {"legacy_corpus_id": str(row[0])}
+        source_id, signature = registered_source_identity(
+            kind="corpus_directory",
+            locator=os.path.normcase(root_path),
+        )
+        connection.execute(
+            """
+            INSERT OR IGNORE INTO registered_sources(
+              id, kind, display_name, root_path, zotero_source_id,
+              profile_signature, config_json, created_at, updated_at
+            )
+            VALUES (?, 'corpus_directory', ?, ?, NULL, ?, ?, ?, ?)
+            """,
+            (
+                source_id,
+                Path(root_path).name or "Corpus",
+                root_path,
+                signature,
+                json.dumps(config, sort_keys=True, separators=(",", ":")),
+                str(row[2]),
+                str(row[3]),
+            ),
+        )
+
+    zotero_rows = connection.execute(
+        """
+        SELECT id, local_api_url, data_dir, library_id, library_type, name,
+               created_at, updated_at
+        FROM zotero_sources
+        ORDER BY created_at, id
+        """
+    ).fetchall()
+    for row in zotero_rows:
+        zotero_source_id = str(row[0])
+        zotero_config: dict[str, object] = {
+            "local_api_url": _canonical_legacy_zotero_api_url(row[1]),
+            "data_dir": _canonical_legacy_zotero_data_dir(row[2]),
+            "library_id": row[3],
+            "library_type": row[4],
+            "filters": {},
+        }
+        source_id, signature = registered_source_identity(
+            kind="zotero_profile",
+            locator=zotero_source_id,
+            config=zotero_config,
+        )
+        connection.execute(
+            """
+            INSERT OR IGNORE INTO registered_sources(
+              id, kind, display_name, root_path, zotero_source_id,
+              profile_signature, config_json, created_at, updated_at
+            )
+            VALUES (?, 'zotero_profile', ?, NULL, ?, ?, ?, ?, ?)
+            """,
+            (
+                source_id,
+                str(row[5]),
+                zotero_source_id,
+                signature,
+                json.dumps(zotero_config, sort_keys=True, separators=(",", ":")),
+                str(row[6]),
+                str(row[7]),
+            ),
+        )
+
+
+def _canonical_legacy_zotero_api_url(value: object) -> object:
+    """Canonicalize valid historical local API URLs without blocking migration."""
+
+    try:
+        return _canonical_local_api_url_for_migration(value)
+    except ValueError:
+        # v8 allowed incomplete discovery rows. Preserve those rows for local
+        # diagnosis; registration will continue to reject an unsafe endpoint.
+        return value
+
+
+def _canonical_local_api_url_for_migration(value: object) -> str:
+    """Frozen copy of the runtime v9 loopback URL canonicalization contract."""
+
+    if not isinstance(value, str) or not value or len(value) > 2048:
+        raise ValueError("Zotero local API URL is missing or invalid.")
+    if any(
+        character.isspace() or unicodedata.category(character).startswith("C")
+        for character in value
+    ):
+        raise ValueError("Zotero local API URL is malformed.")
+    try:
+        parsed = urlsplit(value)
+        port = parsed.port
+    except ValueError as exc:
+        raise ValueError("Zotero local API URL is malformed.") from exc
+    if (
+        parsed.scheme.lower() != "http"
+        or not parsed.hostname
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.query
+        or parsed.fragment
+        or parsed.netloc.endswith(":")
+    ):
+        raise ValueError("Zotero local API URL is not a safe loopback URL.")
+    hostname = parsed.hostname.lower().rstrip(".")
+    if hostname != "localhost":
+        try:
+            address = ipaddress.ip_address(hostname)
+        except ValueError as exc:
+            raise ValueError("Zotero local API host must be loopback.") from exc
+        if not address.is_loopback:
+            raise ValueError("Zotero local API host must be loopback.")
+    if port is not None and not 1 <= port <= 65535:
+        raise ValueError("Zotero local API port is invalid.")
+    if "\\" in parsed.path:
+        raise ValueError("Zotero local API path is invalid.")
+    host = f"[{hostname}]" if ":" in hostname else hostname
+    netloc = f"{host}:{port}" if port is not None else host
+    return urlunsplit(SplitResult("http", netloc, parsed.path or "", "", ""))
+
+
+def _canonical_legacy_zotero_data_dir(value: object) -> object:
+    """Apply the runtime Zotero data-directory normalization to valid values."""
+
+    if value is None:
+        return None
+    if (
+        not isinstance(value, str)
+        or not value
+        or any(unicodedata.category(character).startswith("C") for character in value)
+    ):
+        return value
+    path = Path(value).expanduser()
+    if not path.is_absolute():
+        return value
+    try:
+        return str(path.resolve(strict=False))
+    except OSError:
+        return value
+
+
 MIGRATIONS: tuple[Migration, ...] | dict[int, Migration] = (
     Migration(7, "record_migrations_and_run_failures", _migrate_v7),
     Migration(8, "record_vector_source_provenance", _migrate_v8),
+    Migration(9, "register_sources_and_durable_jobs", _migrate_v9),
 )
 
 
@@ -736,18 +1072,28 @@ def validate_schema_capability(
         required_unique_keys = _V6_REQUIRED_UNIQUE_KEYS
         required_indexes = _REQUIRED_INDEXES
         forbidden_columns = _V6_FORBIDDEN_COLUMNS
+        forbidden_tables: frozenset[str] = frozenset()
     elif version == 7:
         required_columns = _V7_REQUIRED_COLUMNS
         required_primary_keys = _V7_REQUIRED_PRIMARY_KEYS
         required_unique_keys = _V7_REQUIRED_UNIQUE_KEYS
         required_indexes = _REQUIRED_INDEXES
         forbidden_columns = _V7_FORBIDDEN_COLUMNS
+        forbidden_tables = frozenset()
+    elif version == 8:
+        required_columns = _V8_REQUIRED_COLUMNS
+        required_primary_keys = _V8_REQUIRED_PRIMARY_KEYS
+        required_unique_keys = _V8_REQUIRED_UNIQUE_KEYS
+        required_indexes = _V8_REQUIRED_INDEXES
+        forbidden_columns = {}
+        forbidden_tables = _V8_FORBIDDEN_TABLES
     elif version == CURRENT_SCHEMA_VERSION:
         required_columns = _CURRENT_REQUIRED_COLUMNS
         required_primary_keys = _CURRENT_REQUIRED_PRIMARY_KEYS
         required_unique_keys = _CURRENT_REQUIRED_UNIQUE_KEYS
         required_indexes = _CURRENT_REQUIRED_INDEXES
         forbidden_columns = {}
+        forbidden_tables = frozenset()
     else:
         raise UnsupportedSchemaError(
             path,
@@ -766,6 +1112,11 @@ def validate_schema_capability(
         """
     ).fetchall()
     tables = {str(row[0]) for row in table_rows}
+    for table_name in sorted(forbidden_tables):
+        if table_name in tables:
+            problems.append(
+                f"v{version} unexpectedly contains future table {table_name}"
+            )
     for table_name, required in sorted(required_columns.items()):
         if table_name not in tables:
             problems.append(f"missing table {table_name}")
@@ -799,6 +1150,8 @@ def validate_schema_capability(
     )
     _check_required_foreign_keys(connection, tables, problems)
     _check_required_indexes(connection, required_indexes, problems)
+    if version == CURRENT_SCHEMA_VERSION:
+        _check_required_index_sql(connection, problems)
     _check_fts_shape(connection, problems)
     if version >= 7 and "schema_migrations" in tables:
         _check_migration_history(connection, through_version=version, problems=problems)
@@ -950,6 +1303,31 @@ def _check_required_indexes(
                 f"index {index_name} has columns {actual_columns!r}, expected "
                 f"{expected_columns!r}"
             )
+
+
+def _check_required_index_sql(
+    connection: sqlite3.Connection,
+    problems: list[str],
+) -> None:
+    for index_name, expected_sql in sorted(_CURRENT_REQUIRED_INDEX_SQL.items()):
+        row = connection.execute(
+            "SELECT sql FROM sqlite_schema WHERE type = 'index' AND name = ?",
+            (index_name,),
+        ).fetchone()
+        if row is None or row[0] is None:
+            continue
+        normalized = _normalize_index_sql(str(row[0]))
+        if normalized != expected_sql:
+            problems.append(
+                f"index {index_name} has the wrong uniqueness or predicate semantics"
+            )
+
+
+def _normalize_index_sql(value: str) -> str:
+    normalized = re.sub(r"\s+", " ", value.strip().lower()).rstrip(";")
+    normalized = re.sub(r"\s*\(\s*", "(", normalized)
+    normalized = re.sub(r"\s*,\s*", ",", normalized)
+    return re.sub(r"\s*\)", ")", normalized)
 
 
 def _check_fts_shape(

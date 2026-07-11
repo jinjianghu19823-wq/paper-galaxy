@@ -4,6 +4,17 @@
 
 ## Unreleased
 
+- Added the first local research workstation checkpoint: schema v9 registered
+  corpus/Zotero sources, a durable single-writer job queue with cooperative
+  cancellation and crash recovery, safe project initialization, and
+  `paper-galaxy launch` with loopback-only automatic port selection. The local
+  Web app now exposes bounded source/job controls protected by Host checks,
+  same-origin validation, a per-process write token, CSP, and other browser
+  hardening headers. Zotero HTTP traffic is constrained to one loopback origin,
+  without proxies or redirects. Launch and direct indexing reject projects or
+  databases inside source trees before writing, job/source enqueue is fenced in
+  one transaction, worker ownership is rechecked at commit boundaries, and
+  restore refuses an active background worker.
 - Added schema v8 vector provenance and lifecycle hardening: exact local-model
   fingerprints, collision-safe canonical document revisions,
   source-revision compare-and-swap writes, automatic dead-owner

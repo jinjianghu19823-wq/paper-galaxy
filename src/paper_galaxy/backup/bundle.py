@@ -12,6 +12,7 @@ import tempfile
 import tomllib
 import unicodedata
 import zipfile
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -50,6 +51,11 @@ from paper_galaxy.backup.staging import create_owned_staging
 from paper_galaxy.config import ProjectConfig, validate_project_config
 from paper_galaxy.errors import DatabaseError
 from paper_galaxy.paths import project_config_path
+from paper_galaxy.services.worker_lease import (
+    WORKER_LOCK_RELATIVE_PATH,
+    JobWorkerLeaseError,
+    acquire_job_worker_lease,
+)
 from paper_galaxy.storage.locking import (
     PROJECT_LOCK_RELATIVE_PATH,
     acquire_shared_project_locks,
@@ -74,6 +80,10 @@ class _Payload:
     content: bytes | Path
 
 
+class BackupCancelled(RuntimeError):
+    """Raised before atomic publication when a backup job is cancelled."""
+
+
 def export_project(
     *,
     project_dir: Path,
@@ -82,6 +92,7 @@ def export_project(
     include_vector_indexes: bool = False,
     include_source_files: bool = False,
     yes: bool = False,
+    cancel_requested: Callable[[], bool] | None = None,
 ) -> dict[str, Any]:
     """Hold a project read lock while producing one consistent backup bundle."""
 
@@ -107,6 +118,7 @@ def export_project(
             include_vector_indexes=include_vector_indexes,
             include_source_files=include_source_files,
             yes=yes,
+            cancel_requested=cancel_requested,
         )
     finally:
         locks.close()
@@ -120,9 +132,11 @@ def _export_project_under_lock(
     include_vector_indexes: bool,
     include_source_files: bool,
     yes: bool,
+    cancel_requested: Callable[[], bool] | None,
 ) -> dict[str, Any]:
     """Export a validated backup and atomically publish the completed ZIP."""
 
+    _raise_if_backup_cancelled(cancel_requested)
     if include_source_files:
         raise ValueError(
             "Source file export is intentionally unsupported; source documents "
@@ -168,6 +182,7 @@ def _export_project_under_lock(
         database_path=portable_database_path,
         warnings=warnings,
     )
+    _raise_if_backup_cancelled(cancel_requested)
 
     staging_root = create_owned_staging(
         parent=destination.parent,
@@ -208,6 +223,7 @@ def _export_project_under_lock(
                 payloads[DATABASE_ARCHIVE_PATH] = _Payload(snapshot_path)
             else:
                 warnings.append("SQLite database was not found; no database was added.")
+        _raise_if_backup_cancelled(cancel_requested)
 
         _reject_output_alias(destination, protected_inputs)
         contains_database = DATABASE_ARCHIVE_PATH in payloads
@@ -256,6 +272,7 @@ def _export_project_under_lock(
         staged_archive = staging_root / "backup.zip"
         _write_archive(staged_archive, payloads)
         _inspect_backup_archive(staged_archive, limits=DEFAULT_ARCHIVE_LIMITS)
+        _raise_if_backup_cancelled(cancel_requested)
         os.chmod(staged_archive, 0o600)
         _fsync_file(staged_archive)
         publish_file(staged_archive, destination, kind="backup export")
@@ -267,6 +284,13 @@ def _export_project_under_lock(
         }
     finally:
         shutil.rmtree(staging_root, ignore_errors=True)
+
+
+def _raise_if_backup_cancelled(
+    cancel_requested: Callable[[], bool] | None,
+) -> None:
+    if cancel_requested is not None and cancel_requested():
+        raise BackupCancelled("Backup cancelled before atomic publication.")
 
 
 def inspect_backup(
@@ -367,27 +391,41 @@ def import_project(
             force=force,
         )
     with exclusive_project_maintenance_lock(target_project):
-        recover_interrupted_project_restore(target_project, dry_run=False)
-        _preflight_restore_destination(
-            inspection=inspection,
-            project_dir=target_project,
-            relative_files=relative_files,
-            remove_paths=remove_paths,
-            configured_database_path=configured_path,
-            force=force,
-            allow_maintenance_marker=True,
-        )
-        _restore_validated_project(
-            inspection=inspection,
-            database=database,
-            vector_mappings=vector_mappings,
-            configured_database_path=configured_path,
-            relative_files=relative_files,
-            remove_paths=remove_paths,
-            project_dir=target_project,
-            force=force,
-            limits=archive_limits,
-        )
+        worker_lease = None
+        worker_lock = target_project / WORKER_LOCK_RELATIVE_PATH
+        if worker_lock.exists() or worker_lock.is_symlink():
+            try:
+                worker_lease = acquire_job_worker_lease(target_project)
+            except JobWorkerLeaseError as exc:
+                raise ValueError(
+                    "Restore refused because a local background worker is active; "
+                    "stop the workspace and retry."
+                ) from exc
+        try:
+            recover_interrupted_project_restore(target_project, dry_run=False)
+            _preflight_restore_destination(
+                inspection=inspection,
+                project_dir=target_project,
+                relative_files=relative_files,
+                remove_paths=remove_paths,
+                configured_database_path=configured_path,
+                force=force,
+                allow_maintenance_marker=True,
+            )
+            _restore_validated_project(
+                inspection=inspection,
+                database=database,
+                vector_mappings=vector_mappings,
+                configured_database_path=configured_path,
+                relative_files=relative_files,
+                remove_paths=remove_paths,
+                project_dir=target_project,
+                force=force,
+                limits=archive_limits,
+            )
+        finally:
+            if worker_lease is not None:
+                worker_lease.close()
     return summary
 
 

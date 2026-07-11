@@ -9,7 +9,7 @@ Create a clean virtual environment and install the app extras:
 ```bash
 python -m venv .venv
 source .venv/bin/activate
-python -m pip install -e ".[dev,ml,pdf,app]"
+python -m pip install ".[full]"
 paper-galaxy doctor
 ```
 
@@ -71,6 +71,23 @@ paper-galaxy init . --force
 paper-galaxy index examples/tiny_corpus --project-dir . --min-chars 40
 paper-galaxy serve --project-dir .
 ```
+
+For a new workstation, the equivalent one-command flow is:
+
+```bash
+paper-galaxy launch --project-dir ~/PaperGalaxy --corpus ~/Papers --open
+```
+
+## Launch Says A Worker Is Already Active
+
+Only one background writer may serve a project. Close the other Paper Galaxy
+window/process and retry. Do not delete the worker lock or edit the jobs table;
+the next exclusive worker safely marks genuinely interrupted work and preserves
+completed artifacts. A restore must also run while the workspace is stopped.
+
+If launch rejects a source/project relationship, choose a project directory
+outside the corpus or Zotero data directory. Paper Galaxy intentionally refuses
+to create its database inside a read-only source tree.
 
 ## Zotero Local API Unavailable
 

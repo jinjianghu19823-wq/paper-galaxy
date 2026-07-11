@@ -41,6 +41,13 @@ Paper Galaxy is local-first by default.
   chunks so the local index can recover document history without rescanning
   unavailable content.
 - Phase 3 starts a local server bound to `127.0.0.1` by default.
+- `paper-galaxy launch` stores registered source locators and durable job state
+  only in the local project database. Ordinary Web responses redact source,
+  project, database, attachment, and error-detail paths.
+- Local Web writes require an allowed loopback Host, same-origin Origin, and a
+  per-process write token kept in page memory. Security headers disable framing
+  and remote runtime assets. Unhandled API errors return a fixed path-free
+  response.
 - The browser app communicates with the local backend only.
 - Phase 3 static assets are served locally and do not reference CDNs, remote
   fonts, or external images.
@@ -57,8 +64,9 @@ Paper Galaxy is local-first by default.
   `--allow-model-download` is an explicit user opt-in to model resolution.
 - Cluster labels and pair explanations are generated locally from indexed text;
   there is no mandatory LLM or remote labeling service.
-- Choosing a non-loopback host may expose the app to other devices on the local
-  network.
+- The packaged server refuses non-loopback hosts. Network sharing requires a
+  separately designed authenticated mode and is not enabled by a warning or
+  hidden fallback.
 - `.paper-galaxy/` is local project state and is gitignored.
 - Deleting `.paper-galaxy/` removes the local Paper Galaxy database and project
   metadata for that project.

@@ -35,6 +35,9 @@ PDF 路径会就地引用。Paper Galaxy 默认不会复制、移动或修改 Zo
 ## 连接边界
 
 主连接器通过本地 API 读取数据，不需要认证。直接读取 `zotero.sqlite` 只作为 fallback-only、read-only 的诊断和路径提示，因为 Zotero 数据库 schema 可能随版本变化。
+Local API URL 会被规范为同一个 HTTP loopback origin。请求忽略环境 proxy、拒绝
+redirect，并拒绝改变 origin 的 pagination link，因此本地响应不能把文库数据静默发送到
+其他地址。
 
 Paper Galaxy 永远不写回 Zotero。本功能不包含 Zotero OAuth、不包含在线 Zotero Web API 同步、不包含云同步，也不包含托管账号系统。
 
@@ -55,6 +58,14 @@ Paper Galaxy 永远不写回 Zotero。本功能不包含 Zotero OAuth、不包�
 常用导入选项包括 `--collection`、可重复的 `--tag`、可重复的 `--item-type`、`--include-pdfs/--no-include-pdfs`、`--include-notes/--no-include-notes`、`--include-metadata-only`、`--pdf-policy`、`--include-status`、`--limit`、`--since-version`、`--dry-run`、`--force` 和 `--build-reading-map`。
 
 `--collection` 可以使用 collection key、精确 collection 名称或 slash-style 路径。名称和路径匹配大小写不敏感；如果名称有歧义或找不到 collection，导入会在写入前失败。目前本地 beta 只支持 Zotero Desktop user library 别名 `local`、`user`、`users/0` 和 `/users/0`。
+每个持久工作站 source profile 当前最多接受一个 collection；不同 collection 请登记为
+不同 profile。多 collection union/cursor 语义属于后续 incremental-sync checkpoint。
+
+成功导入并登记只读本地 profile 后，可以在启动工作站时排队同步：
+
+```bash
+paper-galaxy launch --project-dir . --zotero-sync --open
+```
 
 `--include-status` 支持 `all`、`read`、`reading`、`to_read` 和 `unknown`。旧写法 `unclassified` 仍作为 `unknown` 的 deprecated alias 接受。
 

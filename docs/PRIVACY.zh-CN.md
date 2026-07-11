@@ -23,6 +23,12 @@ Paper Galaxy 默认本地优先。英文版仍是规范版本；本文件提供�
 - `paper-galaxy zotero doctor` 是不写入数据的本地 readiness 检查。它的 JSON 报告仍可能包含私人本地路径、条目题名、标签、DOI/URL 和附件状态摘要，分享前需要先检查和删减。
 - `missing` 和 `unindexed` 记录可能保留之前抽取的本地文本和文本块，以便本地索引可以恢复文档历史。
 - Phase 3 默认启动绑定到 `127.0.0.1` 的本地服务器。
+- `paper-galaxy launch` 只在本地项目数据库中保存已登记 source locator 和持久 job
+  状态。普通 Web response 会删去 source、project、database、attachment 路径和详细
+  错误路径。
+- 本地 Web 写请求必须同时通过 loopback Host allowlist、同源 Origin 和每进程 write
+  token；token 只保留在页面内存中。安全响应头禁止 framing 和远程 runtime asset；
+  未处理 API 错误返回固定、无路径的响应。
 - 浏览器应用只与本地后端通信。
 - Phase 3 静态资源由本地服务，不引用 CDN、远程字体或外部图片。
 - 浏览器应用不会上传文档、收集遥测或调用远程服务。
@@ -30,7 +36,8 @@ Paper Galaxy 默认本地优先。英文版仍是规范版本；本文件提供�
 - 可选 OCR 只在本地运行。它可能需要用户安装 Tesseract 等本地 OCR 二进制，但 Paper Galaxy 不会把图片、抽取文本、OCR 输出或抽取报告上传到远程服务。
 - 可选 embeddings 只在本地运行。默认拒绝远程 Sentence Transformer 模型名以避免隐藏下载；使用 `--allow-model-download` 是用户对模型解析/下载的显式选择。
 - 主题簇标签和 pair explanations 都从本地索引文本生成；没有强制 LLM 或远程标签服务。
-- 选择非 loopback host 可能会把应用暴露给局域网中的其他设备。
+- 打包服务器会拒绝非 loopback host。网络共享需要未来单独设计的认证模式，不能只靠
+  warning 或隐藏 fallback 开启。
 - `.paper-galaxy/` 是本地项目状态，并已被 gitignore。
 - 删除 `.paper-galaxy/` 会删除该项目的本地 Paper Galaxy 数据库和项目元数据。
 

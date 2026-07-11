@@ -136,6 +136,27 @@ Non-goals: desktop packaging, cloud dependency, telemetry, accounts, cloud
 sync, Zotero integration, LLM chat, mandatory LLM labeling, remote plugin
 loading, React/Node tooling, and locking user data into a proprietary format.
 
+## Local Research Workstation & Evidence-First Insight Engine (in progress)
+
+Goal: turn the local package into a trustworthy research workstation whose
+future insights remain evidence-linked and explicitly scoped to one personal
+library.
+
+Delivered checkpoint: schema v9 registered sources, durable single-writer
+jobs, safe no-clobber project initialization, `paper-galaxy launch`, loopback
+port selection, source/job Web controls, worker ownership fencing, bounded
+queries, and local browser write protections. Corpus and Zotero roots are
+revalidated before use, are never modified, and cannot contain project state.
+
+Remaining checkpoints: true incremental read-only Zotero synchronization,
+structured evidence locators, local citation resolution, immutable analysis
+snapshots, evidence-first insights and reading plans, scalable workspace UI,
+E2E tests, benchmark tooling, and the expanded synthetic demo.
+
+Non-goals remain cloud accounts/sync, telemetry, remote LLMs or embeddings,
+default model downloads, Zotero write-back, React/Node production tooling, and
+native desktop installers in this milestone.
+
 ## Public Launch Readiness (implemented)
 
 Goal: make the repository safe and polished enough to publish.

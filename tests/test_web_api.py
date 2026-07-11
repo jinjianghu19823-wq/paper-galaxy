@@ -151,19 +151,29 @@ def test_cluster_endpoints_rename_reset_and_reject_bad_labels(
     client = TestClient(create_app(tmp_path, seed=11, neighbors=4))
     map_data = client.get("/api/map").json()
     signature = map_data["clusters"][0]["cluster_signature"]
+    write_headers = {
+        "Origin": "http://testserver",
+        "X-Paper-Galaxy-Write-Token": client.get("/api/config").json()["write_token"],
+    }
 
-    bad_empty = client.put(f"/api/clusters/{signature}/label", json={"label": "  "})
+    bad_empty = client.put(
+        f"/api/clusters/{signature}/label",
+        json={"label": "  "},
+        headers=write_headers,
+    )
     bad_long = client.put(
         f"/api/clusters/{signature}/label",
         json={"label": "x" * 121},
+        headers=write_headers,
     )
     renamed = client.put(
         f"/api/clusters/{signature}/label",
         json={"label": "Neural Operators"},
+        headers=write_headers,
     )
     clusters = client.get("/api/clusters").json()
     updated_map = client.get("/api/map").json()
-    reset = client.delete(f"/api/clusters/{signature}/label")
+    reset = client.delete(f"/api/clusters/{signature}/label", headers=write_headers)
     reset_clusters = client.get("/api/clusters").json()
 
     assert bad_empty.status_code == 422

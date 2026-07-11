@@ -751,6 +751,96 @@ def test_validation_reports_zotero_cursor_and_profile_inconsistency(
     assert "zotero_consistency_failed" in _issue_codes(report)
 
 
+def test_validation_reports_registered_source_and_job_inconsistency(
+    tmp_path: Path,
+) -> None:
+    database_path = _initialize_project(tmp_path)
+    connection = _connection(database_path)
+    try:
+        connection.execute(
+            """
+            INSERT INTO zotero_sources(
+              id, source_type, local_api_url, library_id, library_type,
+              name, created_at, updated_at
+            ) VALUES (
+              'zotero-source', 'local_api', 'http://localhost:23119/api',
+              '0', 'user', 'Synthetic Zotero', ?, ?
+            )
+            """,
+            (NOW, NOW),
+        )
+        connection.execute(
+            """
+            INSERT INTO registered_sources(
+              id, kind, display_name, root_path, zotero_source_id,
+              profile_signature, config_json, created_at, updated_at, removed_at
+            ) VALUES (
+              'removed-corpus', 'corpus_directory', 'Removed corpus',
+              '/synthetic/removed', NULL, 'removed-signature', '{', ?, ?, ?
+            ), (
+              'zotero-profile', 'zotero_profile', 'Synthetic Zotero',
+              NULL, 'zotero-source', 'zotero-signature', '{}', ?, ?, NULL
+            )
+            """,
+            (NOW, NOW, NOW, NOW, NOW),
+        )
+        connection.execute(
+            """
+            INSERT INTO jobs(
+              id, queue_sequence, kind, source_id, request_key, status,
+              params_json, result_summary_json, created_at, updated_at
+            ) VALUES (
+              'missing-source', 1, 'index_corpus', NULL, 'request-1', 'queued',
+              '{', '{}', ?, ?
+            ), (
+              'removed-source', 2, 'rebuild_analysis', 'removed-corpus',
+              'request-2', 'queued', '{}', '[', ?, ?
+            ), (
+              'wrong-source-kind', 3, 'index_corpus', 'zotero-profile',
+              'request-3', 'queued', '{}', '{}', ?, ?
+            )
+            """,
+            (NOW, NOW, NOW, NOW, NOW, NOW),
+        )
+        connection.execute(
+            """
+            INSERT INTO jobs(
+              id, queue_sequence, kind, source_id, request_key, status,
+              params_json, result_summary_json, owner_pid, owner_instance_id,
+              heartbeat_at, created_at, finished_at, updated_at
+            ) VALUES (
+              'stale-terminal-owner', 4, 'backup_project', NULL, 'request-4',
+              'completed', '{}', '{}', 123, 'stale-worker', ?, ?, ?, ?
+            )
+            """,
+            (NOW, NOW, NOW, NOW),
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+    report = validate_project(tmp_path, check_stale=False)
+    state = report["source_job_consistency"]
+
+    assert report["tables"]["registered_sources"] is True
+    assert report["tables"]["jobs"] is True
+    assert report["counts"]["registered_sources"] == 2
+    assert report["counts"]["jobs"] == 4
+    assert state == {
+        "check_errors": 0,
+        "invalid_source_config_json": 1,
+        "invalid_job_params_json": 1,
+        "invalid_job_result_json": 1,
+        "jobs_missing_required_source": 1,
+        "jobs_with_unexpected_source": 1,
+        "job_source_kind_mismatches": 1,
+        "active_jobs_for_removed_sources": 1,
+        "invalid_job_state_rows": 1,
+    }
+    assert "source_job_consistency_failed" in _issue_codes(report)
+    assert "/synthetic/removed" not in json.dumps(state, sort_keys=True)
+
+
 def test_vectors_built_by_current_pipeline_are_not_reported_stale(
     tmp_path: Path,
 ) -> None:

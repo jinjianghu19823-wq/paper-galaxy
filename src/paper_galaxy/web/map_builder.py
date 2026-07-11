@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Callable
 from pathlib import Path
 
 from paper_galaxy.explain.clusters import clusters_payload
@@ -23,6 +24,10 @@ from paper_galaxy.storage.repository import Repository
 from paper_galaxy.storage.sqlite import connect_read_only, resolve_database_path
 
 
+class MapPayloadCancelled(RuntimeError):
+    """Raised between expensive deterministic map-building stages."""
+
+
 def build_map_payload(
     *,
     project_dir: Path,
@@ -30,6 +35,7 @@ def build_map_payload(
     clusters: int | None = None,
     neighbors: int = 5,
     limit: int = 1000,
+    cancel_requested: Callable[[], bool] | None = None,
 ) -> dict[str, object]:
     """Build JSON-serializable map data from active indexed documents."""
 
@@ -44,6 +50,7 @@ def build_map_payload(
         )
     finally:
         connection.close()
+    _raise_if_map_payload_cancelled(cancel_requested)
 
     warnings = _limit_warnings(stats, len(limited_rows), limit)
     if not limited_rows:
@@ -73,8 +80,11 @@ def build_map_payload(
     ]
 
     _, matrix, terms = compute_tfidf([document.text for document in documents])
+    _raise_if_map_payload_cancelled(cancel_requested)
     coordinates = compute_layout(matrix, seed=seed)
+    _raise_if_map_payload_cancelled(cancel_requested)
     cluster_ids = compute_clusters(matrix, requested=clusters, seed=seed)
+    _raise_if_map_payload_cancelled(cancel_requested)
     cluster_labels = _cluster_label_metadata(
         project_dir=project_dir,
         documents=documents,
@@ -83,13 +93,16 @@ def build_map_payload(
         terms=terms,
         warnings=warnings,
     )
+    _raise_if_map_payload_cancelled(cancel_requested)
     cluster_by_id = {label.cluster_id: label for label in cluster_labels}
     document_neighbors = compute_neighbors(
         matrix,
         documents,
         neighbor_count=neighbors,
     )
+    _raise_if_map_payload_cancelled(cancel_requested)
     document_terms = top_terms_for_documents(matrix, terms)
+    _raise_if_map_payload_cancelled(cancel_requested)
     points = [
         MapPoint(
             document_id=document.id,
@@ -115,6 +128,13 @@ def build_map_payload(
         "stats": _stats_payload(stats),
         "warnings": warnings,
     }
+
+
+def _raise_if_map_payload_cancelled(
+    cancel_requested: Callable[[], bool] | None,
+) -> None:
+    if cancel_requested is not None and cancel_requested():
+        raise MapPayloadCancelled("Analysis cancelled between computation stages.")
 
 
 def _cluster_label_metadata(

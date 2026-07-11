@@ -14,6 +14,7 @@ from paper_galaxy.backup import publish as backup_publish
 from paper_galaxy.backup import staging as backup_staging
 from paper_galaxy.config import load_project_config
 from paper_galaxy.indexer import index_corpus
+from paper_galaxy.services.jobs import JobManager
 from paper_galaxy.storage.locking import (
     PROJECT_LOCK_MARKER,
     PROJECT_LOCK_RELATIVE_PATH,
@@ -278,6 +279,29 @@ def test_failed_force_restore_preserves_existing_project_byte_for_byte(
 
     assert _relative_file_bytes(target) == target_before
     assert {path.name for path in tmp_path.iterdir()} == siblings_before
+
+
+def test_restore_refuses_idle_background_worker_and_preserves_target(
+    tmp_path: Path,
+) -> None:
+    source = _indexed_project(tmp_path / "source")
+    archive = tmp_path / "backup.zip"
+    export_project(project_dir=source, output_path=archive, yes=True)
+    target = _indexed_project(tmp_path / "target")
+    manager = JobManager(target)
+    manager.start()
+    before = _relative_file_bytes(target)
+    try:
+        with pytest.raises(ValueError, match=r"background worker is active"):
+            import_project(
+                backup_path=archive,
+                project_dir=target,
+                force=True,
+            )
+    finally:
+        manager.stop()
+
+    assert _relative_file_bytes(target) == before
 
 
 def test_force_restore_refuses_live_project_connection_before_publication(

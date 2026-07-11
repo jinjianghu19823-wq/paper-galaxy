@@ -132,6 +132,17 @@
 
           <section class="panel">
             <div class="panel-title-row">
+              <h2 data-i18n="work.title">Sources and jobs</h2>
+              <button id="work-refresh" class="text-button" type="button" data-i18n="work.refresh">Refresh</button>
+            </div>
+            <div class="filter-subhead" data-i18n="work.sources">Registered sources</div>
+            <div id="source-registry" class="result-list"></div>
+            <div class="filter-subhead" data-i18n="work.jobs">Local jobs</div>
+            <div id="job-list" class="result-list" aria-live="polite"></div>
+          </section>
+
+          <section class="panel">
+            <div class="panel-title-row">
               <h2 data-i18n="clusters.title">Clusters</h2>
             </div>
             <div id="cluster-legend" class="legend"></div>

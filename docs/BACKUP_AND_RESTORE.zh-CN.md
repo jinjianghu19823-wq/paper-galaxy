@@ -90,6 +90,10 @@ handle。若报告 maintenance lock 或活动 SQLite sidecar，请关闭使用�
 进程被强制终止或断电后，durable transaction 也会阻止所有普通 connection，直到下一次
 真实 import 完成恢复。
 
+持久后台 job worker 另有排他 lease。Restore 会在持有 maintenance lock 时检查该
+lease，即使工作站 worker 当前空闲也会拒绝恢复，避免排队任务与恢复后状态发生竞态。
+真实 import 前请停止 `paper-galaxy launch` 或 `paper-galaxy serve`；dry-run 仍只读。
+
 导出、检查和恢复的 staging root 都是私有目录，并带严格的 operation/target/PID ownership
 marker。正常退出会删除；hard kill 后敏感 staging bytes 可能保留到下一次相同操作。
 系统只清理 PID 已失效、仅属主可访问且 marker 完全匹配的目录，绝不 glob 删除 lookalike

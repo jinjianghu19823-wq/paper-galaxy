@@ -362,6 +362,74 @@ CREATE TABLE IF NOT EXISTS zotero_document_links (
   FOREIGN KEY(attachment_id) REFERENCES zotero_attachments(id) ON DELETE SET NULL
 );
 
+CREATE TABLE IF NOT EXISTS registered_sources (
+  id TEXT PRIMARY KEY,
+  kind TEXT NOT NULL CHECK(kind IN ('corpus_directory', 'zotero_profile')),
+  display_name TEXT NOT NULL,
+  root_path TEXT,
+  zotero_source_id TEXT,
+  profile_signature TEXT NOT NULL,
+  config_json TEXT NOT NULL DEFAULT '{}',
+  last_success_at TEXT,
+  last_error_code TEXT,
+  last_error_message TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  removed_at TEXT,
+  CHECK(
+    (kind = 'corpus_directory' AND root_path IS NOT NULL AND zotero_source_id IS NULL)
+    OR
+    (kind = 'zotero_profile' AND root_path IS NULL AND zotero_source_id IS NOT NULL)
+  ),
+  UNIQUE(kind, profile_signature),
+  FOREIGN KEY(zotero_source_id) REFERENCES zotero_sources(id) ON DELETE RESTRICT
+);
+
+CREATE TABLE IF NOT EXISTS jobs (
+  id TEXT PRIMARY KEY,
+  queue_sequence INTEGER NOT NULL UNIQUE CHECK(queue_sequence > 0),
+  kind TEXT NOT NULL CHECK(kind IN (
+    'index_corpus', 'zotero_sync', 'rebuild_analysis', 'backup_project'
+  )),
+  source_id TEXT,
+  request_key TEXT NOT NULL,
+  status TEXT NOT NULL CHECK(status IN (
+    'queued', 'running', 'cancelling', 'completed', 'failed', 'interrupted',
+    'cancelled'
+  )),
+  params_json TEXT NOT NULL DEFAULT '{}',
+  progress_current INTEGER NOT NULL DEFAULT 0 CHECK(progress_current >= 0),
+  progress_total INTEGER CHECK(progress_total IS NULL OR progress_total >= 0),
+  message TEXT NOT NULL DEFAULT '',
+  result_summary_json TEXT NOT NULL DEFAULT '{}',
+  error_code TEXT,
+  error_message TEXT,
+  cancel_requested INTEGER NOT NULL DEFAULT 0 CHECK(cancel_requested IN (0, 1)),
+  owner_pid INTEGER,
+  owner_instance_id TEXT,
+  heartbeat_at TEXT,
+  writer_slot INTEGER NOT NULL DEFAULT 1 CHECK(writer_slot = 1),
+  revision INTEGER NOT NULL DEFAULT 0 CHECK(revision >= 0),
+  created_at TEXT NOT NULL,
+  started_at TEXT,
+  finished_at TEXT,
+  updated_at TEXT NOT NULL,
+  CHECK(progress_total IS NULL OR progress_current <= progress_total),
+  CHECK(status != 'cancelling' OR cancel_requested = 1),
+  CHECK(
+    (status = 'queued' AND started_at IS NULL AND finished_at IS NULL
+      AND owner_pid IS NULL AND owner_instance_id IS NULL)
+    OR
+    (status IN ('running', 'cancelling') AND started_at IS NOT NULL
+      AND finished_at IS NULL AND owner_pid IS NOT NULL
+      AND owner_instance_id IS NOT NULL)
+    OR
+    (status IN ('completed', 'failed', 'interrupted', 'cancelled')
+      AND finished_at IS NOT NULL)
+  ),
+  FOREIGN KEY(source_id) REFERENCES registered_sources(id) ON DELETE RESTRICT
+);
+
 CREATE VIRTUAL TABLE IF NOT EXISTS documents_fts USING fts5(
   document_id UNINDEXED,
   title,
@@ -449,3 +517,23 @@ CREATE INDEX IF NOT EXISTS idx_zotero_document_links_item
 
 CREATE INDEX IF NOT EXISTS idx_zotero_document_links_document
   ON zotero_document_links(document_id);
+
+CREATE INDEX IF NOT EXISTS idx_registered_sources_active
+  ON registered_sources(kind, removed_at, display_name, id);
+
+CREATE INDEX IF NOT EXISTS idx_registered_sources_zotero
+  ON registered_sources(zotero_source_id);
+
+CREATE INDEX IF NOT EXISTS idx_jobs_status_created_at
+  ON jobs(status, queue_sequence);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_jobs_active_dedupe
+  ON jobs(request_key)
+  WHERE status IN ('queued', 'running', 'cancelling');
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_jobs_single_writer
+  ON jobs(writer_slot)
+  WHERE status IN ('running', 'cancelling');
+
+CREATE INDEX IF NOT EXISTS idx_jobs_source_created_at
+  ON jobs(source_id, created_at);

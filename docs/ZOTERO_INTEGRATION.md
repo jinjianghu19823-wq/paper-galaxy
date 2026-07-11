@@ -44,6 +44,9 @@ Zotero attachment files by default.
 The main connector reads the local API without authentication. Direct
 `zotero.sqlite` access is fallback-only and read-only; it is used for diagnostics
 and path hints because Zotero can change its database schema between releases.
+Local API URLs are canonicalized to one HTTP loopback origin. Requests ignore
+environment proxy settings, reject redirects, and reject pagination links that
+change origin, so a local response cannot silently send library data elsewhere.
 
 Paper Galaxy never writes to Zotero. There is no Zotero OAuth, no online Zotero
 Web API sync path, no cloud sync, and no hosted account system in this feature.
@@ -78,6 +81,16 @@ Useful import options include `--collection`, repeatable `--tag`, repeatable
 path. Matching is case-insensitive for names and paths; ambiguous names and
 missing collections fail before import. The local beta supports only the Zotero
 Desktop user library aliases `local`, `user`, `users/0`, and `/users/0`.
+Each durable workstation source profile currently accepts at most one
+collection; register separate profiles for separate collections. Multi-
+collection union/cursor semantics belong to the incremental-sync checkpoint.
+
+After a successful import has registered the read-only local profile, it can be
+queued during workstation startup:
+
+```bash
+paper-galaxy launch --project-dir . --zotero-sync --open
+```
 
 `--include-status` accepts `all`, `read`, `reading`, `to_read`, and `unknown`.
 The old `unclassified` spelling is accepted as a deprecated alias for

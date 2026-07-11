@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import stat as stat_module
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
@@ -29,6 +32,14 @@ EXTRACTOR_VERSION = "4"
 CHUNKING_VERSION = "paper-galaxy-character-overlap-v1"
 
 
+class IndexingCancelled(RuntimeError):
+    """Raised between files when a durable indexing job is cancelled."""
+
+
+class IndexingSourceChanged(RuntimeError):
+    """Raised when a corpus root or discovered path changes during indexing."""
+
+
 def index_corpus(
     corpus_dir: Path,
     *,
@@ -43,14 +54,23 @@ def index_corpus(
     chunk_size: int = 2000,
     chunk_overlap: int = 200,
     verbose: bool = False,
+    cancel_requested: Callable[[], bool] | None = None,
+    commit_guard: Callable[[], None] | None = None,
+    progress_callback: Callable[[int, int, str], None] | None = None,
 ) -> IndexRunSummary:
     """Index a local corpus into the project's SQLite database."""
 
     del verbose
-    corpus_path = corpus_dir.expanduser().resolve()
+    lexical_corpus = corpus_dir.expanduser().absolute()
     resolved_project_dir = project_dir.expanduser().resolve()
     database_path = resolve_database_path(resolved_project_dir)
+    corpus_path, corpus_identity = _preflight_index_paths(
+        lexical_corpus,
+        resolved_project_dir,
+        database_path,
+    )
     ensure_database_ready(resolved_project_dir)
+    _validate_corpus_root(corpus_path, corpus_identity)
     connection = connect_read_write(resolved_project_dir)
     try:
         repository = Repository(connection, database_path)
@@ -59,6 +79,7 @@ def index_corpus(
             corpus_path=corpus_path,
             project_dir=resolved_project_dir,
             database_path=database_path,
+            corpus_identity=corpus_identity,
             min_chars=min_chars,
             include_pdf=include_pdf,
             include_images=include_images,
@@ -68,6 +89,9 @@ def index_corpus(
             force_reextract=force_reextract,
             chunk_size=chunk_size,
             chunk_overlap=chunk_overlap,
+            cancel_requested=cancel_requested,
+            commit_guard=commit_guard,
+            progress_callback=progress_callback,
         )
     finally:
         connection.close()
@@ -122,6 +146,7 @@ def _index_with_repository(
     corpus_path: Path,
     project_dir: Path,
     database_path: Path,
+    corpus_identity: os.stat_result,
     min_chars: int,
     include_pdf: bool,
     include_images: bool,
@@ -131,6 +156,9 @@ def _index_with_repository(
     force_reextract: bool,
     chunk_size: int,
     chunk_overlap: int,
+    cancel_requested: Callable[[], bool] | None,
+    commit_guard: Callable[[], None] | None,
+    progress_callback: Callable[[int, int, str], None] | None,
 ) -> IndexRunSummary:
     now = _utc_now()
     corpus_id = stable_corpus_id(corpus_path)
@@ -161,15 +189,36 @@ def _index_with_repository(
     low_text_count = 0
     discovered_files: list[Path] = []
 
+    _index_batch_boundary(
+        cancel_requested,
+        corpus_path=corpus_path,
+        corpus_identity=corpus_identity,
+    )
     with repository.connection:
         repository.upsert_corpus(corpus_id, str(corpus_path), now)
         repository.create_scan_run(scan_run_id, corpus_id, str(corpus_path), now)
 
     try:
+        _raise_if_index_cancelled(cancel_requested)
         discovered_files = discover_files(
             corpus_path, include_pdf=include_pdf, include_images=include_images
         )
-        for path in discovered_files:
+        _validate_corpus_root(corpus_path, corpus_identity)
+        total_files = len(discovered_files)
+        _raise_if_index_cancelled(cancel_requested)
+        for file_index, path in enumerate(discovered_files):
+            _index_batch_boundary(
+                cancel_requested,
+                corpus_path=corpus_path,
+                corpus_identity=corpus_identity,
+                path=path,
+            )
+            if progress_callback is not None:
+                progress_callback(
+                    file_index,
+                    total_files,
+                    f"Indexing local document {file_index + 1} of {total_files}.",
+                )
             rel_path = relative_path(path, corpus_path)
             document_id = stable_document_id(corpus_id, rel_path)
             file_type = path.suffix.lower().lstrip(".")
@@ -180,8 +229,13 @@ def _index_with_repository(
             digest = None
             file_error: Exception | None = None
             try:
+                path_identity = path.lstat()
                 stat = path.stat()
                 digest = file_sha256(path)
+                if not os.path.samestat(path_identity, path.lstat()):
+                    raise IndexingSourceChanged(
+                        "A corpus file changed identity while it was hashed."
+                    )
             except Exception as exc:
                 file_error = exc
 
@@ -212,6 +266,12 @@ def _index_with_repository(
                             "extraction_fingerprint": extraction_fingerprint,
                         },
                         created_at=now,
+                    )
+                    _index_commit_boundary(
+                        commit_guard,
+                        corpus_path=corpus_path,
+                        corpus_identity=corpus_identity,
+                        path=path,
                     )
                     with repository.connection:
                         repository.touch_document(existing.id, now)
@@ -248,6 +308,12 @@ def _index_with_repository(
                         "extraction_fingerprint": extraction_fingerprint,
                     },
                     created_at=now,
+                )
+                _index_commit_boundary(
+                    commit_guard,
+                    corpus_path=corpus_path,
+                    corpus_identity=corpus_identity,
+                    path=path,
                 )
                 with repository.connection:
                     repository.record_extraction_report(report)
@@ -301,6 +367,12 @@ def _index_with_repository(
                     },
                     created_at=now,
                 )
+                _index_commit_boundary(
+                    commit_guard,
+                    corpus_path=corpus_path,
+                    corpus_identity=corpus_identity,
+                    path=path,
+                )
                 with repository.connection:
                     repository.record_extraction_report(report)
                     repository.record_skipped_file(
@@ -344,6 +416,12 @@ def _index_with_repository(
                     created_at=now,
                     extra_metadata={"skipped_reason": reason},
                     extra_warnings=(reason,),
+                )
+                _index_commit_boundary(
+                    commit_guard,
+                    corpus_path=corpus_path,
+                    corpus_identity=corpus_identity,
+                    path=path,
                 )
                 with repository.connection:
                     repository.record_extraction_report(report)
@@ -417,6 +495,12 @@ def _index_with_repository(
                 extraction_fingerprint=extraction_fingerprint,
                 created_at=now,
             )
+            _index_commit_boundary(
+                commit_guard,
+                corpus_path=corpus_path,
+                corpus_identity=corpus_identity,
+                path=path,
+            )
             with repository.connection:
                 repository.upsert_document(document, extracted.text, chunks)
                 repository.record_extraction_report(report)
@@ -434,6 +518,11 @@ def _index_with_repository(
             else:
                 documents_updated += 1
 
+        _index_batch_boundary(
+            cancel_requested,
+            corpus_path=corpus_path,
+            corpus_identity=corpus_identity,
+        )
         finished_at = _utc_now()
         with repository.connection:
             documents_missing = repository.mark_missing_documents(
@@ -486,7 +575,11 @@ def _index_with_repository(
             )
     except BaseException as exc:
         finished_at = _utc_now()
-        status = "interrupted" if isinstance(exc, KeyboardInterrupt) else "failed"
+        status = (
+            "interrupted"
+            if isinstance(exc, (KeyboardInterrupt, IndexingCancelled))
+            else "failed"
+        )
         with repository.connection:
             repository.finish_scan_run(
                 scan_run_id,
@@ -504,6 +597,121 @@ def _index_with_repository(
             )
         raise
     return summary
+
+
+def _preflight_index_paths(
+    corpus_path: Path,
+    project_dir: Path,
+    database_path: Path,
+) -> tuple[Path, os.stat_result]:
+    """Validate source/project separation before any database is created."""
+
+    if corpus_path.is_symlink():
+        raise ValueError("Corpus source root must not be a symbolic link.")
+    try:
+        identity = corpus_path.lstat()
+        resolved_corpus = corpus_path.resolve(strict=True)
+    except OSError as exc:
+        raise ValueError("Corpus source must be an existing local directory.") from exc
+    if not stat_module.S_ISDIR(identity.st_mode):
+        raise ValueError("Corpus source must be an existing local directory.")
+    if corpus_path != resolved_corpus:
+        raise ValueError("Corpus source path must not contain symbolic links.")
+    metadata = project_dir / ".paper-galaxy"
+    mutable_roots = (
+        project_dir,
+        metadata,
+        metadata / "backups",
+        database_path,
+    )
+    source_is_metadata = resolved_corpus == metadata or resolved_corpus.is_relative_to(
+        metadata
+    )
+    if source_is_metadata or any(
+        root == resolved_corpus or root.is_relative_to(resolved_corpus)
+        for root in mutable_roots
+    ):
+        raise ValueError(
+            "Paper Galaxy project metadata or database cannot be stored inside "
+            "the indexed corpus. Choose a separate project directory."
+        )
+    return resolved_corpus, identity
+
+
+def _validate_corpus_root(
+    corpus_path: Path,
+    expected_identity: os.stat_result,
+) -> None:
+    try:
+        current = corpus_path.lstat()
+        resolved = corpus_path.resolve(strict=True)
+    except OSError as exc:
+        raise IndexingSourceChanged(
+            "The registered corpus root disappeared during indexing."
+        ) from exc
+    if (
+        corpus_path.is_symlink()
+        or not stat_module.S_ISDIR(current.st_mode)
+        or corpus_path != resolved
+        or not os.path.samestat(expected_identity, current)
+    ):
+        raise IndexingSourceChanged(
+            "The registered corpus root changed during indexing; no further "
+            "documents were committed."
+        )
+
+
+def _validate_discovered_path(path: Path, corpus_path: Path) -> None:
+    try:
+        metadata = path.lstat()
+        resolved = path.resolve(strict=True)
+    except OSError as exc:
+        raise IndexingSourceChanged(
+            "A discovered corpus file disappeared during indexing."
+        ) from exc
+    if (
+        path.is_symlink()
+        or not stat_module.S_ISREG(metadata.st_mode)
+        or path != resolved
+        or not resolved.is_relative_to(corpus_path)
+    ):
+        raise IndexingSourceChanged(
+            "A discovered corpus path changed or escaped its registered root."
+        )
+
+
+def _index_batch_boundary(
+    cancel_requested: Callable[[], bool] | None,
+    *,
+    corpus_path: Path,
+    corpus_identity: os.stat_result,
+    path: Path | None = None,
+) -> None:
+    _raise_if_index_cancelled(cancel_requested)
+    _validate_corpus_root(corpus_path, corpus_identity)
+    if path is not None:
+        _validate_discovered_path(path, corpus_path)
+
+
+def _index_commit_boundary(
+    commit_guard: Callable[[], None] | None,
+    *,
+    corpus_path: Path,
+    corpus_identity: os.stat_result,
+    path: Path | None = None,
+) -> None:
+    if commit_guard is not None:
+        commit_guard()
+    _validate_corpus_root(corpus_path, corpus_identity)
+    if path is not None:
+        _validate_discovered_path(path, corpus_path)
+
+
+def _raise_if_index_cancelled(
+    cancel_requested: Callable[[], bool] | None,
+) -> None:
+    if cancel_requested is not None and cancel_requested():
+        raise IndexingCancelled("Indexing cancelled at a document boundary.")
 
 
 def _safe_error_message(error: BaseException, *, limit: int = 500) -> str:

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -21,6 +21,22 @@ from paper_galaxy.records import (
     SearchResult,
 )
 from paper_galaxy.search import get_database_stats, search_index
+from paper_galaxy.services.jobs import (
+    enqueue_job,
+    get_job,
+    list_jobs,
+    public_job_payload,
+    request_job_cancel,
+)
+from paper_galaxy.services.sources import (
+    SOURCE_KIND_CORPUS,
+    SOURCE_KIND_ZOTERO,
+    list_sources,
+    public_source_payload,
+    register_corpus_source,
+    register_zotero_source,
+    remove_source,
+)
 from paper_galaxy.storage.json import StoredJSONError
 from paper_galaxy.storage.repository import Repository
 from paper_galaxy.storage.sqlite import (
@@ -32,16 +48,30 @@ from paper_galaxy.web.map_builder import build_map_payload
 from paper_galaxy.zotero.filters import ZoteroFilterError, normalize_reading_status
 from paper_galaxy.zotero.reading import build_zotero_reading_map_payload
 
+MAX_QUERY_TEXT_LENGTH = 512
+MAX_PAGINATION_OFFSET = 1_000_000
+MAX_SEARCH_LIMIT = 100
+MAX_DOCUMENT_LIMIT = 500
+MAX_ZOTERO_ITEM_LIMIT = 500
+MAX_MAP_LIMIT = 2_000
+MAX_NEIGHBORS = 50
+MAX_CLUSTERS = 200
+MAX_CHUNK_LIMIT = 100
+MAX_TERM_LIMIT = 100
+MAX_RANDOM_SEED = 2_147_483_647
+
 
 @dataclass(frozen=True)
 class WebAppConfig:
-    """Read-only runtime config for the local web app."""
+    """Per-process runtime config for the local web app."""
 
     project_dir: Path
     seed: int = 42
     clusters: int | None = None
     neighbors: int = 5
     map_limit: int = 1000
+    write_token: str = field(default="", repr=False)
+    job_manager: Any | None = field(default=None, repr=False, compare=False)
 
     @property
     def database_path(self) -> Path:
@@ -126,6 +156,272 @@ def register_api_routes(app: Any, config: WebAppConfig) -> None:
             "seed": config.seed,
             "clusters": config.clusters,
             "neighbors": config.neighbors,
+            "write_token": config.write_token,
+        }
+
+    @app.get("/api/sources")
+    def source_list(
+        kind: str | None = None,
+        include_removed: bool = False,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> Any:
+        query_error = _query_text_error(JSONResponse, kind=kind)
+        if query_error is not None:
+            return query_error
+        pagination_error = _pagination_error(JSONResponse, limit, offset)
+        if pagination_error is not None:
+            return pagination_error
+        if not config.database_path.exists():
+            return {
+                "database_exists": False,
+                "sources": [],
+                "limit": limit,
+                "offset": offset,
+                "warnings": ["No Paper Galaxy database found."],
+            }
+        try:
+            sources = list_sources(
+                config.project_dir,
+                kind=kind,
+                include_removed=include_removed,
+                limit=limit,
+                offset=offset,
+            )
+        except ValueError as exc:
+            return _input_error(JSONResponse, "invalid_source_query", str(exc))
+        return {
+            "database_exists": True,
+            "sources": [public_source_payload(source) for source in sources],
+            "limit": limit,
+            "offset": offset,
+            "warnings": [],
+        }
+
+    @app.post("/api/sources")
+    def source_register(body: dict[str, object]) -> Any:
+        kind = body.get("kind")
+        try:
+            if kind == SOURCE_KIND_CORPUS:
+                _require_body_keys(body, {"kind", "path", "display_name"})
+                raw_path = body.get("path")
+                if not isinstance(raw_path, str) or not raw_path.strip():
+                    raise ValueError("Corpus source path must be a non-empty string.")
+                display_name = body.get("display_name")
+                if display_name is not None and not isinstance(display_name, str):
+                    raise ValueError("Source display_name must be a string.")
+                source, created = register_corpus_source(
+                    config.project_dir,
+                    raw_path,
+                    display_name=display_name,
+                )
+            elif kind == SOURCE_KIND_ZOTERO:
+                _require_body_keys(
+                    body,
+                    {"kind", "zotero_source_id", "filters", "display_name"},
+                )
+                zotero_source_id = body.get("zotero_source_id")
+                if not isinstance(zotero_source_id, str):
+                    raise ValueError("zotero_source_id must be a string.")
+                filters = body.get("filters")
+                if filters is not None and not isinstance(filters, dict):
+                    raise ValueError("Zotero filters must be a JSON object.")
+                display_name = body.get("display_name")
+                if display_name is not None and not isinstance(display_name, str):
+                    raise ValueError("Source display_name must be a string.")
+                source, created = register_zotero_source(
+                    config.project_dir,
+                    zotero_source_id,
+                    filters=filters,
+                    display_name=display_name,
+                )
+            else:
+                raise ValueError("Source kind is unsupported.")
+        except ValueError as exc:
+            return _input_error(JSONResponse, "invalid_source", str(exc))
+        return JSONResponse(
+            status_code=201 if created else 200,
+            content={
+                "database_exists": True,
+                "created": created,
+                "source": public_source_payload(source),
+                "warnings": [],
+            },
+        )
+
+    @app.delete("/api/sources/{source_id}")
+    def source_remove(source_id: str) -> Any:
+        try:
+            source = remove_source(config.project_dir, source_id)
+        except ValueError as exc:
+            return _input_error(JSONResponse, "source_remove_rejected", str(exc))
+        return {
+            "database_exists": True,
+            "source": public_source_payload(source),
+            "warnings": [],
+        }
+
+    @app.get("/api/jobs")
+    def job_list(
+        status: str | None = None,
+        kind: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> Any:
+        query_error = _query_text_error(JSONResponse, status=status, kind=kind)
+        if query_error is not None:
+            return query_error
+        pagination_error = _pagination_error(JSONResponse, limit, offset)
+        if pagination_error is not None:
+            return pagination_error
+        if not config.database_path.exists():
+            return {
+                "database_exists": False,
+                "jobs": [],
+                "limit": limit,
+                "offset": offset,
+                "warnings": ["No Paper Galaxy database found."],
+            }
+        try:
+            jobs = list_jobs(
+                config.project_dir,
+                status=status,
+                kind=kind,
+                limit=limit,
+                offset=offset,
+            )
+        except ValueError as exc:
+            return _input_error(JSONResponse, "invalid_job_query", str(exc))
+        return {
+            "database_exists": True,
+            "jobs": [public_job_payload(job) for job in jobs],
+            "limit": limit,
+            "offset": offset,
+            "warnings": [],
+        }
+
+    @app.get("/api/jobs/{job_id}")
+    def job_detail(job_id: str) -> Any:
+        if not config.database_path.exists():
+            return JSONResponse(
+                status_code=404,
+                content={
+                    "database_exists": False,
+                    "error": {
+                        "code": "database_missing",
+                        "message": "No Paper Galaxy database found.",
+                    },
+                },
+            )
+        try:
+            job = get_job(config.project_dir, job_id)
+        except ValueError:
+            return JSONResponse(
+                status_code=404,
+                content={
+                    "database_exists": True,
+                    "error": {
+                        "code": "job_not_found",
+                        "message": "No local job exists with that id.",
+                    },
+                },
+            )
+        return {"database_exists": True, "job": public_job_payload(job)}
+
+    def enqueue_web_job(
+        *,
+        kind: str,
+        body: dict[str, object],
+        source_required: bool,
+    ) -> Any:
+        if config.job_manager is None:
+            return JSONResponse(
+                status_code=503,
+                content={
+                    "database_exists": config.database_path.exists(),
+                    "error": {
+                        "code": "job_worker_unavailable",
+                        "message": (
+                            "Background jobs require `paper-galaxy launch`; restart "
+                            "the local workspace with that command."
+                        ),
+                    },
+                },
+            )
+        allowed = {"source_id", "params"} if source_required else {"params"}
+        try:
+            _require_body_keys(body, allowed)
+            source_id = body.get("source_id") if source_required else None
+            if source_required and not isinstance(source_id, str):
+                raise ValueError("source_id must identify a registered source.")
+            params = body.get("params", {})
+            if not isinstance(params, dict):
+                raise ValueError("Job params must be a JSON object.")
+            selected_params = dict(params)
+            if kind in {"index_corpus", "zotero_sync"}:
+                selected_params.setdefault("rebuild_analysis", True)
+                selected_params.setdefault("analysis_seed", config.seed)
+                selected_params.setdefault("analysis_neighbors", config.neighbors)
+                selected_params.setdefault("analysis_limit", config.map_limit)
+            job, created = enqueue_job(
+                config.project_dir,
+                kind=kind,
+                source_id=source_id if isinstance(source_id, str) else None,
+                params=selected_params,
+            )
+        except ValueError as exc:
+            return _input_error(JSONResponse, "invalid_job_request", str(exc))
+        if created and config.job_manager is not None:
+            config.job_manager.notify()
+        return JSONResponse(
+            status_code=201 if created else 200,
+            content={
+                "database_exists": True,
+                "created": created,
+                "job": public_job_payload(job),
+                "warnings": [],
+            },
+        )
+
+    @app.post("/api/jobs/index")
+    def enqueue_index(body: dict[str, object]) -> Any:
+        return enqueue_web_job(kind="index_corpus", body=body, source_required=True)
+
+    @app.post("/api/jobs/zotero-sync")
+    def enqueue_zotero_sync(body: dict[str, object]) -> Any:
+        return enqueue_web_job(kind="zotero_sync", body=body, source_required=True)
+
+    @app.post("/api/jobs/rebuild-analysis")
+    def enqueue_analysis(body: dict[str, object]) -> Any:
+        return enqueue_web_job(
+            kind="rebuild_analysis", body=body, source_required=False
+        )
+
+    @app.post("/api/jobs/backup")
+    def enqueue_backup(body: dict[str, object]) -> Any:
+        return enqueue_web_job(kind="backup_project", body=body, source_required=False)
+
+    @app.post("/api/jobs/{job_id}/cancel")
+    def cancel_job(job_id: str) -> Any:
+        try:
+            job = request_job_cancel(config.project_dir, job_id)
+        except ValueError:
+            return JSONResponse(
+                status_code=404,
+                content={
+                    "database_exists": config.database_path.exists(),
+                    "error": {
+                        "code": "job_not_found",
+                        "message": "No local job exists with that id.",
+                    },
+                },
+            )
+        if config.job_manager is not None:
+            config.job_manager.notify()
+        return {
+            "database_exists": True,
+            "job": public_job_payload(job),
+            "warnings": [],
         }
 
     @app.get("/api/stats")
@@ -188,7 +484,22 @@ def register_api_routes(app: Any, config: WebAppConfig) -> None:
         collection: str | None = None,
         tag: str | None = None,
         q: str | None = None,
-    ) -> dict[str, object]:
+    ) -> Any:
+        query_error = _query_text_error(
+            JSONResponse,
+            status=status,
+            collection=collection,
+            tag=tag,
+            q=q,
+        ) or _bounded_integer_error(
+            JSONResponse,
+            name="limit",
+            value=limit,
+            minimum=1,
+            maximum=MAX_ZOTERO_ITEM_LIMIT,
+        )
+        if query_error is not None:
+            return query_error
         missing = _missing_database_payload(config)
         if missing is not None:
             return {
@@ -248,6 +559,19 @@ def register_api_routes(app: Any, config: WebAppConfig) -> None:
         neighbors: int | None = None,
         run_id: str | None = None,
     ) -> Any:
+        query_error = _map_query_error(
+            JSONResponse,
+            limit=limit,
+            seed=seed,
+            clusters=clusters,
+            neighbors=neighbors,
+            run_id=run_id,
+            status=status,
+            collection=collection,
+            tag=tag,
+        )
+        if query_error is not None:
+            return query_error
         missing = _missing_database_payload(config)
         if missing is not None:
             return {
@@ -334,7 +658,16 @@ def register_api_routes(app: Any, config: WebAppConfig) -> None:
         q: str = "",
         limit: int = 10,
         include_missing: bool = False,
-    ) -> dict[str, object]:
+    ) -> Any:
+        query_error = _query_text_error(JSONResponse, q=q) or _bounded_integer_error(
+            JSONResponse,
+            name="limit",
+            value=limit,
+            minimum=1,
+            maximum=MAX_SEARCH_LIMIT,
+        )
+        if query_error is not None:
+            return query_error
         missing = _missing_database_payload(config)
         if missing is not None:
             return {
@@ -368,7 +701,26 @@ def register_api_routes(app: Any, config: WebAppConfig) -> None:
         status: str = "active",
         limit: int = 100,
         offset: int = 0,
-    ) -> dict[str, object]:
+    ) -> Any:
+        query_error = _query_text_error(
+            JSONResponse, status=status
+        ) or _bounded_integer_error(
+            JSONResponse,
+            name="limit",
+            value=limit,
+            minimum=1,
+            maximum=MAX_DOCUMENT_LIMIT,
+        )
+        if query_error is None:
+            query_error = _bounded_integer_error(
+                JSONResponse,
+                name="offset",
+                value=offset,
+                minimum=0,
+                maximum=MAX_PAGINATION_OFFSET,
+            )
+        if query_error is not None:
+            return query_error
         missing = _missing_database_payload(config)
         if missing is not None:
             return {
@@ -398,6 +750,15 @@ def register_api_routes(app: Any, config: WebAppConfig) -> None:
 
     @app.get("/api/documents/{document_id}")
     def document_detail(document_id: str, chunk_limit: int = 20) -> Any:
+        query_error = _bounded_integer_error(
+            JSONResponse,
+            name="chunk_limit",
+            value=chunk_limit,
+            minimum=0,
+            maximum=MAX_CHUNK_LIMIT,
+        )
+        if query_error is not None:
+            return query_error
         missing = _missing_database_payload(config)
         if missing is not None:
             return JSONResponse(status_code=404, content=missing)
@@ -439,6 +800,16 @@ def register_api_routes(app: Any, config: WebAppConfig) -> None:
         neighbors: int | None = None,
         run_id: str | None = None,
     ) -> Any:
+        query_error = _map_query_error(
+            JSONResponse,
+            limit=limit,
+            seed=seed,
+            clusters=clusters,
+            neighbors=neighbors,
+            run_id=run_id,
+        )
+        if query_error is not None:
+            return query_error
         missing = _missing_database_payload(config)
         if missing is not None:
             return {
@@ -567,6 +938,15 @@ def register_api_routes(app: Any, config: WebAppConfig) -> None:
         seed: int | None = None,
         clusters: int | None = None,
     ) -> Any:
+        query_error = _map_query_error(
+            JSONResponse,
+            limit=limit,
+            seed=seed,
+            clusters=clusters,
+            neighbors=None,
+        )
+        if query_error is not None:
+            return query_error
         missing = _missing_database_payload(config)
         if missing is not None:
             return {
@@ -665,6 +1045,28 @@ def register_api_routes(app: Any, config: WebAppConfig) -> None:
         chunk_limit: int = 3,
         term_limit: int = 8,
     ) -> Any:
+        query_error = _query_text_error(
+            JSONResponse,
+            source=source,
+            target=target,
+            model_id=model_id,
+        ) or _bounded_integer_error(
+            JSONResponse,
+            name="chunk_limit",
+            value=chunk_limit,
+            minimum=0,
+            maximum=MAX_CHUNK_LIMIT,
+        )
+        if query_error is None:
+            query_error = _bounded_integer_error(
+                JSONResponse,
+                name="term_limit",
+                value=term_limit,
+                minimum=0,
+                maximum=MAX_TERM_LIMIT,
+            )
+        if query_error is not None:
+            return query_error
         missing = _missing_database_payload(config)
         if missing is not None:
             return JSONResponse(status_code=404, content=missing)
@@ -710,6 +1112,106 @@ def register_api_routes(app: Any, config: WebAppConfig) -> None:
 def _read_repository(project_dir: Path) -> Repository:
     connection = connect_read_only(project_dir)
     return Repository(connection, resolve_database_path(project_dir))
+
+
+def _require_body_keys(
+    body: dict[str, object],
+    allowed: set[str],
+) -> None:
+    extra = sorted(set(body) - allowed)
+    if extra:
+        raise ValueError(f"Unsupported request field(s): {', '.join(extra)}.")
+
+
+def _input_error(response_type: Any, code: str, message: str) -> Any:
+    return response_type(
+        status_code=422,
+        content={
+            "error": {
+                "code": code,
+                "message": message,
+            }
+        },
+    )
+
+
+def _query_text_error(response_type: Any, **values: str | None) -> Any | None:
+    for name, value in values.items():
+        if value is not None and len(value) > MAX_QUERY_TEXT_LENGTH:
+            return _input_error(
+                response_type,
+                "query_too_long",
+                f"{name} must be at most {MAX_QUERY_TEXT_LENGTH} characters.",
+            )
+    return None
+
+
+def _bounded_integer_error(
+    response_type: Any,
+    *,
+    name: str,
+    value: int | None,
+    minimum: int,
+    maximum: int,
+) -> Any | None:
+    if value is None or minimum <= value <= maximum:
+        return None
+    return _input_error(
+        response_type,
+        "query_out_of_range",
+        f"{name} must be between {minimum} and {maximum}.",
+    )
+
+
+def _map_query_error(
+    response_type: Any,
+    *,
+    limit: int | None,
+    seed: int | None,
+    clusters: int | None,
+    neighbors: int | None,
+    run_id: str | None = None,
+    status: str | None = None,
+    collection: str | None = None,
+    tag: str | None = None,
+) -> Any | None:
+    error = _query_text_error(
+        response_type,
+        run_id=run_id,
+        status=status,
+        collection=collection,
+        tag=tag,
+    )
+    bounds = (
+        ("limit", limit, 1, MAX_MAP_LIMIT),
+        ("seed", seed, 0, MAX_RANDOM_SEED),
+        ("clusters", clusters, 1, MAX_CLUSTERS),
+        ("neighbors", neighbors, 0, MAX_NEIGHBORS),
+    )
+    for name, value, minimum, maximum in bounds:
+        if error is not None:
+            return error
+        error = _bounded_integer_error(
+            response_type,
+            name=name,
+            value=value,
+            minimum=minimum,
+            maximum=maximum,
+        )
+    return error
+
+
+def _pagination_error(response_type: Any, limit: int, offset: int) -> Any | None:
+    if 1 <= limit <= 100 and 0 <= offset <= MAX_PAGINATION_OFFSET:
+        return None
+    return _input_error(
+        response_type,
+        "invalid_pagination",
+        (
+            "limit must be between 1 and 100 and offset must be between 0 and "
+            f"{MAX_PAGINATION_OFFSET}."
+        ),
+    )
 
 
 def _write_repository(project_dir: Path) -> Repository:

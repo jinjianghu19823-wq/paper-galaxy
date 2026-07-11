@@ -41,6 +41,37 @@ Paper Galaxy 目前有两种主要使用方式：
 
 ## 从源码安装
 
+要安装本地工作站，可以克隆仓库，并在隔离环境中安装 `full` extra。它汇总了本地网页
+应用、TF-IDF/地图和 PDF 抽取所需的依赖：
+
+```bash
+git clone https://github.com/jinjianghu19823-wq/paper-galaxy.git
+cd paper-galaxy
+python -m venv .venv
+source .venv/bin/activate  # Windows PowerShell: .venv\Scripts\Activate.ps1
+python -m pip install ".[full]"
+paper-galaxy doctor
+```
+
+在仓库根目录中也可以运行 `pipx install ".[full]"` 或
+`uv tool install ".[full]"`。它们会把命令安装在独立环境中，不需要手动激活 venv。
+完整安装方式见 [docs/INSTALL.zh-CN.md](docs/INSTALL.zh-CN.md)。
+
+一个命令即可创建或重新打开本地项目、登记（但不复制）论文目录，并启动工作站：
+
+```bash
+paper-galaxy launch \
+  --project-dir ~/PaperGalaxy \
+  --corpus ~/Papers \
+  --no-open
+```
+
+服务器默认只绑定 loopback（`127.0.0.1`）。`--no-open` 不自动打开浏览器；桌面交互时
+可以改用 `--open`。重复启动会复用已有项目和 source 登记，不会修改源目录，也不会
+自动下载 OCR 或 embedding 模型。
+
+参与开发时，再安装开发工具：
+
 ```bash
 git clone https://github.com/jinjianghu19823-wq/paper-galaxy.git
 cd paper-galaxy
@@ -158,6 +189,7 @@ paper-galaxy scan /path/to/your/papers --out galaxy.html --force
 ```bash
 paper-galaxy --help
 paper-galaxy doctor
+paper-galaxy launch --project-dir ~/PaperGalaxy --corpus ~/Papers --no-open
 paper-galaxy init
 paper-galaxy init /path/to/project
 paper-galaxy scan examples/tiny_corpus --out galaxy.html --force
@@ -235,6 +267,12 @@ paper-galaxy serve --project-dir .
 
 ```bash
 python -m pip install -e ".[dev,ml,pdf,app]"
+paper-galaxy launch --project-dir ~/PaperGalaxy --corpus ~/Papers --open
+```
+
+等价的分步 CLI 流程是：
+
+```bash
 paper-galaxy init .
 paper-galaxy index examples/tiny_corpus --project-dir . --min-chars 40
 paper-galaxy serve --project-dir .

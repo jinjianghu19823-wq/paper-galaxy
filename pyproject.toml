@@ -57,6 +57,15 @@ app = [
   "fastapi>=0.110",
   "uvicorn>=0.27",
 ]
+full = [
+  "fastapi>=0.110",
+  "numpy>=1.26",
+  "pypdf>=4.0",
+  "scikit-learn>=1.4",
+  "scipy>=1.11",
+  "umap-learn>=0.5",
+  "uvicorn>=0.27",
+]
 ocr = [
   "Pillow>=10.0",
   "pytesseract>=0.3",

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import sqlite3
 import stat
 import threading
@@ -13,7 +14,10 @@ import pytest
 
 from paper_galaxy.errors import UnsupportedSchemaError
 from paper_galaxy.storage import migrations
-from paper_galaxy.storage.provenance import document_content_revision_sha256
+from paper_galaxy.storage.provenance import (
+    document_content_revision_sha256,
+    registered_source_identity,
+)
 
 V6_SCHEMA_FIXTURE = Path(__file__).parent / "fixtures" / "storage" / "schema_v6.sql"
 V6_SCHEMA_SHA256 = "eaab6c5bf9bfd1d60c6d2164ff3ebeed57b6c64ae17535d677f048664ee90326"
@@ -106,6 +110,21 @@ def _create_v7_database(database_path: Path) -> sqlite3.Connection:
     )
     connection.execute(
         "UPDATE schema_meta SET value = '7' WHERE key = 'schema_version'"
+    )
+    connection.commit()
+    return connection
+
+
+def _create_v8_database(database_path: Path) -> sqlite3.Connection:
+    connection = _create_v7_database(database_path)
+    migration = next(entry for entry in migrations.MIGRATIONS if entry.version == 8)
+    migration.up(connection)
+    connection.execute(
+        "INSERT INTO schema_migrations(version, name) VALUES (?, ?)",
+        (migration.version, migration.name),
+    )
+    connection.execute(
+        "UPDATE schema_meta SET value = '8' WHERE key = 'schema_version'"
     )
     connection.commit()
     return connection
@@ -230,7 +249,7 @@ def test_real_v6_database_migrates_without_losing_data(tmp_path: Path) -> None:
         )
         assert reopened.execute(
             "SELECT version FROM schema_migrations ORDER BY version"
-        ).fetchall() == [(7,), (8,)]
+        ).fetchall() == [(7,), (8,), (9,)]
         assert reopened.execute("PRAGMA quick_check").fetchone() == ("ok",)
         assert reopened.execute("PRAGMA foreign_key_check").fetchall() == []
     finally:
@@ -297,7 +316,7 @@ def test_v7_migrates_vector_provenance_without_trusting_legacy_rows(
 
     reopened = sqlite3.connect(database_path)
     try:
-        assert _schema_version(reopened) == 8
+        assert _schema_version(reopened) == _current_schema_version()
         assert reopened.execute(
             """
             SELECT content_revision_sha256
@@ -337,7 +356,7 @@ def test_v7_migrates_vector_provenance_without_trusting_legacy_rows(
         ).fetchone() == (0, None)
         assert reopened.execute(
             "SELECT version FROM schema_migrations ORDER BY version"
-        ).fetchall() == [(7,), (8,)]
+        ).fetchall() == [(7,), (8,), (9,)]
         assert reopened.execute("PRAGMA quick_check").fetchone() == ("ok",)
         assert reopened.execute("PRAGMA foreign_key_check").fetchall() == []
     finally:
@@ -376,6 +395,244 @@ def test_v8_migration_hashes_chunks_in_bounded_pages(tmp_path: Path) -> None:
         "SELECT text_sha256 FROM chunks WHERE id = 'paged-chunk-0601'"
     ).fetchone() == (hashlib.sha256(b"synthetic chunk 601").hexdigest(),)
     connection.close()
+
+
+def test_real_v8_database_migrates_to_v9_without_losing_data(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "schema-v8.sqlite3"
+    backup_path = tmp_path / "schema-v8.pre-migration.sqlite3"
+    connection = _create_v8_database(database_path)
+    assert _schema_version(connection) == 8
+    assert (
+        connection.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'jobs'"
+        ).fetchone()
+        is None
+    )
+    connection.close()
+
+    migrating = sqlite3.connect(database_path)
+    migrations.initialize_database(migrating, backup_path=backup_path)
+    migrating.close()
+
+    reopened = sqlite3.connect(database_path)
+    try:
+        assert _schema_version(reopened) == 9
+        assert reopened.execute(
+            "SELECT version FROM schema_migrations ORDER BY version"
+        ).fetchall() == [(7,), (8,), (9,)]
+        assert reopened.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'jobs'"
+        ).fetchone() == ("jobs",)
+        assert reopened.execute("SELECT COUNT(*) FROM jobs").fetchone() == (0,)
+        _assert_historical_rows_preserved(reopened)
+        assert reopened.execute("PRAGMA quick_check").fetchone() == ("ok",)
+        assert reopened.execute("PRAGMA foreign_key_check").fetchall() == []
+    finally:
+        reopened.close()
+
+    backup = sqlite3.connect(backup_path)
+    try:
+        assert _schema_version(backup) == 8
+        assert (
+            backup.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'jobs'"
+            ).fetchone()
+            is None
+        )
+        _assert_historical_rows_preserved(backup)
+    finally:
+        backup.close()
+
+
+def test_v9_backfills_legacy_corpus_and_zotero_sources(tmp_path: Path) -> None:
+    database_path = tmp_path / "v9-source-backfill.sqlite3"
+    connection = _create_v8_database(database_path)
+    connection.execute(
+        """
+        INSERT INTO corpora(id, root_path, created_at, updated_at)
+        VALUES (
+          'zotero-shadow-corpus', 'zotero://sources/legacy-zotero',
+          '2026-01-02', '2026-01-03'
+        )
+        """
+    )
+    connection.execute(
+        """
+        INSERT INTO zotero_sources(
+          id, source_type, local_api_url, data_dir, library_id, library_type,
+          name, last_version, created_at, updated_at
+        )
+        VALUES (
+          'legacy-zotero', 'local_api', 'http://127.0.0.1:23119/api',
+          '/synthetic-zotero', '0', 'user', 'Synthetic Zotero', 42,
+          '2026-01-02', '2026-01-03'
+        )
+        """
+    )
+    connection.commit()
+
+    migrations.initialize_database(
+        connection,
+        backup_path=tmp_path / "v9-source-backfill.pre-migration.sqlite3",
+    )
+
+    corpus_source_id, corpus_signature = registered_source_identity(
+        kind="corpus_directory",
+        locator="/synthetic-corpus",
+    )
+    zotero_config = {
+        "local_api_url": "http://127.0.0.1:23119/api",
+        "data_dir": "/synthetic-zotero",
+        "library_id": "0",
+        "library_type": "user",
+        "filters": {},
+    }
+    zotero_source_id, zotero_signature = registered_source_identity(
+        kind="zotero_profile",
+        locator="legacy-zotero",
+        config=zotero_config,
+    )
+
+    rows = connection.execute(
+        """
+        SELECT id, kind, display_name, root_path, zotero_source_id,
+               profile_signature, config_json, created_at, updated_at
+        FROM registered_sources
+        ORDER BY kind, id
+        """
+    ).fetchall()
+    assert rows == [
+        (
+            corpus_source_id,
+            "corpus_directory",
+            "synthetic-corpus",
+            "/synthetic-corpus",
+            None,
+            corpus_signature,
+            '{"legacy_corpus_id":"historical-corpus"}',
+            "2026-01-01",
+            "2026-01-01",
+        ),
+        (
+            zotero_source_id,
+            "zotero_profile",
+            "Synthetic Zotero",
+            None,
+            "legacy-zotero",
+            zotero_signature,
+            json.dumps(zotero_config, sort_keys=True, separators=(",", ":")),
+            "2026-01-02",
+            "2026-01-03",
+        ),
+    ]
+    assert connection.execute(
+        "SELECT COUNT(*) FROM registered_sources WHERE root_path LIKE 'zotero://%'"
+    ).fetchone() == (0,)
+    assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
+    connection.close()
+
+
+def test_v9_backfill_canonicalizes_zotero_profile_without_duplicate_registration(
+    tmp_path: Path,
+) -> None:
+    from paper_galaxy.services.sources import (
+        SOURCE_KIND_ZOTERO,
+        list_sources,
+        register_zotero_source,
+    )
+
+    metadata_dir = tmp_path / ".paper-galaxy"
+    metadata_dir.mkdir()
+    database_path = metadata_dir / "paper_galaxy.sqlite3"
+    connection = _create_v8_database(database_path)
+    raw_data_dir = tmp_path / "zotero-data" / "nested" / ".."
+    connection.execute(
+        """
+        INSERT INTO zotero_sources(
+          id, source_type, local_api_url, data_dir, library_id, library_type,
+          name, last_version, created_at, updated_at
+        ) VALUES (
+          'canonical-zotero', 'local_api', 'HTTP://LOCALHOST.:23119/api/', ?,
+          '0', 'user', 'Canonical Zotero', 12, '2026-01-02', '2026-01-03'
+        )
+        """,
+        (str(raw_data_dir),),
+    )
+    connection.commit()
+
+    migrations.initialize_database(
+        connection,
+        backup_path=tmp_path / "canonical-zotero.pre-migration.sqlite3",
+    )
+    stored_config = connection.execute(
+        """
+        SELECT config_json
+        FROM registered_sources
+        WHERE kind = 'zotero_profile' AND zotero_source_id = 'canonical-zotero'
+        """
+    ).fetchone()
+    connection.close()
+
+    assert stored_config is not None
+    assert json.loads(str(stored_config[0])) == {
+        "data_dir": str((tmp_path / "zotero-data").resolve()),
+        "filters": {},
+        "library_id": "0",
+        "library_type": "user",
+        "local_api_url": "http://localhost:23119/api/",
+    }
+    profile, created = register_zotero_source(tmp_path, "canonical-zotero")
+    profiles = list_sources(tmp_path, kind=SOURCE_KIND_ZOTERO)
+
+    assert created is False
+    assert profiles == [profile]
+
+
+@pytest.mark.parametrize(
+    ("index_name", "column_name", "active_statuses"),
+    [
+        (
+            "idx_jobs_active_dedupe",
+            "request_key",
+            "'queued', 'running', 'cancelling'",
+        ),
+        ("idx_jobs_single_writer", "writer_slot", "'running', 'cancelling'"),
+    ],
+)
+def test_current_schema_rejects_expanded_job_index_predicate(
+    tmp_path: Path,
+    index_name: str,
+    column_name: str,
+    active_statuses: str,
+) -> None:
+    database_path = tmp_path / "expanded-job-index.sqlite3"
+    connection = sqlite3.connect(database_path)
+    migrations.initialize_database(connection)
+    connection.execute(f"DROP INDEX {index_name}")
+    connection.execute(
+        f"""
+        CREATE UNIQUE INDEX {index_name}
+        ON jobs({column_name})
+        WHERE status IN ({active_statuses}) OR status = 'completed'
+        """
+    )
+    connection.commit()
+    connection.close()
+    before = database_path.read_bytes()
+
+    damaged = sqlite3.connect(database_path)
+    try:
+        with pytest.raises(
+            UnsupportedSchemaError,
+            match=r"wrong uniqueness or predicate semantics",
+        ):
+            migrations.initialize_database(damaged)
+    finally:
+        damaged.close()
+
+    assert database_path.read_bytes() == before
 
 
 @pytest.mark.parametrize(
@@ -614,6 +871,7 @@ def test_v8_migration_failure_restores_legacy_vectors_and_indexes(
         "MIGRATIONS",
         (version_seven, FailingVersionEight()),
     )
+    monkeypatch.setattr(migrations, "CURRENT_SCHEMA_VERSION", 8)
     migrating = sqlite3.connect(database_path)
     with pytest.raises(RuntimeError, match="synthetic v8 failure"):
         migrations.initialize_database(
@@ -638,6 +896,80 @@ def test_v8_migration_failure_restores_legacy_vectors_and_indexes(
         assert reopened.execute(
             "SELECT version FROM schema_migrations ORDER BY version"
         ).fetchall() == [(7,)]
+    finally:
+        reopened.close()
+
+
+def test_v9_migration_failure_rolls_back_tables_and_source_backfill(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    database_path = tmp_path / "v9-rollback.sqlite3"
+    connection = _create_v8_database(database_path)
+    connection.execute(
+        """
+        INSERT INTO zotero_sources(
+          id, source_type, name, created_at, updated_at
+        ) VALUES (
+          'rollback-zotero', 'local_api', 'Rollback Zotero',
+          '2026-01-02', '2026-01-03'
+        )
+        """
+    )
+    connection.commit()
+    connection.close()
+
+    original = list(migrations.MIGRATIONS)
+    version_seven = next(entry for entry in original if entry.version == 7)
+    version_eight = next(entry for entry in original if entry.version == 8)
+    real_version_nine = next(entry for entry in original if entry.version == 9)
+
+    class FailingVersionNine:
+        version = 9
+        name = real_version_nine.name
+
+        @staticmethod
+        def up(connection: sqlite3.Connection) -> None:
+            real_version_nine.up(connection)
+            assert connection.execute(
+                "SELECT COUNT(*) FROM registered_sources"
+            ).fetchone() == (2,)
+            raise RuntimeError("synthetic v9 failure")
+
+    monkeypatch.setattr(
+        migrations,
+        "MIGRATIONS",
+        (version_seven, version_eight, FailingVersionNine()),
+    )
+
+    migrating = sqlite3.connect(database_path)
+    with pytest.raises(RuntimeError, match="synthetic v9 failure"):
+        migrations.initialize_database(
+            migrating,
+            backup_path=tmp_path / "v9-rollback.pre-migration.sqlite3",
+        )
+    assert migrating.in_transaction is False
+    migrating.close()
+
+    reopened = sqlite3.connect(database_path)
+    try:
+        assert _schema_version(reopened) == 8
+        assert reopened.execute(
+            "SELECT version FROM schema_migrations ORDER BY version"
+        ).fetchall() == [(7,), (8,)]
+        assert (
+            reopened.execute(
+                """
+            SELECT name
+            FROM sqlite_master
+            WHERE type = 'table' AND name IN ('registered_sources', 'jobs')
+            """
+            ).fetchall()
+            == []
+        )
+        assert reopened.execute(
+            "SELECT name FROM zotero_sources WHERE id = 'rollback-zotero'"
+        ).fetchone() == ("Rollback Zotero",)
+        _assert_historical_rows_preserved(reopened)
     finally:
         reopened.close()
 

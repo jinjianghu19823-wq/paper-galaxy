@@ -14,6 +14,7 @@ files -> extraction -> cleaning -> records -> vectors -> graph -> map -> cluster
 
 - `paper_galaxy.cli`：命令行入口。
 - `paper_galaxy.config`：项目配置和 `.paper-galaxy/project.toml`。
+- `paper_galaxy.projects`：原子、不覆盖的本地项目创建与安全重开。
 - `paper_galaxy.extractors`：本地文件抽取，包括文本、Markdown、LaTeX、PDF 和可选图片 OCR。
 - `paper_galaxy.pipeline`：扫描、抽取、清洗和聚合。
 - `paper_galaxy.ml`：TF-IDF、降维、聚类和邻居计算。
@@ -30,8 +31,15 @@ files -> extraction -> cleaning -> records -> vectors -> graph -> map -> cluster
 - `backup.bundle`：可移植 v2 备份编排及严格 v1 检查。
 - `storage.locking`：跨进程 shared operation / exclusive maintenance lock，
   包含 legacy project 认领和旧数据库 handle drain。
+- `services.sources`：持久、路径私有的 corpus / 只读 Zotero source registry，
+  并在每次使用前重新校验 locator。
+- `services.jobs`：有界、持久的单 writer job queue、协作取消、安全 summary 与重启
+  恢复；`services.worker_lease` 负责跨进程 worker 串行化和 owner fencing。
+- `services.launch`：一个命令启动时幂等准备项目、source 和 job。
 - `paper_galaxy.plugins`：静态内置抽取边界。
 - `paper_galaxy.zotero`：只读 Zotero 本地 API 连接、规范化、附件路径解析、导入器、SQLite 诊断和阅读图谱构建。
+- `web.security`：loopback Host allowlist、写请求同源校验、每进程 write token 与
+  浏览器安全响应头。
 
 ## Phase 1 静态导出
 
@@ -47,13 +55,13 @@ Phase 2 引入 `.paper-galaxy/paper_galaxy.sqlite3`。SQLite 保存文档、文�
 
 ### SQLite 生命周期与连接边界
 
-Schema v8 不再在每次连接时隐式执行整份 `CREATE IF NOT EXISTS`，而是采用显式、只向前的生命周期：
+Schema v9 不再在每次连接时隐式执行整份 `CREATE IF NOT EXISTS`，而是采用显式、只向前的生命周期：
 
 - 新数据库在一个明确事务中直接 bootstrap 到当前版本，并在 `schema_migrations` 记录当前 migration registry；函数返回前自行 commit。
-- 当前最早支持的历史版本是 v6。测试 fixture 来自仓库真实历史，升级必须按 registry 执行 v6 -> v7 -> v8。v7 新增 migration history、结构化 run error 与 Zotero child-version manifest；v8 增加覆盖 title、relative path 与完整提取正文的 document content revision、chunk hash、模型内容 fingerprint、vector 的 source/model/algorithm provenance、run owner PID 和 vector-index provenance。无法证明 freshness 的历史向量保留为 `legacy-unknown`，重建前不会进入语义结果。
+- 当前最早支持的历史版本是 v6。测试 fixture 来自仓库真实历史，升级必须按 registry 执行 v6 -> v7 -> v8 -> v9。v7 新增 migration history、结构化 run error 与 Zotero child-version manifest；v8 增加覆盖 title、relative path 与完整提取正文的 document content revision、chunk hash、模型内容 fingerprint、vector 的 source/model/algorithm provenance、run owner PID 和 vector-index provenance。无法证明 freshness 的历史向量保留为 `legacy-unknown`，重建前不会进入语义结果。v9 增加路径私有的 corpus/Zotero source registry、持久有界的本地 job 状态机、精确 partial-index capability 校验，以及确定性的历史 Zotero profile 回填。
 - 修改 schema 前，系统用 SQLite online backup API 创建唯一的 mode-`0600` 快照，并对快照执行 `quick_check` 与 `foreign_key_check`。它不会覆盖已有备份、活动数据库或 WAL/SHM sidecar。
 - migration 序列、schema version 更新和 history 记录位于同一个 `BEGIN IMMEDIATE` 事务；任一步失败都会完整 rollback。成功迁移不依赖调用者日后碰巧 commit。
-- 低于 v6 且没有受支持路径的数据库会被明确拒绝；高于当前版本的 future schema 同样会被拒绝，绝不会降级或把版本号改回 v8。
+- 低于 v6 且没有受支持路径的数据库会被明确拒绝；高于当前版本的 future schema 同样会被拒绝，绝不会降级或把版本号改回 v9。
 - 系统不会只相信版本号；bootstrap、migration 和运行连接还会验证表/列、主键顺序、关键 UNIQUE 身份、外键目标及删除行为、索引、FTS5 虚表与 `MATCH`、migration history。
 
 连接类型按用途分开：

@@ -2,19 +2,101 @@
 
 from __future__ import annotations
 
+import ipaddress
 import json
+import unicodedata
 from dataclasses import dataclass
 from typing import Any
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlencode, urljoin, urlparse
-from urllib.request import Request, urlopen
+from urllib.parse import (
+    SplitResult,
+    unquote,
+    urlencode,
+    urljoin,
+    urlparse,
+    urlsplit,
+    urlunsplit,
+)
+from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
 
 DEFAULT_LOCAL_API_URL = "http://localhost:23119/api"
 API_VERSION = "3"
 
 
+def canonical_local_api_url(value: object) -> str:
+    """Return a canonical HTTP loopback Zotero API URL or reject it."""
+
+    if not isinstance(value, str) or not value or len(value) > 2048:
+        raise ValueError("Zotero local API URL is missing or invalid.")
+    if any(
+        character.isspace() or unicodedata.category(character).startswith("C")
+        for character in value
+    ):
+        raise ValueError("Zotero local API URL is malformed.")
+    try:
+        parsed = urlsplit(value)
+        port = parsed.port
+    except ValueError as exc:
+        raise ValueError("Zotero local API URL is malformed.") from exc
+    if (
+        parsed.scheme.lower() != "http"
+        or not parsed.hostname
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.query
+        or parsed.fragment
+        or parsed.netloc.endswith(":")
+    ):
+        raise ValueError(
+            "Zotero local API URL must be HTTP loopback without credentials, "
+            "query parameters, or a fragment."
+        )
+    hostname = parsed.hostname.lower().rstrip(".")
+    if hostname != "localhost":
+        try:
+            address = ipaddress.ip_address(hostname)
+        except ValueError as exc:
+            raise ValueError("Zotero local API host must be loopback.") from exc
+        if not address.is_loopback:
+            raise ValueError("Zotero local API host must be loopback.")
+    if port is not None and not 1 <= port <= 65535:
+        raise ValueError("Zotero local API port is invalid.")
+    if "\\" in parsed.path:
+        raise ValueError("Zotero local API path is invalid.")
+    host = f"[{hostname}]" if ":" in hostname else hostname
+    netloc = f"{host}:{port}" if port is not None else host
+    path = parsed.path or ""
+    return urlunsplit(SplitResult("http", netloc, path, "", ""))
+
+
 class ZoteroAPIError(RuntimeError):
     """Raised when the read-only local Zotero API cannot be queried."""
+
+
+class _RejectRedirects(HTTPRedirectHandler):
+    def redirect_request(
+        self,
+        req: Any,
+        fp: Any,
+        code: int,
+        msg: str,
+        headers: Any,
+        newurl: str,
+    ) -> Any:
+        del newurl
+        raise HTTPError(
+            req.full_url,
+            code,
+            "Zotero local API redirects are disabled.",
+            headers,
+            fp,
+        )
+
+
+def _open_local_request(request: Request, *, timeout: float) -> Any:
+    return build_opener(ProxyHandler({}), _RejectRedirects()).open(
+        request, timeout=timeout
+    )
 
 
 @dataclass(frozen=True)
@@ -33,7 +115,7 @@ class LocalZoteroAPIClient:
         timeout: float = 2.0,
         library_prefix: str = "/users/0",
     ) -> None:
-        self.base_url = base_url.rstrip("/")
+        self.base_url = canonical_local_api_url(base_url).rstrip("/")
         self.timeout = timeout
         self.library_prefix = library_prefix.rstrip("/")
 
@@ -206,7 +288,7 @@ class LocalZoteroAPIClient:
         url = self._url(path_or_url, params=params)
         request = Request(url, headers={"Zotero-API-Version": API_VERSION})
         try:
-            with urlopen(request, timeout=self.timeout) as response:
+            with _open_local_request(request, timeout=self.timeout) as response:
                 raw = response.read()
                 headers = {
                     key.lower(): value for key, value in response.headers.items()
@@ -253,7 +335,41 @@ class LocalZoteroAPIClient:
             if clean_params:
                 separator = "&" if "?" in url else "?"
                 url = f"{url}{separator}{urlencode(clean_params)}"
-        return url
+        return _validate_same_origin_url(self.base_url, url)
+
+
+def _validate_same_origin_url(base_url: str, candidate: str) -> str:
+    try:
+        base = urlsplit(base_url)
+        parsed = urlsplit(candidate)
+        base_port = base.port or 80
+        candidate_port = parsed.port or 80
+    except ValueError as exc:
+        raise ZoteroAPIError("Zotero local API returned a malformed URL.") from exc
+    if (
+        parsed.scheme.lower() != "http"
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.fragment
+        or parsed.hostname is None
+        or base.hostname is None
+        or parsed.hostname.lower().rstrip(".") != base.hostname.lower().rstrip(".")
+        or candidate_port != base_port
+    ):
+        raise ZoteroAPIError(
+            "Zotero local API pagination must stay on the configured loopback origin."
+        )
+    decoded_path = unquote(parsed.path)
+    base_path = unquote(base.path).rstrip("/")
+    if (
+        "\\" in decoded_path
+        or any(segment in {".", ".."} for segment in decoded_path.split("/"))
+        or not (decoded_path == base_path or decoded_path.startswith(f"{base_path}/"))
+        or len(parsed.query) > 8192
+        or any(character.isspace() for character in parsed.query)
+    ):
+        raise ZoteroAPIError("Zotero local API returned an unsafe local URL.")
+    return candidate
 
 
 def _next_link(header: str) -> str | None:

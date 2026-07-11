@@ -6,6 +6,14 @@
 
 ## Unreleased
 
+- 增加本地研究工作站的首个 checkpoint：schema v9 持久化 corpus/Zotero source、
+  带协作取消与崩溃恢复的单 writer job queue、安全项目初始化，以及仅绑定 loopback
+  并能安全选择空闲端口的 `paper-galaxy launch`。本地 Web 应用新增有界 source/job
+  控制，并使用 Host 校验、同源校验、每进程 write token、CSP 和其他浏览器安全响应头；
+  Zotero HTTP 请求被限制在同一个 loopback origin，禁用代理和重定向。Launch 与直接
+  indexing 会在任何写入前拒绝位于 source 内的项目或数据库；job/source enqueue 在
+  同一事务内 fencing，worker 在每个 commit boundary 复核 ownership，restore 会拒绝
+  活动后台 worker。
 - 增加 schema v8 向量 provenance 与生命周期加固：本地模型精确 fingerprint、
   无字段边界碰撞的 canonical document revision、source revision
   compare-and-swap 落库、死亡 owner run 自动恢复、仅 active 且

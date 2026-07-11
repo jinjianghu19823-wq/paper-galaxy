@@ -9,7 +9,7 @@
 ```bash
 python -m venv .venv
 source .venv/bin/activate
-python -m pip install -e ".[dev,ml,pdf,app]"
+python -m pip install ".[full]"
 paper-galaxy doctor
 ```
 
@@ -65,6 +65,21 @@ paper-galaxy init . --force
 paper-galaxy index examples/tiny_corpus --project-dir . --min-chars 40
 paper-galaxy serve --project-dir .
 ```
+
+新工作站也可以使用等价的一条命令：
+
+```bash
+paper-galaxy launch --project-dir ~/PaperGalaxy --corpus ~/Papers --open
+```
+
+## Launch 提示已有 worker
+
+同一个项目只允许一个后台 writer。请关闭另一个 Paper Galaxy 窗口或进程后重试；不要
+删除 worker lock，也不要手工编辑 jobs 表。下一个取得排他 lease 的 worker 会安全地
+标记真正中断的任务，并保留已完成 artifact。Restore 也必须在工作站停止后执行。
+
+如果 launch 拒绝 source/project 路径关系，请把项目放到 corpus 或 Zotero data
+directory 之外。Paper Galaxy 会有意拒绝在只读 source tree 内创建数据库。
 
 ## Zotero local API 不可用
 
