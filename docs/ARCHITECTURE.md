@@ -169,6 +169,14 @@ Schema overview:
 - `zotero_attachments`: attachment metadata and local path resolution status.
 - `zotero_document_links`: links between Zotero items/attachments and Paper
   Galaxy document rows.
+- `zotero_sync_profiles`: profile-scoped cursors, CAS revisions, and the
+  source-global materialization generation.
+- `zotero_profile_items`: versioned filter-profile membership used for union
+  visibility.
+- `zotero_sync_run_details`: typed incremental-sync cursor and result audit.
+- `zotero_child_items`: private note/annotation/attachment cache for parent
+  reconstruction.
+- `zotero_tombstones`: verified local deletion audit.
 - `documents_fts`: FTS5 table for local search.
 
 Document status controls search visibility. `active` documents are returned by
@@ -183,15 +191,15 @@ The static Phase 1 `scan` command remains file-based and independent.
 
 ### SQLite lifecycle and connection boundaries
 
-Schema version 9 replaces implicit `CREATE IF NOT EXISTS` initialization with
-an explicit, forward-only lifecycle:
+Schema version 10 extends the explicit, forward-only lifecycle that replaced
+implicit `CREATE IF NOT EXISTS` initialization:
 
 - A new database is bootstrapped directly at the current schema in one explicit
   transaction. Bootstrap records the current migration registry in
   `schema_migrations` and commits before returning.
 - The oldest supported historical schema is v6. Its fixture is reconstructed
   from repository history and upgraded only through the registered v6 -> v7
-  -> v8 -> v9 sequence. v7 adds migration history and structured `error_code` /
+  -> v8 -> v9 -> v10 sequence. v7 adds migration history and structured `error_code` /
   `error_message` fields to scan, embedding, and Zotero import runs, plus a
   private child-version manifest for monotonic Zotero-derived documents. v8
   records a document content revision over title, relative path, and extracted
@@ -201,7 +209,13 @@ an explicit, forward-only lifecycle:
   are excluded from semantic results until rebuilt. v9 adds path-private
   registered corpus/Zotero sources and a durable, bounded local job state
   machine with exact partial-index capability checks and deterministic legacy
-  Zotero-profile backfill.
+  Zotero-profile backfill. v10 adds registered-profile cursor state with
+  compare-and-swap revisions, typed per-run sync details, a private child-item
+  cache, verified deletion tombstones, and soft-delete state. Migrated v9
+  profiles intentionally receive no guessed cursor and require one safe full
+  baseline that rematerializes shared documents. The v9 -> v10 regression runs
+  against a frozen copy of the real shipped v9 schema, not a current schema with
+  its version label changed.
 - Migration takes a unique, mode-`0600` snapshot with SQLite's online backup
   API before changing schema, then verifies the snapshot with `quick_check` and
   `foreign_key_check`. It never replaces an existing backup or the live
@@ -264,9 +278,9 @@ Project validation now runs through the read-only connection and reports:
   invalid object/dtype/non-finite values, source/model/algorithm provenance,
   stale index metadata, and legacy vectors whose freshness cannot be proven;
   and
-- invalid or lagging Zotero cursors/record versions and filter-profile
-  inconsistencies, including child/collection/attachment versions and child
-  manifest shape.
+- invalid or lagging Zotero cursors/record versions, source-global
+  materialization disagreement, and filter-profile membership inconsistencies,
+  including child/collection/attachment versions and child manifest shape.
 
 A check that cannot run is reported as `not_run` or `check_errors`; it is not
 presented as a successful zero count.
@@ -337,18 +351,60 @@ document or chunk source hash again. An inference result whose source changed
 in flight is discarded and counted as `sources_changed`. Replacing or
 deactivating a document removes its document/chunk vectors, and every vector
 write invalidates affected vector-index metadata; an identical Zotero sync
-keeps unchanged chunks and vectors intact. Zotero network fetching, normalization,
-and PDF extraction do not occupy
-one long writer transaction: the run is registered before fetching, item
-changes commit in short units, and the source cursor advances only in the final
-successful transaction. Fetch, normalization, item, or process-interruption
+keeps unchanged chunks and vectors intact. Zotero network fetching,
+normalization, and PDF extraction do not occupy one long writer transaction:
+the canonical locator/profile identity, source row, sync state, and running
+audit are registered in one initial transaction before fetching; item changes
+commit in short units, and
+the exact registered profile cursor advances only in the final successful
+transaction. `/items?since=` carries parent and child changes together;
+`/deleted?since=` is reconciled only when every page/endpoint shares one
+`Last-Modified-Version`. Fetch, normalization, item, or process-interruption
 failures are audited; a post-import reading-map failure is a retryable warning
 and does not rewrite the completed sync as failed. Regressive, divergent, or
-partial parent/collection/attachment/note/annotation responses fail and roll
-back before cursor advance. Migrated v6 child state is deliberately unknown;
-an explicit `--force` full-child reconciliation establishes its first manifest.
-Omitted children are not treated as deletions until the later incremental
-Zotero checkpoint adds explicit tombstone reconciliation.
+partial parent/collection/attachment/note/annotation responses fail before
+cursor advance. Child-only updates use the private cache and bounded parent
+hydration instead of per-parent child requests. A deletion-feed tombstone can
+remove a child from its parent or make a deleted parent non-active; an
+unverified omission remains an error. Parent deletion also retires cached
+children, attachments, every profile membership, linked document visibility,
+and vectors. Collection-only rename/delete versions hydrate and rebuild affected
+parents before cursor publication.
+
+Filter cursors are profile-scoped, but normalized Zotero items and Paper Galaxy
+documents are shared per source. A source-global materialization signature
+covers attachment-root resolution, include flags, PDF policy, reading-status
+tag vocabularies, minimum text length, and chunk configuration. A signature
+change requires explicit `--full`, invalidates peer memberships, and fences
+their cursors until they establish a new baseline. Durable jobs inherit the
+latest completed compatible materialization config. `zotero_profile_items`
+stores `is_member` and `observed_version`; document activity is the union of
+memberships belonging to non-removed profiles. Filter exit or source removal
+therefore deactivates only documents no other active profile covers. Cursor
+CAS, run completion, profile success, and job ownership fencing share the final
+write transaction. Generation preparation is deferred until the complete
+remote response has passed the shared version check and source-wide fence. A
+stale full response therefore cannot invalidate peer memberships or the current
+published documents, chunks, and vectors. For a content-changing full sync,
+attachment resolution, PDF reads, text assembly, and chunking finish before the
+write lock. Generation preparation, source rows, memberships, documents,
+chunks, vectors, cursor, and run completion then commit in one transaction, so
+cancel, failure, or process death cannot expose a half generation. The initial
+registration transaction independently rechecks the exact source row and every
+active profile locator before any upsert; a stale concurrent preflight cannot
+overwrite an established local Zotero data directory.
+
+Locator preflight is deliberately write-free. Once a project owns a canonical
+loopback API origin and optional Zotero data directory, a mismatched locator is
+rejected before the connector or writer is invoked. Changed parent metadata is
+also evaluated against every compatible active profile's persisted filters;
+this updates versioned memberships without borrowing or advancing peer cursors.
+Before the first complete remote response, a failed locator claim is retired
+from active use while its failed run and removed profile remain auditable. The
+source-wide published Zotero version is monotonic and is rechecked before every
+business-row transaction, after the in-flight commit guard, and during final
+cursor publication, preventing an older profile snapshot from mixing a prior
+library generation into newer state.
 
 Saved-map API and export payloads share a domain-layer deep whitelist for run,
 point, neighbor, term, representative, and cluster fields. Legacy nested raw

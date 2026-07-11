@@ -404,7 +404,16 @@ def register_api_routes(app: Any, config: WebAppConfig) -> None:
     @app.post("/api/jobs/{job_id}/cancel")
     def cancel_job(job_id: str) -> Any:
         try:
-            job = request_job_cancel(config.project_dir, job_id)
+            manager_cancel = (
+                getattr(config.job_manager, "request_cancel", None)
+                if config.job_manager is not None
+                else None
+            )
+            job = (
+                manager_cancel(job_id)
+                if callable(manager_cancel)
+                else request_job_cancel(config.project_dir, job_id)
+            )
         except ValueError:
             return JSONResponse(
                 status_code=404,

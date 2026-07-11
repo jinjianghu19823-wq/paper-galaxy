@@ -397,6 +397,37 @@ def test_zotero_locator_is_revalidated_before_use(tmp_path: Path) -> None:
         validate_source_locator_for_use(tmp_path, tampered)
 
 
+def test_valid_but_tampered_zotero_filters_cannot_reuse_profile_identity(
+    tmp_path: Path,
+) -> None:
+    _insert_zotero_source(tmp_path)
+    source, _ = register_zotero_source(
+        tmp_path,
+        "zotero_source_synthetic",
+        filters={"tags": ["original"]},
+    )
+    connection = connect_read_write(tmp_path)
+    try:
+        with connection:
+            connection.execute(
+                """
+                UPDATE registered_sources
+                SET config_json = json_set(
+                  config_json, '$.filters.tags', json('["other"]')
+                )
+                WHERE id = ?
+                """,
+                (source.id,),
+            )
+    finally:
+        connection.close()
+    tampered = get_source(tmp_path, source.id)
+    assert tampered is not None
+
+    with pytest.raises(ValueError, match="identity no longer matches"):
+        validate_source_locator_for_use(tmp_path, tampered)
+
+
 def test_public_source_error_never_returns_private_error_text(tmp_path: Path) -> None:
     corpus = tmp_path / "private" / "papers"
     corpus.mkdir(parents=True)

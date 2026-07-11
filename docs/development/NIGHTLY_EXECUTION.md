@@ -5,18 +5,18 @@ Milestone: **Paper Galaxy Local Research Workstation & Evidence-First Insight En
 ## Current checkpoint
 
 - Branch: `codex/local-research-workstation`
-- Last pushed head before this checkpoint: `609540d` (`Preserve index and
-  vector consistency`).
+- Last pushed head before this checkpoint: `2c2f98d` (`Add sources, durable
+  jobs and one-command launch`).
 - Dependency: Draft PR #1 (`codex/safe-reproducible-release`) remains open and
   green. Stacked Draft PR #2 targets PR #1's branch and begins with
   `Depends on #1`:
   <https://github.com/jinjianghu19823-wq/paper-galaxy/pull/2>.
-- Current green checkpoint: Stage 5 source registry, durable local jobs, safe
-  project lifecycle, one-command loopback launch, and the first local Web
-  security boundary. Schema v9, source/job validation, ownership fencing,
-  source-tree zero-write guards, and installed-wheel API smoke are complete.
-  The 588-test full suite and `make release-check` pass. This checkpoint still
-  needs its semantic commit and push before Stage 6 begins.
+- Current green checkpoint: Stage 6 true incremental, read-only Zotero sync.
+  Schema v10 profile cursors, version-fenced changed/deleted feeds, child cache,
+  tombstones, explicit `--full`, bounded retry, CAS publication, and job-owner
+  fencing are complete. The final full suite has 671 passing tests; Ruff,
+  formatting, Mypy, deterministic demo checks, and the earlier isolated
+  package/release gate are green.
 - Safety boundary: only synthetic fixtures and pytest temporary directories
   were bootstrapped or migrated. No real Paper Galaxy project, user database,
   source corpus, Zotero profile, or Zotero database was opened for migration,
@@ -34,11 +34,13 @@ Milestone: **Paper Galaxy Local Research Workstation & Evidence-First Insight En
 4. **Completed and pushed:** make
    backup/restore consistent, portable, attack-resistant, and atomic.
 5. **Completed and pushed:** preserve indexing/vector/run consistency.
-6. **Green; commit/push pending:** add sources, durable jobs, and one-command
-   local launch.
-7. **Next:** implement incremental read-only Zotero sync.
-8. Add structured evidence, citations, and deterministic analysis snapshots.
-9. Add evidence-first insights and reading plans.
+6. **Completed and pushed:** add sources, durable jobs, and one-command local
+   launch.
+7. **Completed at this checkpoint:** implement true incremental read-only
+   Zotero sync.
+8. **Next:** materialize deterministic analysis snapshots.
+9. Add structured evidence, the local citation graph, evidence-first insights,
+   and reading plans.
 10. Rework API/UI request coordination and local web security.
 11. Add E2E coverage, benchmarks, bilingual docs, and the synthetic public demo.
 
@@ -161,7 +163,7 @@ Record exact results here at each green checkpoint. The final gate is:
   `make release-check` repeated all 588 tests, lint, formatting, typecheck,
   isolated build, deterministic demo publication/static check, and strict
   public-readiness check; all passed.
-- The current wheel was installed from `dist/` in an isolated temporary path.
+- The Stage 5 wheel was installed from `dist/` in an isolated temporary path.
   A system-site dependency smoke imported the installed wheel, completed
   `index_corpus` and `rebuild_analysis`, returned health `ok`, 3 search results,
   and an 8-document map, and proved the synthetic source digest unchanged.
@@ -169,8 +171,9 @@ Record exact results here at each green checkpoint. The final gate is:
   rejected the PyPI approval after its usage limit was reached; the local
   wheel itself also installed/imported in a dependency-empty venv with
   `--no-deps`.
-- `python scripts/check_demo_site.py --dist site_dist --serve` and the actual
-  installed `launch` socket smoke are blocked by this sandbox's
+- At the Stage 5 checkpoint,
+  `python scripts/check_demo_site.py --dist site_dist --serve` and the actual
+  installed `launch` socket smoke were blocked by this sandbox's
   `socket.bind(127.0.0.1, 0)` `EPERM`. The required escalation was rejected by
   the platform usage limit. Static demo validation and strict readiness pass;
   rerun the existing smoke script on a loopback-capable Mac/Windows/Linux host.
@@ -181,6 +184,91 @@ Record exact results here at each green checkpoint. The final gate is:
   explicit Stage 5 P0/P1. All migrations, restores, scans, sources, jobs, and
   smoke projects used synthetic data under pytest/temp directories; no real
   user project or Zotero data was touched.
+- Stage 6 schema v10 gives every registered Zotero profile its own nullable
+  cursor and CAS revision. v9 profiles are backfilled with `requires_full_sync`
+  and never inherit the legacy source-wide cursor. Migration rollback and
+  partially applied v10 capability attacks are covered.
+- The local connector now validates one `Last-Modified-Version` across all
+  `/items?since=`, hydration, collections, and `/deleted?since=` responses;
+  transient loopback GETs retry within a fixed bound. It rejects pagination
+  cycles, malformed/missing headers, cross-version responses, and incomplete
+  cursor publication.
+- Parent/child payloads are assembled from the changed feed plus a private
+  child cache. Note, annotation, and attachment-only changes rebuild one parent
+  without per-parent child calls. Verified parent/child deletions are
+  tombstoned; deleted parents become non-active and leave normal search/maps.
+  Unverified omissions remain conflicts.
+- The final cursor, typed run audit, registered-profile success, and completed
+  import state share one `BEGIN IMMEDIATE` transaction with profile CAS and the
+  durable job owner checked inside that same transaction. Failed, cancelled,
+  limited, or version-drifting syncs keep the prior cursor. Identical explicit
+  full syncs skip PDF extraction and preserve chunks/vectors.
+- Source-global materialization configuration is canonical and inherited by
+  default jobs. Changed parent metadata re-evaluates membership for every
+  compatible active profile without advancing peer cursors; peers awaiting a
+  new full baseline remain fenced. Filter exit, source removal/re-registration,
+  parent deletion, and collection rename/delete all reconcile union visibility.
+- Locator/profile identity is resolved before writes. An established locator
+  mismatch is zero-write and makes no remote request. A first remote-validation
+  failure retains a failed-run plus removed-profile audit without claiming the
+  project, so a corrected locator can establish the first successful profile.
+  Source/profile/sync/run initialization is one transaction.
+- The source-wide published library version is monotonic. Older snapshots are
+  rejected before business writes; collection, child, deletion, and item
+  transactions, the post-commit-guard boundary, and final cursor publication
+  all recheck the source fence against concurrent peer completion.
+- A full sync prepares a new materialization generation only after the complete
+  remote response has one validated version and passes the source-wide fence. A
+  stale full response therefore leaves the published generation, memberships,
+  documents, chunks, and vectors unchanged.
+- Content-changing full materialization performs attachment/PDF/text/chunk
+  preparation outside the write transaction, then publishes the generation,
+  memberships, documents, chunks, vectors, cursor, and run audit atomically.
+  Preparation failures, cancellation, and regressive per-item versions roll
+  back without invalidating the previously published generation.
+- Job cancellation also uses an in-process event so it can reach a worker that
+  is waiting at its final transaction fence before the durable cancellation
+  row becomes writable. A cancellation arriving after publication still
+  records the truthful completed result.
+- Project-wide locator claims reject conflicting established source IDs and
+  concurrent locator races. Peer run evidence prevents an interrupted claimant
+  from retiring another successful or partially observed sync. A newly added
+  filter profile inherits the canonical source-global materialization config,
+  including from a deliberately removed completed donor, without restoring the
+  donor's membership.
+- The v10 migration does not create cursor claims for removed empty Zotero
+  profiles; active legacy profiles still require an explicit v10 full baseline.
+- The v9 compatibility suite uses the frozen 539-line schema from pushed Stage
+  5 head `2c2f98d` (SHA-256
+  `79b89774be3befa1943dbcedb1fd71cbdc72619d99b9e5fde4c00d9279cba394`).
+  Existing v9 Zotero documents take one explicit v10 baseline and are really
+  rematerialized rather than receiving a fabricated cursor.
+- Stage 6 tests use only synthetic clients, payloads, PDFs, SQLite databases,
+  and pytest temporary directories. The final full suite reports 671 passed
+  with the existing Starlette/httpx warning; Ruff check, Ruff format (148
+  files), Mypy (89 source files), and `git diff --check` pass. The preceding
+  release gate also passed its isolated sdist/wheel build, default demo
+  publication/static validation, and strict public readiness checks. Three
+  independent final adversarial reviews report no remaining Stage 6 P0/P1;
+  their focused reproductions covered 132 Zotero/source/job/storage tests, 70
+  Web/security/runtime tests, repeated locator races, exact rollback, and final
+  cancellation fences.
+- A clean temporary venv installed the built wheel with `[full]`. The installed
+  `paper-galaxy launch --no-open` created only a temporary project, registered
+  the synthetic tiny corpus, completed `index_corpus` and `rebuild_analysis`,
+  returned health `ok`, 3 search results, and an 8-document map, preserved the
+  source digest, and shut down with process exit code 0 after scripted SIGINT.
+  Two CLI regressions keep the clean-shutdown catch scoped to the post-Uvicorn
+  server boundary; an interruption during project preparation still exits 130.
+- `python scripts/check_demo_site.py --dist site_dist --serve` passed all
+  English and Simplified Chinese routes plus `tiny-map.json` over loopback.
+- The active environment still lacks `pytest-cov`, so the requested coverage
+  command exits before collection. `scripts/benchmark_local.py` is not present
+  in this checkpoint, so no benchmark result is claimed. The requested
+  `site/app.js`, `site/graph.js`, and `site/i18n.js` paths also do not exist; the
+  actual source and demo JavaScript assets pass `node --check`.
+- No real Zotero API, profile, database, attachment, user project, or source
+  corpus was opened or modified.
 
 ```text
 python -m pytest
@@ -206,16 +294,17 @@ git status --porcelain
 
 ## Unfinished work
 
-Stage 5 is green and awaiting its checkpoint commit/push. Remaining true
-incremental Zotero sync, structured evidence, citations, immutable analysis snapshots,
-evidence-first insights, the workspace UI/security checkpoint, E2E coverage,
-benchmarks, and final bilingual/public demo work remain unfinished. Do not
+Stage 6 is green at this checkpoint. Structured evidence, citations, immutable
+analysis snapshots, evidence-first insights, the workspace
+UI/security checkpoint, E2E coverage, benchmarks, and final bilingual/public
+demo work remain unfinished. Do not
 treat planned routes, schemas, jobs, insights, UI states, E2E tests, or
 benchmark commands as delivered before their checkpoint is green and
 committed.
 
-The next implementation command after the Stage 5 push is:
+The next implementation command after the Stage 6 push is the focused snapshot
+baseline before adding `tests/test_analysis_snapshots.py` red cases:
 
 ```text
-python -m pytest -q tests/test_zotero_integration.py
+python -m pytest -q tests/test_map_runs.py tests/test_web_api.py tests/test_sources_jobs_launch.py
 ```

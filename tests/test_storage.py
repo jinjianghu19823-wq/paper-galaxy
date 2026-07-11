@@ -82,6 +82,8 @@ def test_schema_initializes_expected_tables(tmp_path: Path) -> None:
     assert "zotero_item_tags" in tables
     assert "zotero_attachments" in tables
     assert "zotero_document_links" in tables
+    assert "zotero_sync_profiles" in tables
+    assert "zotero_profile_items" in tables
     assert "documents_fts" in tables
 
     assert version is not None
@@ -149,6 +151,294 @@ def test_cluster_label_override_repository_methods(tmp_path: Path) -> None:
     assert rows[0]["cluster_signature"] == "cluster_abc"
     assert deleted is True
     assert deleted_again is False
+
+
+def _zotero_storage_fixture(
+    connection: sqlite3.Connection, repository: Repository
+) -> tuple[dict[str, object], dict[str, object]]:
+    now = "2026-01-01T00:00:00+00:00"
+    connection.execute(
+        """
+        INSERT INTO zotero_sources(
+          id, source_type, local_api_url, library_id, library_type,
+          name, created_at, updated_at
+        ) VALUES (
+          'zotero-source', 'local_api', 'http://localhost:23119/api',
+          '0', 'user', 'Synthetic Zotero', ?, ?
+        )
+        """,
+        (now, now),
+    )
+    for profile_id, profile_signature in (
+        ("profile-a", "a" * 64),
+        ("profile-b", "b" * 64),
+    ):
+        connection.execute(
+            """
+            INSERT INTO registered_sources(
+              id, kind, display_name, zotero_source_id, profile_signature,
+              config_json, created_at, updated_at
+            ) VALUES (?, 'zotero_profile', ?, 'zotero-source', ?, '{}', ?, ?)
+            """,
+            (profile_id, profile_id, profile_signature, now, now),
+        )
+        repository.ensure_zotero_sync_profile(
+            profile_id=profile_id,
+            source_id="zotero-source",
+            profile_signature=profile_signature,
+            now=now,
+        )
+    first = repository.prepare_zotero_sync_profile_materialization(
+        profile_id="profile-a",
+        materialization_signature="1" * 64,
+        now=now,
+    )
+    second = repository.prepare_zotero_sync_profile_materialization(
+        profile_id="profile-b",
+        materialization_signature="1" * 64,
+        now=now,
+    )
+    return first, second
+
+
+def _insert_zotero_item_and_document(
+    connection: sqlite3.Connection, repository: Repository
+) -> None:
+    now = "2026-01-01T00:00:00+00:00"
+    repository.upsert_corpus("zotero-corpus", "zotero://sources/test", now)
+    assert repository.upsert_zotero_item(
+        {
+            "id": "zotero-item",
+            "source_id": "zotero-source",
+            "zotero_key": "ITEM0001",
+            "version": 10,
+            "item_type": "journalArticle",
+            "title": "Synthetic item",
+            "reading_status": "unknown",
+            "data": {"key": "ITEM0001", "version": 10},
+            "created_at": now,
+            "updated_at": now,
+        }
+    )
+    connection.execute(
+        """
+        INSERT INTO documents(
+          id, corpus_id, path, relative_path, file_type, title, sha256,
+          size_bytes, mtime_ns, char_count, status, first_seen_at,
+          last_seen_at, updated_at
+        ) VALUES (
+          'document', 'zotero-corpus', 'zotero://ITEM0001',
+          'zotero/ITEM0001', 'zotero', 'Synthetic item', 'sha',
+          0, 0, 10, 'active', ?, ?, ?
+        )
+        """,
+        (now, now, now),
+    )
+    connection.execute(
+        "INSERT INTO document_texts(document_id, text) VALUES ('document', 'text')"
+    )
+    repository.upsert_zotero_document_link(
+        document_id="document",
+        zotero_item_id="zotero-item",
+        attachment_id=None,
+        role="primary",
+    )
+
+
+def test_zotero_materialization_is_source_global_and_fences_old_runners(
+    tmp_path: Path,
+) -> None:
+    connection = connect_database(tmp_path)
+    try:
+        initialize_database(connection)
+        repository = Repository(connection, resolve_database_path(tmp_path))
+        with connection:
+            first, second = _zotero_storage_fixture(connection, repository)
+            same = repository.prepare_zotero_sync_profile_materialization(
+                profile_id="profile-a",
+                materialization_signature="1" * 64,
+                now="2026-01-01T12:00:00+00:00",
+                explicit_full=True,
+            )
+        with pytest.raises(RuntimeError, match="explicit full sync"):
+            with connection:
+                repository.prepare_zotero_sync_profile_materialization(
+                    profile_id="profile-b",
+                    materialization_signature="2" * 64,
+                    now="2026-01-02T00:00:00+00:00",
+                )
+        with connection:
+            changed = repository.prepare_zotero_sync_profile_materialization(
+                profile_id="profile-b",
+                materialization_signature="2" * 64,
+                now="2026-01-02T00:00:00+00:00",
+                explicit_full=True,
+            )
+        rows = connection.execute(
+            """
+            SELECT id, materialization_signature, requires_full_sync, revision
+            FROM zotero_sync_profiles ORDER BY id
+            """
+        ).fetchall()
+        with pytest.raises(RuntimeError, match="fence changed concurrently"):
+            repository.assert_zotero_sync_profile_fence(
+                profile_id="profile-a",
+                expected_revision=int(first["revision"]),
+                expected_last_version=None,
+                expected_materialization_signature="1" * 64,
+            )
+    finally:
+        connection.close()
+
+    assert second["materialization_signature"] == "1" * 64
+    assert int(same["revision"]) == int(first["revision"]) + 1
+    assert same["requires_full_sync"] is True
+    assert changed["materialization_signature"] == "2" * 64
+    assert [(row[1], row[2]) for row in rows] == [("2" * 64, 1), ("2" * 64, 1)]
+    assert all(int(row[3]) > int(first["revision"]) for row in rows)
+
+
+def test_zotero_profile_membership_is_versioned_and_controls_union_visibility(
+    tmp_path: Path,
+) -> None:
+    connection = connect_database(tmp_path)
+    try:
+        initialize_database(connection)
+        repository = Repository(connection, resolve_database_path(tmp_path))
+        with connection:
+            first, _ = _zotero_storage_fixture(connection, repository)
+            _insert_zotero_item_and_document(connection, repository)
+            assert repository.upsert_zotero_profile_item(
+                profile_id="profile-a",
+                zotero_item_id="zotero-item",
+                observed_version=10,
+                expected_profile_revision=int(first["revision"]),
+                expected_materialization_signature="1" * 64,
+                now="2026-01-01T00:00:00+00:00",
+            )
+            assert repository.remove_zotero_profile_item(
+                profile_id="profile-a",
+                zotero_item_id="zotero-item",
+                observed_version=12,
+                expected_profile_revision=int(first["revision"]),
+                expected_materialization_signature="1" * 64,
+                now="2026-01-02T00:00:00+00:00",
+            )
+            assert not repository.upsert_zotero_profile_item(
+                profile_id="profile-a",
+                zotero_item_id="zotero-item",
+                observed_version=11,
+                expected_profile_revision=int(first["revision"]),
+                expected_materialization_signature="1" * 64,
+                now="2026-01-03T00:00:00+00:00",
+            )
+            changed = repository.reconcile_zotero_document_activity(
+                ["zotero-item"], now="2026-01-03T00:00:00+00:00"
+            )
+        row = connection.execute(
+            """
+            SELECT is_member, observed_version FROM zotero_profile_items
+            WHERE profile_id = 'profile-a' AND zotero_item_id = 'zotero-item'
+            """
+        ).fetchone()
+        status = connection.execute(
+            "SELECT status FROM documents WHERE id = 'document'"
+        ).fetchone()[0]
+    finally:
+        connection.close()
+
+    assert tuple(row) == (0, 12)
+    assert changed == {"active": 0, "unindexed": 1, "missing": 0}
+    assert status == "unindexed"
+
+
+def test_zotero_parent_delete_cascades_and_tombstone_blocks_equal_resurrection(
+    tmp_path: Path,
+) -> None:
+    connection = connect_database(tmp_path)
+    try:
+        initialize_database(connection)
+        repository = Repository(connection, resolve_database_path(tmp_path))
+        with connection:
+            first, _ = _zotero_storage_fixture(connection, repository)
+            _insert_zotero_item_and_document(connection, repository)
+            assert repository.upsert_zotero_profile_item(
+                profile_id="profile-a",
+                zotero_item_id="zotero-item",
+                observed_version=10,
+                expected_profile_revision=int(first["revision"]),
+                expected_materialization_signature="1" * 64,
+                now="2026-01-01T00:00:00+00:00",
+            )
+            assert repository.upsert_zotero_child_item(
+                source_id="zotero-source",
+                zotero_key="NOTE0001",
+                parent_key="ITEM0001",
+                item_type="note",
+                version=10,
+                data={"key": "NOTE0001", "parentItem": "ITEM0001"},
+                now="2026-01-01T00:00:00+00:00",
+            )
+            assert repository.upsert_zotero_attachment(
+                {
+                    "id": "attachment",
+                    "source_id": "zotero-source",
+                    "parent_zotero_item_id": "zotero-item",
+                    "zotero_key": "ATTACH01",
+                    "version": 10,
+                    "path_status": "no_local_file",
+                    "data": {"key": "ATTACH01"},
+                    "created_at": "2026-01-01T00:00:00+00:00",
+                    "updated_at": "2026-01-01T00:00:00+00:00",
+                }
+            )
+            repository.record_zotero_tombstone(
+                source_id="zotero-source",
+                object_type="item",
+                zotero_key="ITEM0001",
+                library_version=12,
+                deleted_at="2026-01-02T00:00:00+00:00",
+            )
+            assert repository.mark_zotero_parent_deleted(
+                source_id="zotero-source",
+                zotero_key="ITEM0001",
+                library_version=12,
+                deleted_at="2026-01-02T00:00:00+00:00",
+            )
+            assert not repository.upsert_zotero_item(
+                {
+                    "id": "zotero-item",
+                    "source_id": "zotero-source",
+                    "zotero_key": "ITEM0001",
+                    "version": 12,
+                    "item_type": "journalArticle",
+                    "title": "Stale item",
+                    "data": {"key": "ITEM0001", "version": 12},
+                    "created_at": "2026-01-03T00:00:00+00:00",
+                    "updated_at": "2026-01-03T00:00:00+00:00",
+                }
+            )
+            assert not repository.clear_zotero_tombstone(
+                source_id="zotero-source",
+                object_type="item",
+                zotero_key="ITEM0001",
+                incoming_version=12,
+            )
+        state = connection.execute(
+            """
+            SELECT
+              (SELECT deleted_at IS NOT NULL FROM zotero_items),
+              (SELECT COUNT(*) FROM zotero_child_items WHERE deleted_at IS NULL),
+              (SELECT COUNT(*) FROM zotero_attachments WHERE deleted_at IS NULL),
+              (SELECT is_member FROM zotero_profile_items),
+              (SELECT status FROM documents),
+              (SELECT COUNT(*) FROM zotero_tombstones WHERE zotero_key = 'ITEM0001')
+            """
+        ).fetchone()
+    finally:
+        connection.close()
+
+    assert tuple(state) == (1, 0, 0, 0, "missing", 1)
 
 
 def test_map_run_repository_methods(tmp_path: Path) -> None:

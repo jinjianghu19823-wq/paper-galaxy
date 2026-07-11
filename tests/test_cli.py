@@ -398,6 +398,73 @@ def test_launch_prepares_jobs_and_starts_loopback_server(
     assert "Prepared 1 source(s) and queued 2 job(s)." in result.output
 
 
+def test_launch_treats_keyboard_interrupt_as_clean_shutdown(
+    monkeypatch: object,
+    tmp_path: Path,
+) -> None:
+    from paper_galaxy.services.launch import LaunchPreparation
+
+    runner = CliRunner()
+
+    def fake_prepare_launch(**kwargs: object) -> LaunchPreparation:
+        del kwargs
+        return LaunchPreparation(
+            project_dir=tmp_path.resolve(),
+            project_created=True,
+            source_ids=(),
+            job_ids=(),
+        )
+
+    class FakeManager:
+        def __init__(self, project_dir: Path) -> None:
+            del project_dir
+
+    def interrupt_after_server_shutdown(**kwargs: object) -> None:
+        del kwargs
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(
+        "paper_galaxy.services.launch.prepare_launch", fake_prepare_launch
+    )
+    monkeypatch.setattr("paper_galaxy.services.jobs.JobManager", FakeManager)
+    monkeypatch.setattr(
+        "paper_galaxy.web.server.serve_app", interrupt_after_server_shutdown
+    )
+
+    result = runner.invoke(
+        app,
+        ["launch", "--project-dir", str(tmp_path), "--no-open"],
+    )
+
+    assert result.exit_code == 0
+    assert "Paper Galaxy stopped cleanly." in result.output
+    assert result.exception is None
+
+
+def test_launch_does_not_misreport_interrupted_preparation_as_clean_shutdown(
+    monkeypatch: object,
+    tmp_path: Path,
+) -> None:
+    runner = CliRunner()
+
+    def interrupt_during_preparation(**kwargs: object) -> object:
+        del kwargs
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(
+        "paper_galaxy.services.launch.prepare_launch",
+        interrupt_during_preparation,
+    )
+
+    result = runner.invoke(
+        app,
+        ["launch", "--project-dir", str(tmp_path), "--no-open"],
+    )
+
+    assert result.exit_code == 130
+    assert "Paper Galaxy stopped cleanly." not in result.output
+
+
 def test_launch_rejects_invalid_options_before_preparing_project(
     monkeypatch: object,
     tmp_path: Path,

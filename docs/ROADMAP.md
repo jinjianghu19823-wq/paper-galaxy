@@ -142,14 +142,17 @@ Goal: turn the local package into a trustworthy research workstation whose
 future insights remain evidence-linked and explicitly scoped to one personal
 library.
 
-Delivered checkpoint: schema v9 registered sources, durable single-writer
+Delivered checkpoints: schema v9 registered sources, durable single-writer
 jobs, safe no-clobber project initialization, `paper-galaxy launch`, loopback
 port selection, source/job Web controls, worker ownership fencing, bounded
-queries, and local browser write protections. Corpus and Zotero roots are
-revalidated before use, are never modified, and cannot contain project state.
+queries, and local browser write protections; schema v10 now adds profile-
+scoped Zotero cursors, version-fenced `/items` + `/deleted` synchronization,
+child-only refresh without N+1 requests, and verified deletion tombstones.
+Corpus and Zotero roots are revalidated before use, are never modified, and
+cannot contain project state.
 
-Remaining checkpoints: true incremental read-only Zotero synchronization,
-structured evidence locators, local citation resolution, immutable analysis
+Remaining checkpoints: structured evidence locators, local citation
+resolution, immutable analysis
 snapshots, evidence-first insights and reading plans, scalable workspace UI,
 E2E tests, benchmark tooling, and the expanded synthetic demo.
 

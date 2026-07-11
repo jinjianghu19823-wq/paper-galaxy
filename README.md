@@ -208,6 +208,15 @@ Useful Zotero import options:
 - `--pdf-policy metadata` imports metadata quickly without extracting PDFs.
 - `--pdf-policy skip-missing` skips items whose expected local PDFs cannot be
   read.
+- Default imports resume incrementally from this exact filter profile's saved
+  cursor. Use `--full` only when an explicit full reconciliation is required;
+  failed, cancelled, version-drifting, or limited imports never advance it.
+- Content-affecting options form one source-global materialization fingerprint:
+  attachment/PDF/note/metadata inclusion, PDF policy, reading-status tag sets,
+  minimum text length, and chunk size/overlap. Changing that fingerprint is
+  refused unless `--full` is explicit. A default background job reuses the
+  latest compatible completed-run configuration instead of drifting back to
+  defaults.
 
 If a PDF is missing or unsupported, the Zotero item can still appear as a
 metadata-only document with title, creators, abstract, tags, collections, notes,
@@ -330,6 +339,16 @@ ambiguous matches fail with a clear error. Reading status filters accept
 as a deprecated alias for `unknown`. `--pdf-policy metadata` keeps imports fast
 and metadata-only, while `--pdf-policy skip-missing` skips items whose expected
 local PDF cannot be read.
+
+Profile membership is versioned separately from shared item data. If an item
+changes, its latest metadata is re-evaluated against every compatible active
+profile without advancing peer cursors. It remains visible while any profile
+still includes it; otherwise its document becomes non-active. Removing a
+registered source applies the same union rule. Confirmed parent deletion also
+retires cached children, attachments, and profile memberships; collection-only
+renames or deletions rebuild affected parent documents. A different local API
+origin or Zotero data directory is rejected before remote access or project
+writes once the project's locator identity has been established.
 
 Privacy boundary: the connector uses the Zotero local API, does not write to
 Zotero, performs no upload, and does not copy or move PDFs by default. Imported

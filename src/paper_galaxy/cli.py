@@ -1975,8 +1975,33 @@ def zotero_import_command(
     to_read_tag: Annotated[list[str] | None, typer.Option("--to-read-tag")] = None,
     include_status: Annotated[str, typer.Option("--include-status")] = "all",
     limit: Annotated[int | None, typer.Option("--limit")] = None,
-    since_version: Annotated[int | None, typer.Option("--since-version")] = None,
-    force: Annotated[bool, typer.Option("--force")] = False,
+    since_version: Annotated[
+        int | None,
+        typer.Option(
+            "--since-version",
+            help=(
+                "Expert recovery check: must exactly match this profile's saved "
+                "cursor. Normal sync resumes automatically."
+            ),
+        ),
+    ] = None,
+    full: Annotated[
+        bool,
+        typer.Option(
+            "--full",
+            help="Ignore this profile's cursor and perform an explicit full sync.",
+        ),
+    ] = False,
+    force: Annotated[
+        bool,
+        typer.Option(
+            "--force",
+            help=(
+                "Rematerialize records returned by the changed feed. Combine with "
+                "--full to rematerialize the complete profile."
+            ),
+        ),
+    ] = False,
     dry_run: Annotated[bool, typer.Option("--dry-run")] = False,
     build_reading_map: Annotated[
         bool,
@@ -2012,6 +2037,7 @@ def zotero_import_command(
             include_status=include_status,
             limit=limit,
             since_version=since_version,
+            full=full,
             force=force,
             dry_run=dry_run,
             build_reading_map=build_reading_map,
@@ -2383,19 +2409,23 @@ def launch_command(
             f"{len(preparation.job_ids)} job(s)."
         )
         manager = JobManager(preparation.project_dir)
-        serve_app(
-            project_dir=preparation.project_dir,
-            host="127.0.0.1",
-            port=port,
-            reload=False,
-            open_browser=open_browser,
-            seed=seed,
-            clusters=None,
-            neighbors=neighbors,
-            map_limit=limit,
-            fallback_to_free_port=True,
-            job_manager=manager,
-        )
+        try:
+            serve_app(
+                project_dir=preparation.project_dir,
+                host="127.0.0.1",
+                port=port,
+                reload=False,
+                open_browser=open_browser,
+                seed=seed,
+                clusters=None,
+                neighbors=neighbors,
+                map_limit=limit,
+                fallback_to_free_port=True,
+                job_manager=manager,
+            )
+        except KeyboardInterrupt:
+            console.print("Paper Galaxy stopped cleanly.")
+            return
     except MissingDependencyError:
         console.print(
             "Missing local workstation dependencies. Install with: "
@@ -2525,6 +2555,13 @@ def _zotero_import_summary_payload(
         "warnings": list(summary.warnings),
         "reading_status_counts": dict(summary.reading_status_counts),
         "map_run_id": summary.map_run_id,
+        "profile_id": summary.profile_id,
+        "profile_signature": summary.profile_signature,
+        "full_sync": bool(summary.full_sync),
+        "changed_parents": int(summary.changed_parents),
+        "changed_children": int(summary.changed_children),
+        "deleted_records": int(summary.deleted_records),
+        "duration_seconds": float(summary.duration_seconds),
     }
 
 

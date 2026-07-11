@@ -6,6 +6,29 @@
 
 ## Unreleased
 
+- 增加 schema v10 与真正按 profile 隔离的只读 Zotero 增量同步。默认同步从精确
+  collection/tag/status profile 自己的 CAS-fenced cursor 继续，只有显式 `--full`
+  才全量同步。Local API client 会跨安全分页保留 `Last-Modified-Version`，对瞬时只读
+  失败做有界重试，读取 `/items?since=` 与 `/deleted?since=`，批量补取 parent，并在
+  发布 cursor 前拒绝 version drift。仅 child note、annotation 或 attachment 更新时
+  也会重建 parent document，不再逐 parent 请求 children。已确认的远端删除会留下
+  tombstone，并级联更新 child、attachment 与 profile 状态；删除 parent 会退出实时
+  搜索/地图，collection 重命名或删除会刷新受影响的 parent document。带版本的
+  profile-item membership 会按所有 active profile 的并集及 source removal 决定可见性。
+  source-global materialization fingerprint 覆盖 attachment/include/PDF/note/metadata、
+  阅读状态标签、最小文本与 chunk 配置；变更必须显式使用 `--full`，默认 job 会继承
+  最近一次兼容的 completed run 配置。不完整运行不推进 cursor，完全相同的
+  materialization 不再重复抽取 PDF，并保留 chunks/vectors。migration 测试使用真实
+  冻结的 v9 schema fixture；首次 v10 baseline 会重新 materialize，而不会信任旧全局
+  cursor。Locator drift 会在远端访问或写入前被拒绝；source/profile/run 的初始登记保持
+  原子性；每个 changed parent 会刷新所有 compatible active profile 的 membership，但不
+  推进其他 cursor。首次 locator 失败会保留 audit 而不认领项目；source-wide 单调 version
+  fence 会在每个业务事务及最终 cursor 发布前拒绝旧 snapshot。全量同步只有在完整远端
+  响应通过统一 version 校验和 source-wide fence 后才准备新 generation，因此 stale full
+  response 不会使上一个已发布 generation 失效。改变内容配置的 full sync 会在写事务外
+  准备 attachment/PDF/text/chunk，再原子发布 generation、memberships、documents、
+  vectors、cursor 与 run audit；不完整、取消、失败或崩溃都会保留上一代。初始登记事务
+  还会重新核对 source 与全部 active profile 的精确 locator，封住并发首次登记覆盖竞态。
 - 增加本地研究工作站的首个 checkpoint：schema v9 持久化 corpus/Zotero source、
   带协作取消与崩溃恢复的单 writer job queue、安全项目初始化，以及仅绑定 loopback
   并能安全选择空闲端口的 `paper-galaxy launch`。本地 Web 应用新增有界 source/job

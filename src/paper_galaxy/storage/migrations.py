@@ -30,7 +30,7 @@ from paper_galaxy.storage.provenance import (
     registered_source_identity,
 )
 
-CURRENT_SCHEMA_VERSION = 9
+CURRENT_SCHEMA_VERSION = 10
 SCHEMA_VERSION = str(CURRENT_SCHEMA_VERSION)
 OLDEST_SUPPORTED_SCHEMA_VERSION = 6
 LEGACY_UNKNOWN_PROVENANCE = "legacy-unknown"
@@ -157,7 +157,7 @@ _V8_REQUIRED_COLUMNS = {
     | _columns("owner_pid"),
 }
 
-_CURRENT_REQUIRED_COLUMNS = {
+_V9_REQUIRED_COLUMNS = {
     **_V8_REQUIRED_COLUMNS,
     "registered_sources": _columns(
         "id kind display_name root_path zotero_source_id profile_signature "
@@ -170,6 +170,36 @@ _CURRENT_REQUIRED_COLUMNS = {
         "progress_total message result_summary_json error_code error_message "
         "cancel_requested owner_pid owner_instance_id heartbeat_at writer_slot "
         "revision created_at started_at finished_at updated_at"
+    ),
+}
+
+_CURRENT_REQUIRED_COLUMNS = {
+    **_V9_REQUIRED_COLUMNS,
+    "zotero_items": _V9_REQUIRED_COLUMNS["zotero_items"]
+    | _columns("deleted_at deleted_version"),
+    "zotero_collections": _V9_REQUIRED_COLUMNS["zotero_collections"]
+    | _columns("deleted_at deleted_version"),
+    "zotero_attachments": _V9_REQUIRED_COLUMNS["zotero_attachments"]
+    | _columns("deleted_at deleted_version"),
+    "zotero_sync_profiles": _columns(
+        "id source_id profile_signature materialization_signature last_version "
+        "requires_full_sync revision last_run_id last_sync_at created_at updated_at"
+    ),
+    "zotero_profile_items": _columns(
+        "profile_id zotero_item_id is_member observed_version "
+        "first_matched_at updated_at"
+    ),
+    "zotero_sync_run_details": _columns(
+        "run_id profile_id full_sync previous_version response_version "
+        "committed_version changed_parents changed_children deleted_records "
+        "metadata_only_documents pdf_failures duration_ms"
+    ),
+    "zotero_child_items": _columns(
+        "source_id zotero_key parent_key item_type version data_json deleted_at "
+        "deleted_version created_at updated_at"
+    ),
+    "zotero_tombstones": _columns(
+        "source_id object_type zotero_key library_version deleted_at"
     ),
 }
 
@@ -197,6 +227,20 @@ _V7_FORBIDDEN_COLUMNS: dict[str, frozenset[str]] = {
 }
 
 _V8_FORBIDDEN_TABLES = frozenset({"registered_sources", "jobs"})
+_V9_FORBIDDEN_TABLES = frozenset(
+    {
+        "zotero_sync_profiles",
+        "zotero_profile_items",
+        "zotero_sync_run_details",
+        "zotero_child_items",
+        "zotero_tombstones",
+    }
+)
+_V9_FORBIDDEN_COLUMNS = {
+    "zotero_items": _columns("deleted_at deleted_version"),
+    "zotero_collections": _columns("deleted_at deleted_version"),
+    "zotero_attachments": _columns("deleted_at deleted_version"),
+}
 
 _REQUIRED_INDEXES: dict[str, tuple[str, tuple[str, ...]]] = {
     "idx_chunks_document_id": ("chunks", ("document_id",)),
@@ -277,7 +321,7 @@ _V8_REQUIRED_INDEXES = {
     "idx_chunks_text_sha256": ("chunks", ("text_sha256",)),
 }
 
-_CURRENT_REQUIRED_INDEXES = {
+_V9_REQUIRED_INDEXES = {
     **_V8_REQUIRED_INDEXES,
     "idx_registered_sources_active": (
         "registered_sources",
@@ -291,6 +335,26 @@ _CURRENT_REQUIRED_INDEXES = {
     "idx_jobs_active_dedupe": ("jobs", ("request_key",)),
     "idx_jobs_single_writer": ("jobs", ("writer_slot",)),
     "idx_jobs_source_created_at": ("jobs", ("source_id", "created_at")),
+}
+
+_CURRENT_REQUIRED_INDEXES = {
+    **_V9_REQUIRED_INDEXES,
+    "idx_zotero_sync_profiles_source": (
+        "zotero_sync_profiles",
+        ("source_id", "updated_at"),
+    ),
+    "idx_zotero_profile_items_item": (
+        "zotero_profile_items",
+        ("zotero_item_id", "profile_id"),
+    ),
+    "idx_zotero_child_items_parent": (
+        "zotero_child_items",
+        ("source_id", "parent_key", "deleted_at", "zotero_key"),
+    ),
+    "idx_zotero_tombstones_source": (
+        "zotero_tombstones",
+        ("source_id", "object_type", "library_version"),
+    ),
 }
 
 _CURRENT_REQUIRED_INDEX_SQL: dict[str, str] = {
@@ -339,10 +403,19 @@ _V7_REQUIRED_PRIMARY_KEYS = {
 
 _V8_REQUIRED_PRIMARY_KEYS = _V7_REQUIRED_PRIMARY_KEYS
 
-_CURRENT_REQUIRED_PRIMARY_KEYS = {
+_V9_REQUIRED_PRIMARY_KEYS = {
     **_V8_REQUIRED_PRIMARY_KEYS,
     "registered_sources": ("id",),
     "jobs": ("id",),
+}
+
+_CURRENT_REQUIRED_PRIMARY_KEYS = {
+    **_V9_REQUIRED_PRIMARY_KEYS,
+    "zotero_sync_profiles": ("id",),
+    "zotero_profile_items": ("profile_id", "zotero_item_id"),
+    "zotero_sync_run_details": ("run_id",),
+    "zotero_child_items": ("source_id", "zotero_key"),
+    "zotero_tombstones": ("source_id", "object_type", "zotero_key"),
 }
 
 _V6_REQUIRED_UNIQUE_KEYS: dict[str, tuple[tuple[str, ...], ...]] = {
@@ -363,10 +436,15 @@ _V7_REQUIRED_UNIQUE_KEYS = {
 
 _V8_REQUIRED_UNIQUE_KEYS = _V7_REQUIRED_UNIQUE_KEYS
 
-_CURRENT_REQUIRED_UNIQUE_KEYS = {
+_V9_REQUIRED_UNIQUE_KEYS = {
     **_V8_REQUIRED_UNIQUE_KEYS,
     "registered_sources": (("kind", "profile_signature"),),
     "jobs": (("queue_sequence",),),
+}
+
+_CURRENT_REQUIRED_UNIQUE_KEYS = {
+    **_V9_REQUIRED_UNIQUE_KEYS,
+    "zotero_sync_profiles": (("source_id", "profile_signature"),),
 }
 
 _REQUIRED_FOREIGN_KEYS: dict[
@@ -448,6 +526,31 @@ _REQUIRED_FOREIGN_KEYS: dict[
         {(("zotero_source_id",), "zotero_sources", ("id",), "RESTRICT")}
     ),
     "jobs": frozenset({(("source_id",), "registered_sources", ("id",), "RESTRICT")}),
+    "zotero_sync_profiles": frozenset(
+        {
+            (("id",), "registered_sources", ("id",), "RESTRICT"),
+            (("source_id",), "zotero_sources", ("id",), "RESTRICT"),
+            (("last_run_id",), "zotero_import_runs", ("id",), "RESTRICT"),
+        }
+    ),
+    "zotero_profile_items": frozenset(
+        {
+            (("profile_id",), "zotero_sync_profiles", ("id",), "CASCADE"),
+            (("zotero_item_id",), "zotero_items", ("id",), "CASCADE"),
+        }
+    ),
+    "zotero_sync_run_details": frozenset(
+        {
+            (("run_id",), "zotero_import_runs", ("id",), "CASCADE"),
+            (("profile_id",), "registered_sources", ("id",), "RESTRICT"),
+        }
+    ),
+    "zotero_child_items": frozenset(
+        {(("source_id",), "zotero_sources", ("id",), "RESTRICT")}
+    ),
+    "zotero_tombstones": frozenset(
+        {(("source_id",), "zotero_sources", ("id",), "RESTRICT")}
+    ),
 }
 
 _FTS_COLUMNS = ("document_id", "title", "relative_path", "text")
@@ -749,6 +852,167 @@ def _migrate_v9(connection: sqlite3.Connection) -> None:
     _backfill_registered_sources(connection)
 
 
+def _migrate_v10(connection: sqlite3.Connection) -> None:
+    """Add profile-scoped Zotero cursors, child cache, and deletion audit."""
+
+    for statement in (
+        "ALTER TABLE zotero_items ADD COLUMN deleted_at TEXT",
+        "ALTER TABLE zotero_items ADD COLUMN deleted_version INTEGER",
+        "ALTER TABLE zotero_collections ADD COLUMN deleted_at TEXT",
+        "ALTER TABLE zotero_collections ADD COLUMN deleted_version INTEGER",
+        "ALTER TABLE zotero_attachments ADD COLUMN deleted_at TEXT",
+        "ALTER TABLE zotero_attachments ADD COLUMN deleted_version INTEGER",
+    ):
+        connection.execute(statement)
+    connection.execute(
+        """
+        CREATE TABLE zotero_sync_profiles (
+          id TEXT PRIMARY KEY,
+          source_id TEXT NOT NULL,
+          profile_signature TEXT NOT NULL,
+          materialization_signature TEXT,
+          last_version INTEGER CHECK(last_version IS NULL OR last_version >= 0),
+          requires_full_sync INTEGER NOT NULL DEFAULT 1
+            CHECK(requires_full_sync IN (0, 1)),
+          revision INTEGER NOT NULL DEFAULT 0 CHECK(revision >= 0),
+          last_run_id TEXT,
+          last_sync_at TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          CHECK(
+            requires_full_sync = 1
+            OR (last_version IS NOT NULL AND materialization_signature IS NOT NULL)
+          ),
+          UNIQUE(source_id, profile_signature),
+          FOREIGN KEY(id)
+            REFERENCES registered_sources(id) ON DELETE RESTRICT,
+          FOREIGN KEY(source_id)
+            REFERENCES zotero_sources(id) ON DELETE RESTRICT,
+          FOREIGN KEY(last_run_id)
+            REFERENCES zotero_import_runs(id) ON DELETE RESTRICT
+        )
+        """
+    )
+    connection.execute(
+        """
+        CREATE TABLE zotero_profile_items (
+          profile_id TEXT NOT NULL,
+          zotero_item_id TEXT NOT NULL,
+          is_member INTEGER NOT NULL CHECK(is_member IN (0, 1)),
+          observed_version INTEGER NOT NULL CHECK(observed_version >= 0),
+          first_matched_at TEXT,
+          updated_at TEXT NOT NULL,
+          PRIMARY KEY(profile_id, zotero_item_id),
+          FOREIGN KEY(profile_id)
+            REFERENCES zotero_sync_profiles(id) ON DELETE CASCADE,
+          FOREIGN KEY(zotero_item_id)
+            REFERENCES zotero_items(id) ON DELETE CASCADE
+        )
+        """
+    )
+    connection.execute(
+        """
+        CREATE TABLE zotero_sync_run_details (
+          run_id TEXT PRIMARY KEY,
+          profile_id TEXT NOT NULL,
+          full_sync INTEGER NOT NULL CHECK(full_sync IN (0, 1)),
+          previous_version INTEGER CHECK(
+            previous_version IS NULL OR previous_version >= 0
+          ),
+          response_version INTEGER CHECK(
+            response_version IS NULL OR response_version >= 0
+          ),
+          committed_version INTEGER CHECK(
+            committed_version IS NULL OR committed_version >= 0
+          ),
+          changed_parents INTEGER NOT NULL DEFAULT 0 CHECK(changed_parents >= 0),
+          changed_children INTEGER NOT NULL DEFAULT 0 CHECK(changed_children >= 0),
+          deleted_records INTEGER NOT NULL DEFAULT 0 CHECK(deleted_records >= 0),
+          metadata_only_documents INTEGER NOT NULL DEFAULT 0
+            CHECK(metadata_only_documents >= 0),
+          pdf_failures INTEGER NOT NULL DEFAULT 0 CHECK(pdf_failures >= 0),
+          duration_ms INTEGER NOT NULL DEFAULT 0 CHECK(duration_ms >= 0),
+          FOREIGN KEY(run_id)
+            REFERENCES zotero_import_runs(id) ON DELETE CASCADE,
+          FOREIGN KEY(profile_id)
+            REFERENCES registered_sources(id) ON DELETE RESTRICT
+        )
+        """
+    )
+    connection.execute(
+        """
+        CREATE TABLE zotero_child_items (
+          source_id TEXT NOT NULL,
+          zotero_key TEXT NOT NULL,
+          parent_key TEXT NOT NULL,
+          item_type TEXT NOT NULL CHECK(
+            item_type IN ('attachment', 'note', 'annotation')
+          ),
+          version INTEGER,
+          data_json TEXT NOT NULL DEFAULT '{}',
+          deleted_at TEXT,
+          deleted_version INTEGER,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          PRIMARY KEY(source_id, zotero_key),
+          FOREIGN KEY(source_id)
+            REFERENCES zotero_sources(id) ON DELETE RESTRICT
+        )
+        """
+    )
+    connection.execute(
+        """
+        CREATE TABLE zotero_tombstones (
+          source_id TEXT NOT NULL,
+          object_type TEXT NOT NULL CHECK(
+            object_type IN ('item', 'collection', 'search', 'tag', 'setting')
+          ),
+          zotero_key TEXT NOT NULL,
+          library_version INTEGER NOT NULL,
+          deleted_at TEXT NOT NULL,
+          PRIMARY KEY(source_id, object_type, zotero_key),
+          FOREIGN KEY(source_id)
+            REFERENCES zotero_sources(id) ON DELETE RESTRICT
+        )
+        """
+    )
+    connection.execute(
+        """
+        CREATE INDEX idx_zotero_sync_profiles_source
+        ON zotero_sync_profiles(source_id, updated_at)
+        """
+    )
+    connection.execute(
+        """
+        CREATE INDEX idx_zotero_profile_items_item
+        ON zotero_profile_items(zotero_item_id, profile_id)
+        """
+    )
+    connection.execute(
+        """
+        CREATE INDEX idx_zotero_child_items_parent
+        ON zotero_child_items(source_id, parent_key, deleted_at, zotero_key)
+        """
+    )
+    connection.execute(
+        """
+        CREATE INDEX idx_zotero_tombstones_source
+        ON zotero_tombstones(source_id, object_type, library_version)
+        """
+    )
+    connection.execute(
+        """
+        INSERT INTO zotero_sync_profiles(
+          id, source_id, profile_signature, created_at, updated_at
+        )
+        SELECT id, zotero_source_id, profile_signature, created_at, updated_at
+        FROM registered_sources
+        WHERE kind = 'zotero_profile' AND zotero_source_id IS NOT NULL
+          AND removed_at IS NULL
+        """
+    )
+
+
 def _backfill_registered_sources(connection: sqlite3.Connection) -> None:
     corpus_rows = connection.execute(
         """
@@ -903,6 +1167,7 @@ MIGRATIONS: tuple[Migration, ...] | dict[int, Migration] = (
     Migration(7, "record_migrations_and_run_failures", _migrate_v7),
     Migration(8, "record_vector_source_provenance", _migrate_v8),
     Migration(9, "register_sources_and_durable_jobs", _migrate_v9),
+    Migration(10, "add_incremental_zotero_sync_state", _migrate_v10),
 )
 
 
@@ -1087,6 +1352,13 @@ def validate_schema_capability(
         required_indexes = _V8_REQUIRED_INDEXES
         forbidden_columns = {}
         forbidden_tables = _V8_FORBIDDEN_TABLES
+    elif version == 9:
+        required_columns = _V9_REQUIRED_COLUMNS
+        required_primary_keys = _V9_REQUIRED_PRIMARY_KEYS
+        required_unique_keys = _V9_REQUIRED_UNIQUE_KEYS
+        required_indexes = _V9_REQUIRED_INDEXES
+        forbidden_columns = _V9_FORBIDDEN_COLUMNS
+        forbidden_tables = _V9_FORBIDDEN_TABLES
     elif version == CURRENT_SCHEMA_VERSION:
         required_columns = _CURRENT_REQUIRED_COLUMNS
         required_primary_keys = _CURRENT_REQUIRED_PRIMARY_KEYS

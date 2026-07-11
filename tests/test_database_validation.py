@@ -751,6 +751,95 @@ def test_validation_reports_zotero_cursor_and_profile_inconsistency(
     assert "zotero_consistency_failed" in _issue_codes(report)
 
 
+def test_validation_reports_zotero_membership_and_deleted_child_drift(
+    tmp_path: Path,
+) -> None:
+    database_path = _initialize_project(tmp_path)
+    connection = _connection(database_path)
+    try:
+        connection.execute(
+            """
+            INSERT INTO zotero_sources(id, source_type, name, created_at, updated_at)
+            VALUES ('source-a', 'local_api', 'A', ?, ?),
+                   ('source-b', 'local_api', 'B', ?, ?)
+            """,
+            (NOW, NOW, NOW, NOW),
+        )
+        connection.execute(
+            """
+            INSERT INTO registered_sources(
+              id, kind, display_name, zotero_source_id, profile_signature,
+              config_json, created_at, updated_at
+            ) VALUES (
+              'profile', 'zotero_profile', 'Profile', 'source-a', ?, '{}', ?, ?
+            )
+            """,
+            ("a" * 64, NOW, NOW),
+        )
+        connection.execute(
+            """
+            INSERT INTO zotero_sync_profiles(
+              id, source_id, profile_signature, materialization_signature,
+              requires_full_sync, revision, created_at, updated_at
+            ) VALUES ('profile', 'source-a', ?, ?, 1, 0, ?, ?)
+            """,
+            ("a" * 64, "1" * 64, NOW, NOW),
+        )
+        connection.execute(
+            """
+            INSERT INTO zotero_items(
+              id, source_id, zotero_key, version, item_type, title,
+              reading_status, data_json, deleted_at, deleted_version,
+              created_at, updated_at
+            ) VALUES (
+              'item', 'source-b', 'ITEM0001', 2, 'journalArticle', 'Deleted',
+              'unknown', '{}', ?, 3, ?, ?
+            )
+            """,
+            (NOW, NOW, NOW),
+        )
+        connection.execute(
+            """
+            INSERT INTO zotero_child_items(
+              source_id, zotero_key, parent_key, item_type, version,
+              data_json, created_at, updated_at
+            ) VALUES ('source-b', 'NOTE0001', 'ITEM0001', 'note', 2, '{}', ?, ?)
+            """,
+            (NOW, NOW),
+        )
+        connection.execute(
+            """
+            INSERT INTO zotero_attachments(
+              id, source_id, parent_zotero_item_id, zotero_key, path_status,
+              version, data_json, created_at, updated_at
+            ) VALUES (
+              'attachment', 'source-b', 'item', 'ATTACH01', 'no_local_file',
+              2, '{}', ?, ?
+            )
+            """,
+            (NOW, NOW),
+        )
+        connection.execute(
+            """
+            INSERT INTO zotero_profile_items(
+              profile_id, zotero_item_id, is_member, observed_version,
+              first_matched_at, updated_at
+            ) VALUES ('profile', 'item', 1, 3, ?, ?)
+            """,
+            (NOW, NOW),
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+    state = validate_project(tmp_path, check_stale=False)["zotero_consistency"]
+
+    assert state["deleted_parent_active_children"] == 1
+    assert state["deleted_parent_active_attachments"] == 1
+    assert state["profile_item_source_mismatches"] == 1
+    assert state["inactive_profile_item_memberships"] == 1
+
+
 def test_validation_reports_registered_source_and_job_inconsistency(
     tmp_path: Path,
 ) -> None:
@@ -829,6 +918,7 @@ def test_validation_reports_registered_source_and_job_inconsistency(
     assert state == {
         "check_errors": 0,
         "invalid_source_config_json": 1,
+        "invalid_source_identities": 1,
         "invalid_job_params_json": 1,
         "invalid_job_result_json": 1,
         "jobs_missing_required_source": 1,

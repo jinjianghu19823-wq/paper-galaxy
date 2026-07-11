@@ -4,6 +4,7 @@ import os
 import shutil
 import sqlite3
 import threading
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
@@ -30,6 +31,7 @@ from paper_galaxy.services.sources import (
     list_sources,
     public_source_payload,
     register_corpus_source,
+    register_zotero_source,
     remove_source,
 )
 from paper_galaxy.storage.migrations import CURRENT_SCHEMA_VERSION
@@ -51,7 +53,32 @@ def _corpus(root: Path, name: str = "corpus") -> tuple[Path, Path]:
     return corpus, source
 
 
-def test_v9_bootstrap_contains_source_and_job_state_machine(tmp_path: Path) -> None:
+def _zotero_profile(project_dir: Path) -> str:
+    ensure_database_ready(project_dir)
+    connection = connect_read_write(project_dir)
+    try:
+        with connection:
+            connection.execute(
+                """
+                INSERT INTO zotero_sources(
+                  id, source_type, local_api_url, library_id, library_type,
+                  name, created_at, updated_at
+                ) VALUES (
+                  'zotero-source-jobs', 'local_api',
+                  'http://127.0.0.1:23119/api', '0', 'user',
+                  'Synthetic Zotero', '2026-01-01', '2026-01-01'
+                )
+                """
+            )
+    finally:
+        connection.close()
+    source, _ = register_zotero_source(project_dir, "zotero-source-jobs")
+    return source.id
+
+
+def test_current_bootstrap_contains_source_job_and_zotero_sync_state(
+    tmp_path: Path,
+) -> None:
     ensure_database_ready(tmp_path)
 
     with sqlite3.connect(resolve_database_path(tmp_path)) as connection:
@@ -70,9 +97,16 @@ def test_v9_bootstrap_contains_source_and_job_state_machine(tmp_path: Path) -> N
             str(row[1]) for row in connection.execute("PRAGMA table_info(jobs)")
         }
 
-    assert CURRENT_SCHEMA_VERSION == 9
-    assert version == 9
-    assert {"registered_sources", "jobs"} <= tables
+    assert CURRENT_SCHEMA_VERSION == 10
+    assert version == 10
+    assert {
+        "registered_sources",
+        "jobs",
+        "zotero_sync_profiles",
+        "zotero_sync_run_details",
+        "zotero_child_items",
+        "zotero_tombstones",
+    } <= tables
     assert {
         "kind",
         "status",
@@ -155,6 +189,51 @@ def test_active_job_deduplication_and_queued_cancel_are_persistent(
     assert cancelled.status == "cancelled"
     assert cancelled.cancel_requested is True
     assert get_job(tmp_path, first.id) == cancelled
+
+
+def test_zotero_job_full_sync_flag_is_bounded_and_persisted(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    source_id = _zotero_profile(project)
+
+    job, created = enqueue_job(
+        project,
+        kind="zotero_sync",
+        source_id=source_id,
+        params={"full": True, "rebuild_analysis": False},
+    )
+
+    assert created is True
+    assert job.params["full"] is True
+    with pytest.raises(ValueError, match="full must be a boolean"):
+        enqueue_job(
+            project,
+            kind="zotero_sync",
+            source_id=source_id,
+            params={"full": "yes"},
+        )
+
+    default_job, default_created = enqueue_job(
+        project,
+        kind="zotero_sync",
+        source_id=source_id,
+        params={"rebuild_analysis": False},
+    )
+    assert default_created is True
+    assert default_job.params["full"] is False
+    assert job_service._safe_result_summary(
+        "zotero_sync",
+        {
+            "run_id": "run-1",
+            "previous_cursor": None,
+            "new_cursor": 12,
+            "full_sync": False,
+        },
+    ) == {
+        "full_sync": False,
+        "new_cursor": 12,
+        "previous_cursor": None,
+        "run_id": "run-1",
+    }
 
 
 def test_job_manager_runs_index_jobs_in_queue_order_without_touching_sources(
@@ -470,6 +549,122 @@ def test_normal_worker_stop_marks_inflight_job_interrupted_not_cancelled(
     manager.stop(timeout=2.0)
 
     assert get_job(tmp_path, job.id).status == "interrupted"
+
+
+def test_manager_cancel_signal_interrupts_an_active_write_transaction(
+    tmp_path: Path,
+) -> None:
+    ensure_database_ready(tmp_path)
+    job, _ = enqueue_job(
+        tmp_path,
+        kind="backup_project",
+        source_id=None,
+        params={},
+    )
+    entered_publish = threading.Event()
+
+    def cancellable_atomic_publish(context: JobContext) -> dict[str, object]:
+        connection = connect_read_write(tmp_path)
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            connection.execute(
+                "INSERT INTO schema_meta(key, value) VALUES ('cancel-probe', '1')"
+            )
+            entered_publish.set()
+            poll = threading.Event()
+            while not context.cancel_requested():
+                poll.wait(0.01)
+            connection.rollback()
+            raise JobCancelled("cancelled during atomic publish")
+        finally:
+            connection.close()
+
+    manager = JobManager(
+        tmp_path,
+        handlers={"backup_project": cancellable_atomic_publish},
+    )
+    manager.start()
+    assert entered_publish.wait(2.0)
+    try:
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            cancellation = executor.submit(manager.request_cancel, job.id)
+            cancelled = cancellation.result(timeout=5)
+    finally:
+        manager.stop(timeout=2.0)
+
+    assert cancelled.cancel_requested is True
+    assert get_job(tmp_path, job.id).status == "cancelled"
+    connection = connect_read_write(tmp_path)
+    try:
+        probe = connection.execute(
+            "SELECT value FROM schema_meta WHERE key = 'cancel-probe'"
+        ).fetchone()
+    finally:
+        connection.close()
+    assert probe is None
+
+
+def test_manager_cancel_signal_fences_the_final_atomic_commit(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ensure_database_ready(tmp_path)
+    job, _ = enqueue_job(
+        tmp_path,
+        kind="backup_project",
+        source_id=None,
+        params={},
+    )
+    entered_publish = threading.Event()
+    durable_cancel_attempted = threading.Event()
+    original_cancel = job_service.request_job_cancel
+
+    def observed_cancel(*args: object, **kwargs: object) -> object:
+        durable_cancel_attempted.set()
+        return original_cancel(*args, **kwargs)
+
+    monkeypatch.setattr(job_service, "request_job_cancel", observed_cancel)
+
+    def fence_before_commit(context: JobContext) -> dict[str, object]:
+        connection = connect_read_write(tmp_path)
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            connection.execute(
+                "INSERT INTO schema_meta(key, value) VALUES ('final-fence-probe', '1')"
+            )
+            entered_publish.set()
+            assert durable_cancel_attempted.wait(2.0)
+            context.fence_owned_write_transaction(connection)
+            connection.commit()
+            return {"backup_name": "probe", "file_count": 1}
+        finally:
+            if connection.in_transaction:
+                connection.rollback()
+            connection.close()
+
+    manager = JobManager(
+        tmp_path,
+        handlers={"backup_project": fence_before_commit},
+    )
+    manager.start()
+    assert entered_publish.wait(2.0)
+    try:
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            cancellation = executor.submit(manager.request_cancel, job.id)
+            cancelled = cancellation.result(timeout=5)
+    finally:
+        manager.stop(timeout=2.0)
+
+    assert cancelled.cancel_requested is True
+    assert get_job(tmp_path, job.id).status == "cancelled"
+    connection = connect_read_write(tmp_path)
+    try:
+        probe = connection.execute(
+            "SELECT value FROM schema_meta WHERE key = 'final-fence-probe'"
+        ).fetchone()
+    finally:
+        connection.close()
+    assert probe is None
 
 
 def test_cancel_arriving_after_atomic_publication_records_completed(

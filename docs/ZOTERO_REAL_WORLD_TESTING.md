@@ -66,7 +66,7 @@ paper-galaxy zotero import --project-dir . --pdf-policy skip-missing --dry-run
 `--collection` accepts a collection key, exact name, or path. Name and path
 matching are case-insensitive, and ambiguous names fail before import.
 
-## Full Local Import
+## First Complete Local Import
 
 ```bash
 paper-galaxy zotero import --project-dir . --include-pdfs --include-notes --pdf-policy extract --build-reading-map --json-out zotero-import.json
@@ -94,15 +94,31 @@ Open the local app, switch the graph source to Zotero, and inspect:
 
 ## Incremental Runs
 
-The importer records Zotero versions from the local API. For large libraries,
-use incremental runs after the first import:
+The importer records a separate local cursor for each exact Zotero filter
+profile. After the first complete import, repeat the same profile command
+without `--since-version`; Paper Galaxy resumes from that profile's saved
+cursor automatically:
 
 ```bash
-paper-galaxy zotero import --project-dir . --since-version VERSION --json-out zotero-import.json
+paper-galaxy zotero import --project-dir . --include-pdfs --include-notes --pdf-policy extract --build-reading-map --json-out zotero-import.json
 ```
 
-The summary includes fetched, selected, filtered, skipped, unchanged, warning,
-PDF, attachment, and annotation counts.
+`--since-version` is not the normal incremental workflow. It is an expert
+diagnostic/recovery override and is accepted only when it equals this exact
+profile's already saved cursor; never copy a cursor from another collection,
+tag, or status profile. Use `--full` to reconcile the complete profile from
+version 0. To deliberately overwrite an otherwise identical local
+materialization, use `--full --force`; `--force` alone applies only to records
+present in the changed feed and does not turn an incremental run into a full
+one. A stale full response fails before a new materialization generation is
+prepared, leaving the published documents, chunks, vectors, and memberships
+unchanged. Attachment/PDF/text/chunk preparation is performed outside the write
+transaction; generation publication is atomic, so cancellation, failure, or a
+terminated process also retains the prior generation.
+
+The summary includes the previous and new cursor, changed parent and child
+counts, deleted-record count, duration, and the existing fetched, selected,
+filtered, skipped, unchanged, warning, PDF, attachment, and annotation counts.
 
 ## Status And PDF Policies
 
@@ -129,7 +145,8 @@ PDF policies:
   copied.
 - Missing PDFs do not necessarily block import when `--include-metadata-only`
   is enabled or `--pdf-policy metadata` is used.
-- Always run a small dry-run before a full import on a large library.
+- Always run a small dry-run before the first complete import of a large
+  library.
 
 ## Manual Verification Checklist
 
@@ -140,7 +157,7 @@ PDF policies:
 - `zotero items --collection <name>`: prints only items from that collection.
 - Dry-run import: JSON has `"dry_run": true`; if the project database did not
   already exist, no database is created.
-- Full import: imported/updated/unchanged counts are shown, warnings are
+- First complete import: imported/updated/unchanged counts are shown, warnings are
   summarized, and `map_run_id` is present when enough documents can be mapped.
 - `zotero validate`: reports imported counts and dangling-link counts.
 - Browser app: choose Zotero source, see points, click a point, and inspect

@@ -8,7 +8,7 @@ import os
 import re
 import sqlite3
 import threading
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath, PureWindowsPath
@@ -64,7 +64,22 @@ _RESULT_FIELDS: dict[str, frozenset[str]] = {
         }
     ),
     "zotero_sync": frozenset(
-        {"run_id", "items_seen", "items_imported", "items_updated", "items_unchanged"}
+        {
+            "run_id",
+            "items_seen",
+            "items_imported",
+            "items_updated",
+            "items_unchanged",
+            "previous_cursor",
+            "new_cursor",
+            "changed_parents",
+            "changed_children",
+            "deleted_records",
+            "metadata_only_documents",
+            "pdf_failures",
+            "duration_ms",
+            "full_sync",
+        }
     ),
     "rebuild_analysis": frozenset({"run_id", "document_count", "cluster_count"}),
     "backup_project": frozenset({"backup_name", "file_count", "contains_database"}),
@@ -119,6 +134,7 @@ class JobContext:
     job: JobRecord
     owner_instance_id: str
     stop_requested: Callable[[], bool]
+    cancel_requested_signal: Callable[[], bool] | None = None
 
     def cancel_requested(self) -> bool:
         try:
@@ -133,6 +149,8 @@ class JobContext:
         self.raise_if_interrupted()
 
     def raise_if_interrupted(self) -> None:
+        if self.cancel_requested_signal is not None and self.cancel_requested_signal():
+            raise JobCancelled("Cancelled at a safe in-process batch boundary.")
         current = self._current_owned_job()
         if current.cancel_requested or current.status == "cancelling":
             raise JobCancelled("Cancelled at a safe batch boundary.")
@@ -141,6 +159,28 @@ class JobContext:
         """Fence commits while allowing explicit cancel after the current batch."""
 
         self._current_owned_job()
+
+    def fence_owned_write_transaction(self, connection: sqlite3.Connection) -> None:
+        """Validate job ownership using the same transaction publishing results."""
+
+        if self.cancel_requested_signal is not None and self.cancel_requested_signal():
+            raise JobCancelled("Cancelled before atomic publication committed.")
+        if self.stop_requested():
+            raise WorkerStopping("Worker stopped at a safe batch boundary.")
+        row = connection.execute(
+            """
+            SELECT status, owner_instance_id
+            FROM jobs
+            WHERE id = ?
+            """,
+            (self.job.id,),
+        ).fetchone()
+        if (
+            row is None
+            or str(row["owner_instance_id"]) != self.owner_instance_id
+            or str(row["status"]) not in {"running", "cancelling"}
+        ):
+            raise JobOwnershipLost("Job ownership changed before atomic publication.")
 
     def _current_owned_job(self) -> JobRecord:
         if self.stop_requested():
@@ -493,6 +533,8 @@ class JobManager:
         self._thread: threading.Thread | None = None
         self._worker_lease: JobWorkerLease | None = None
         self._lease_lock = threading.Lock()
+        self._cancel_lock = threading.Lock()
+        self._active_cancel_signals: dict[str, threading.Event] = {}
 
     def start(self) -> None:
         if self._thread is not None and self._thread.is_alive():
@@ -526,6 +568,16 @@ class JobManager:
     def notify(self) -> None:
         self._wake.set()
 
+    def request_cancel(self, job_id: str) -> JobRecord:
+        """Signal the active worker before durably recording cancellation."""
+
+        with self._cancel_lock:
+            signal = self._active_cancel_signals.get(job_id)
+        if signal is not None:
+            signal.set()
+        self._wake.set()
+        return request_job_cancel(self.project_dir, job_id)
+
     def stop(self, *, timeout: float = 10.0) -> None:
         self._stop.set()
         self._wake.set()
@@ -539,50 +591,60 @@ class JobManager:
         job = _claim_next_job(self.project_dir, self.owner_instance_id)
         if job is None:
             return None
-        context = JobContext(
-            project_dir=self.project_dir,
-            job=job,
-            owner_instance_id=self.owner_instance_id,
-            stop_requested=self._worker_stopping,
-        )
-        handler = self._handlers.get(job.kind)
-        if handler is None:
-            _fail_job(
-                self.project_dir,
-                job=job,
-                owner_instance_id=self.owner_instance_id,
-                error=RuntimeError("No local handler is registered."),
-            )
-            return job.id
+        cancel_signal = threading.Event()
+        with self._cancel_lock:
+            self._active_cancel_signals[job.id] = cancel_signal
         try:
-            context.raise_if_interrupted()
-            result = handler(context)
-            _complete_job(
-                self.project_dir,
+            context = JobContext(
+                project_dir=self.project_dir,
                 job=job,
                 owner_instance_id=self.owner_instance_id,
-                result=result,
+                stop_requested=self._worker_stopping,
+                cancel_requested_signal=cancel_signal.is_set,
             )
-        except JobCancelled:
-            _finish_cancelled_job(
-                self.project_dir,
-                job=job,
-                owner_instance_id=self.owner_instance_id,
-            )
-        except (KeyboardInterrupt, WorkerStopping):
-            _interrupt_job(
-                self.project_dir,
-                job=job,
-                owner_instance_id=self.owner_instance_id,
-            )
-        except BaseException as exc:
-            _fail_job(
-                self.project_dir,
-                job=job,
-                owner_instance_id=self.owner_instance_id,
-                error=exc,
-            )
-        return job.id
+            handler = self._handlers.get(job.kind)
+            if handler is None:
+                _fail_job(
+                    self.project_dir,
+                    job=job,
+                    owner_instance_id=self.owner_instance_id,
+                    error=RuntimeError("No local handler is registered."),
+                )
+                return job.id
+            try:
+                context.raise_if_interrupted()
+                result = handler(context)
+                _complete_job(
+                    self.project_dir,
+                    job=job,
+                    owner_instance_id=self.owner_instance_id,
+                    result=result,
+                )
+            except JobCancelled:
+                _finish_cancelled_job(
+                    self.project_dir,
+                    job=job,
+                    owner_instance_id=self.owner_instance_id,
+                )
+            except (KeyboardInterrupt, WorkerStopping):
+                _interrupt_job(
+                    self.project_dir,
+                    job=job,
+                    owner_instance_id=self.owner_instance_id,
+                )
+            except BaseException as exc:
+                _fail_job(
+                    self.project_dir,
+                    job=job,
+                    owner_instance_id=self.owner_instance_id,
+                    error=exc,
+                )
+            return job.id
+        finally:
+            with self._cancel_lock:
+                current = self._active_cancel_signals.get(job.id)
+                if current is cancel_signal:
+                    del self._active_cancel_signals[job.id]
 
     def _run(self) -> None:
         claimed_job_may_need_recovery = False
@@ -993,12 +1055,56 @@ def _run_zotero_job(context: JobContext) -> dict[str, object]:
     from paper_galaxy.zotero.importers import (
         ZoteroImportCancelled,
         import_from_zotero,
+        load_zotero_materialization_config,
+    )
+    from paper_galaxy.zotero.reading import (
+        DEFAULT_READ_TAGS,
+        DEFAULT_READING_TAGS,
+        DEFAULT_TO_READ_TAGS,
     )
 
     source = _required_source(context, expected_kind=SOURCE_KIND_ZOTERO)
     filters = source.config.get("filters", {})
     profile_filters = filters if isinstance(filters, dict) else {}
     collections = _string_tuple(profile_filters.get("collections"))
+    saved_materialization = load_zotero_materialization_config(
+        context.project_dir,
+        profile_id=source.id,
+    )
+
+    def materialization_value(name: str, default: object) -> object:
+        if name in context.job.params:
+            return context.job.params[name]
+        return saved_materialization.get(name, default)
+
+    def materialization_int(name: str, default: int) -> int:
+        value = materialization_value(name, default)
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise ValueError(f"Stored Zotero materialization {name} is invalid.")
+        return value
+
+    def materialization_bool(name: str, default: bool) -> bool:
+        value = materialization_value(name, default)
+        if not isinstance(value, bool):
+            raise ValueError(f"Stored Zotero materialization {name} is invalid.")
+        return value
+
+    def materialization_tags(
+        name: str,
+        default: tuple[str, ...],
+    ) -> tuple[str, ...]:
+        value = materialization_value(name, default)
+        selected = _string_tuple(value)
+        if not selected or isinstance(value, (str, bytes)):
+            raise ValueError(f"Stored Zotero materialization {name} is invalid.")
+        return selected
+
+    min_chars = materialization_int("min_chars", 40)
+    chunk_size = materialization_int("chunk_size", 2000)
+    chunk_overlap = materialization_int("chunk_overlap", 200)
+    if min_chars < 1 or chunk_size < 1 or not 0 <= chunk_overlap < chunk_size:
+        raise ValueError("Stored Zotero materialization chunk settings are invalid.")
+
     context.raise_if_interrupted()
     try:
         summary = import_from_zotero(
@@ -1011,19 +1117,27 @@ def _run_zotero_job(context: JobContext) -> dict[str, object]:
                 if source.config.get("data_dir")
                 else None
             ),
-            include_pdfs=bool(context.job.params.get("include_pdfs", True)),
-            include_notes=bool(context.job.params.get("include_notes", True)),
-            include_attachments=bool(
-                context.job.params.get("include_attachments", True)
-            ),
+            include_pdfs=materialization_bool("include_pdfs", True),
+            include_notes=materialization_bool("include_notes", True),
+            include_attachments=materialization_bool("include_attachments", True),
+            include_metadata_only=materialization_bool("include_metadata_only", True),
             collection=collections[0] if collections else None,
             tags=_string_tuple(profile_filters.get("tags")),
             item_types=_string_tuple(profile_filters.get("item_types")),
             include_status=str(profile_filters.get("include_status", "all")),
             pdf_policy=str(profile_filters.get("pdf_policy", "extract")),
+            read_tags=materialization_tags("read_tags", DEFAULT_READ_TAGS),
+            reading_tags=materialization_tags("reading_tags", DEFAULT_READING_TAGS),
+            to_read_tags=materialization_tags("to_read_tags", DEFAULT_TO_READ_TAGS),
+            min_chars=min_chars,
+            chunk_size=chunk_size,
+            chunk_overlap=chunk_overlap,
+            full=bool(context.job.params.get("full", False)),
+            registered_profile_id=source.id,
             build_reading_map=False,
             cancel_requested=context.cancel_requested,
             commit_guard=context.raise_if_worker_stopped_or_ownership_lost,
+            final_commit_guard=context.fence_owned_write_transaction,
             progress_callback=context.report_progress,
         )
     except ZoteroImportCancelled as exc:
@@ -1035,6 +1149,15 @@ def _run_zotero_job(context: JobContext) -> dict[str, object]:
         "items_imported": summary.items_imported,
         "items_updated": summary.items_updated,
         "items_unchanged": summary.items_unchanged,
+        "previous_cursor": summary.last_version_before,
+        "new_cursor": summary.last_version_after,
+        "changed_parents": summary.changed_parents,
+        "changed_children": summary.changed_children,
+        "deleted_records": summary.deleted_records,
+        "metadata_only_documents": summary.metadata_only_documents,
+        "pdf_failures": summary.pdfs_extraction_failed,
+        "duration_ms": max(0, int(summary.duration_seconds * 1000)),
+        "full_sync": summary.full_sync,
     }
 
 
@@ -1163,6 +1286,14 @@ def _normalize_params(kind: str, params: Mapping[str, object]) -> dict[str, obje
             "include_pdfs",
             "include_notes",
             "include_attachments",
+            "include_metadata_only",
+            "read_tags",
+            "reading_tags",
+            "to_read_tags",
+            "min_chars",
+            "chunk_size",
+            "chunk_overlap",
+            "full",
             *_ANALYSIS_FOLLOWUP_FIELDS,
         ),
         "rebuild_analysis": ("name", "seed", "neighbors", "limit"),
@@ -1195,11 +1326,57 @@ def _normalize_params(kind: str, params: Mapping[str, object]) -> dict[str, obje
             raise ValueError("chunk_overlap must be smaller than chunk_size.")
         _normalize_analysis_followup(normalized)
     elif kind == "zotero_sync":
-        for name in ("include_pdfs", "include_notes", "include_attachments"):
-            value = normalized.get(name, True)
+        for name in (
+            "include_pdfs",
+            "include_notes",
+            "include_attachments",
+            "include_metadata_only",
+        ):
+            if name not in normalized:
+                continue
+            value = normalized[name]
             if not isinstance(value, bool):
                 raise ValueError(f"{name} must be a boolean.")
-            normalized[name] = value
+        for name in ("read_tags", "reading_tags", "to_read_tags"):
+            if name not in normalized:
+                continue
+            raw = normalized[name]
+            if (
+                isinstance(raw, (str, bytes))
+                or not isinstance(raw, Sequence)
+                or len(raw) > 100
+                or any(
+                    not isinstance(value, str) or not value.strip() or len(value) > 200
+                    for value in raw
+                )
+            ):
+                raise ValueError(f"{name} must be a bounded list of strings.")
+            normalized[name] = list(raw)
+        for name, minimum, maximum in (
+            ("min_chars", 1, 1_000_000),
+            ("chunk_size", 1, 1_000_000),
+            ("chunk_overlap", 0, 999_999),
+        ):
+            if name not in normalized:
+                continue
+            value = normalized[name]
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, int)
+                or not minimum <= value <= maximum
+            ):
+                raise ValueError(f"{name} must be between {minimum} and {maximum}.")
+        if (
+            "chunk_size" in normalized
+            and "chunk_overlap" in normalized
+            and cast(int, normalized["chunk_overlap"])
+            >= cast(int, normalized["chunk_size"])
+        ):
+            raise ValueError("chunk_overlap must be smaller than chunk_size.")
+        full = normalized.get("full", False)
+        if not isinstance(full, bool):
+            raise ValueError("full must be a boolean.")
+        normalized["full"] = full
         _normalize_analysis_followup(normalized)
     elif kind == "rebuild_analysis":
         name = " ".join(str(normalized.get("name", "Automatic local analysis")).split())
@@ -1364,7 +1541,7 @@ def _bounded_int(
 
 
 def _string_tuple(value: object) -> tuple[str, ...]:
-    if not isinstance(value, list):
+    if isinstance(value, (str, bytes)) or not isinstance(value, Sequence):
         return ()
     return tuple(item for item in value if isinstance(item, str))
 
@@ -1454,7 +1631,7 @@ def _safe_result_summary(
                 and not PureWindowsPath(selected).is_absolute()
             ):
                 result[key] = selected
-        elif item is None and key == "run_id":
+        elif item is None and key in {"run_id", "previous_cursor", "new_cursor"}:
             result[key] = None
     return result
 

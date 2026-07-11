@@ -143,6 +143,13 @@ paper-galaxy zotero import \
 - `--include-status read|reading|to_read|unknown|all`：按阅读状态标签筛选。
 - `--pdf-policy extract`：能读取本地 PDF 时抽取正文文本。
 - `--pdf-policy metadata`：只导入元数据，速度更快。
+- 默认导入会从当前精确 filter profile 自己保存的 cursor 增量继续。只有明确需要完整
+  reconciliation 时才使用 `--full`；失败、取消、version drift 或受 `--limit` 截断的
+  导入都不会推进 cursor。
+- 会改变本地正文的选项共同形成 source-global materialization fingerprint，包括
+  attachment/PDF/note/metadata 是否纳入、PDF policy、阅读状态标签集合、最小文本长度和
+  chunk size/overlap。指纹变化时必须显式使用 `--full`；默认后台 job 会继承最近一次
+  兼容的 completed run 配置，不会悄悄退回默认值。
 - `--pdf-policy skip-missing`：跳过预期有 PDF 但无法读取本地 PDF 的条目。
 
 如果 PDF 缺失或暂不支持，Zotero 条目仍然可以作为 metadata-only 文档进入图谱，包含标题、作者、摘要、标签、collection、笔记和 `zotero://items/<key>` 链接。导入后的 Zotero 元数据和抽取文本会存放在 `.paper-galaxy/`，不要把这个目录提交到 git。
@@ -244,6 +251,14 @@ paper-galaxy serve --project-dir .
 导入会创建稳定的 `doc_zotero_*` 文档 ID、Zotero 元数据表、可读本地 PDF 的文本块，以及名为 `Zotero Reading Graph` 的保存地图运行。如果 PDF 缺失、不支持或位于 Zotero data dir 之外，条目仍可作为 metadata-only 文档导入，包含题名、摘要、作者、标签、集合、笔记和 `zotero://items/<key>` 引用。
 
 真实库过滤保持显式和保守。`--collection` 可以使用 Zotero collection key、精确名称或路径；名称大小写不敏感，但歧义匹配会报清楚的错误。阅读状态过滤支持 `all`、`read`、`reading`、`to_read` 和 `unknown`；`unclassified` 仍作为 `unknown` 的旧别名接受。`--pdf-policy metadata` 可用于快速 metadata-only 导入，`--pdf-policy skip-missing` 会跳过本应有本地 PDF 但无法读取的条目。
+
+profile membership 与共享 item 数据分开按版本保存。条目变化时，最新 metadata 会按每个
+compatible active profile 的持久 filter 重新判定，但不会推进其他 profile 的 cursor；只要
+仍有 profile 包含它，文档就继续可见，否则转为 non-active。移除已登记 source 也使用同一
+个并集规则。经过确认的 parent 删除会同时停用缓存 child、attachment 和 profile
+membership；collection 重命名或删除时也会重建受影响的 parent document。项目一旦建立
+locator identity，换用其他 local API origin 或 Zotero data directory 会在远端访问和项目
+写入前被拒绝。
 
 隐私边界：Zotero 连接器只使用本地 API，不写回 Zotero，不上传数据，也不会默认复制或移动 PDF。导入后的元数据和本地 PDF 抽取文本会进入 `.paper-galaxy/` 下的 Paper Galaxy 数据库，因此不要把该目录提交到 git。
 

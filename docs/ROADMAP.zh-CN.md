@@ -77,13 +77,13 @@ Paper Galaxy 应该增量成长。每个阶段都必须让仓库保持可运行�
 目标：把本地 package 发展成可信的研究工作站，并让后续洞见始终可点回证据、明确
 限定于个人文库。
 
-已交付 checkpoint：schema v9 source registry、持久单 writer jobs、安全且不覆盖的项目
-初始化、`paper-galaxy launch`、loopback 空闲端口选择、source/job 网页控制、worker
-ownership fencing、有界查询和本地浏览器写保护。Corpus 与 Zotero root 在每次使用前
-重新校验，不会被修改，也不允许包含项目状态。
+已交付 checkpoint：schema v9 source registry、持久单 writer jobs、安全项目初始化与
+`paper-galaxy launch`；schema v10 进一步交付按 profile 隔离的 Zotero cursor、统一
+version fence 的 `/items` + `/deleted` 增量同步、无 N+1 的 child-only refresh 和删除
+tombstone。Corpus 与 Zotero root 在每次使用前重新校验，不会被修改，也不允许包含项目状态。
 
-剩余 checkpoint：真正的只读增量 Zotero 同步、结构化 evidence locator、本地引用解析、
-不可变 analysis snapshot、证据优先洞见与阅读计划、可扩展工作区 UI、E2E、benchmark
+剩余 checkpoint：结构化 evidence locator、本地引用解析、不可变 analysis snapshot、
+证据优先洞见与阅读计划、可扩展工作区 UI、E2E、benchmark
 工具和扩展后的合成公开 demo。
 
 本里程碑仍不包括云账号/同步、遥测、远程 LLM 或 embedding、默认模型下载、Zotero
@@ -132,4 +132,5 @@ ownership fencing、有界查询和本地浏览器写保护。Corpus 与 Zotero 
 
 ## Phase 8+：未来工作
 
-未来阶段可以在明确要求时改进抽取、地图稳定性、导入/导出格式或桌面打包。Phase 8+ 仍在当前实现边界之外。
+后续阶段可以在明确要求时继续改进抽取、地图稳定性、跨平台安装和可选本地模型，但
+云账号、遥测、远程模型和 Zotero write-back 仍不在当前边界内。

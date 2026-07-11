@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any, Protocol
+
+from paper_galaxy.zotero.models import ZoteroDeletedBatch, ZoteroSyncBatch
 
 
 class ZoteroClient(Protocol):
@@ -46,3 +49,35 @@ class ZoteroClient(Protocol):
         since: int | None = None,
     ) -> list[dict[str, Any]]:
         """Return items in one Zotero collection."""
+
+    def sync_collections(
+        self,
+        *,
+        cancel_requested: Callable[[], bool] | None = None,
+    ) -> ZoteroSyncBatch:
+        """Return all collections plus a stable library version."""
+
+    def sync_items(
+        self,
+        *,
+        since: int,
+        limit: int | None = None,
+        cancel_requested: Callable[[], bool] | None = None,
+    ) -> ZoteroSyncBatch:
+        """Return changed parent and child items plus a stable library version."""
+
+    def items_by_keys(
+        self,
+        keys: tuple[str, ...],
+        *,
+        cancel_requested: Callable[[], bool] | None = None,
+    ) -> ZoteroSyncBatch:
+        """Hydrate explicit item keys in bounded batches."""
+
+    def deleted_since(
+        self,
+        *,
+        since: int,
+        cancel_requested: Callable[[], bool] | None = None,
+    ) -> ZoteroDeletedBatch:
+        """Return deletion keys plus the same stable library version."""

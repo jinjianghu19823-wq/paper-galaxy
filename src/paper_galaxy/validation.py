@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import math
+import os
 import sqlite3
 import struct
 from pathlib import Path
@@ -26,7 +27,10 @@ from paper_galaxy.storage.migrations import (
     SCHEMA_VERSION,
     validate_schema_capability,
 )
-from paper_galaxy.storage.provenance import document_content_revision_sha256
+from paper_galaxy.storage.provenance import (
+    document_content_revision_sha256,
+    registered_source_identity,
+)
 from paper_galaxy.storage.repository import Repository
 from paper_galaxy.storage.sqlite import (
     connect_diagnostic_read_only,
@@ -72,6 +76,11 @@ REQUIRED_TABLES = {
     "zotero_item_tags",
     "zotero_attachments",
     "zotero_document_links",
+    "zotero_sync_profiles",
+    "zotero_profile_items",
+    "zotero_sync_run_details",
+    "zotero_child_items",
+    "zotero_tombstones",
     "registered_sources",
     "jobs",
     "documents_fts",
@@ -152,6 +161,53 @@ REQUIRED_COLUMNS: dict[str, set[str]] = {
         "reading_status",
         "data_json",
         "child_manifest_json",
+        "deleted_at",
+        "deleted_version",
+    },
+    "zotero_sync_profiles": {
+        "id",
+        "source_id",
+        "profile_signature",
+        "materialization_signature",
+        "last_version",
+        "requires_full_sync",
+        "revision",
+        "last_run_id",
+    },
+    "zotero_profile_items": {
+        "profile_id",
+        "zotero_item_id",
+        "is_member",
+        "observed_version",
+        "first_matched_at",
+        "updated_at",
+    },
+    "zotero_sync_run_details": {
+        "run_id",
+        "profile_id",
+        "previous_version",
+        "response_version",
+        "committed_version",
+        "changed_parents",
+        "changed_children",
+        "deleted_records",
+    },
+    "zotero_child_items": {
+        "source_id",
+        "zotero_key",
+        "parent_key",
+        "item_type",
+        "version",
+        "data_json",
+        "deleted_at",
+        "deleted_version",
+    },
+    "zotero_tombstones": {
+        "source_id",
+        "object_type",
+        "zotero_key",
+        "library_version",
+        "deleted_at",
     },
     "registered_sources": {
         "id",
@@ -1012,6 +1068,16 @@ def _empty_zotero_consistency() -> dict[str, int]:
         "profile_mismatches": 0,
         "invalid_child_manifests": 0,
         "unknown_child_manifests": 0,
+        "invalid_profile_cursors": 0,
+        "profile_state_mismatches": 0,
+        "invalid_child_payloads": 0,
+        "deleted_parent_state_mismatches": 0,
+        "deleted_parent_active_children": 0,
+        "deleted_parent_active_attachments": 0,
+        "profile_item_source_mismatches": 0,
+        "inactive_profile_item_memberships": 0,
+        "inconsistent_source_materializations": 0,
+        "completed_profiles_missing_materialization": 0,
     }
 
 
@@ -1027,6 +1093,52 @@ def _zotero_consistency(connection: sqlite3.Connection) -> dict[str, int]:
             """
         ).fetchone()
         status["invalid_cursors"] = int(row[0]) if row else 0
+        row = connection.execute(
+            """
+            SELECT COUNT(*)
+            FROM zotero_sync_profiles
+            WHERE (last_version IS NOT NULL AND (
+                     typeof(last_version) != 'integer' OR last_version < 0
+                  ))
+               OR typeof(revision) != 'integer'
+               OR revision < 0
+               OR (requires_full_sync = 0 AND last_version IS NULL)
+            """
+        ).fetchone()
+        status["invalid_profile_cursors"] = int(row[0]) if row else 0
+        row = connection.execute(
+            """
+            SELECT COUNT(*)
+            FROM zotero_sync_profiles zsp
+            LEFT JOIN registered_sources rs ON rs.id = zsp.id
+            WHERE rs.id IS NULL
+               OR rs.kind != 'zotero_profile'
+               OR rs.zotero_source_id IS NOT zsp.source_id
+               OR rs.profile_signature IS NOT zsp.profile_signature
+            """
+        ).fetchone()
+        status["profile_state_mismatches"] = int(row[0]) if row else 0
+        row = connection.execute(
+            """
+            SELECT COUNT(*)
+            FROM (
+              SELECT source_id
+              FROM zotero_sync_profiles
+              WHERE materialization_signature IS NOT NULL
+              GROUP BY source_id
+              HAVING COUNT(DISTINCT materialization_signature) > 1
+            )
+            """
+        ).fetchone()
+        status["inconsistent_source_materializations"] = int(row[0]) if row else 0
+        row = connection.execute(
+            """
+            SELECT COUNT(*)
+            FROM zotero_sync_profiles
+            WHERE requires_full_sync = 0 AND materialization_signature IS NULL
+            """
+        ).fetchone()
+        status["completed_profiles_missing_materialization"] = int(row[0]) if row else 0
         row = connection.execute(
             """
             SELECT SUM(invalid_count)
@@ -1107,6 +1219,90 @@ def _zotero_consistency(connection: sqlite3.Connection) -> dict[str, int]:
                 invalid_manifests += 1
         status["invalid_child_manifests"] = invalid_manifests
         status["unknown_child_manifests"] = unknown_manifests
+        child_cursor = connection.execute(
+            "SELECT data_json FROM zotero_child_items ORDER BY source_id, zotero_key"
+        )
+        invalid_child_payloads = 0
+        for rows in iter(lambda: child_cursor.fetchmany(256), []):
+            for row in rows:
+                try:
+                    load_json_object(row["data_json"])
+                except StoredJSONError:
+                    invalid_child_payloads += 1
+        status["invalid_child_payloads"] = invalid_child_payloads
+        row = connection.execute(
+            """
+            SELECT COUNT(*)
+            FROM zotero_items zi
+            LEFT JOIN zotero_tombstones zt
+              ON zt.source_id = zi.source_id
+             AND zt.object_type = 'item'
+             AND zt.zotero_key = zi.zotero_key
+            LEFT JOIN zotero_document_links zdl ON zdl.zotero_item_id = zi.id
+            LEFT JOIN documents d ON d.id = zdl.document_id
+            WHERE (zi.deleted_at IS NOT NULL AND zt.zotero_key IS NULL)
+               OR (zi.deleted_at IS NULL AND zt.zotero_key IS NOT NULL)
+               OR (zi.deleted_at IS NOT NULL AND d.status = 'active')
+            """
+        ).fetchone()
+        status["deleted_parent_state_mismatches"] = int(row[0]) if row else 0
+        row = connection.execute(
+            """
+            SELECT COUNT(*)
+            FROM zotero_child_items child
+            JOIN zotero_items parent
+              ON parent.source_id = child.source_id
+             AND parent.zotero_key = child.parent_key
+            WHERE parent.deleted_at IS NOT NULL
+              AND child.deleted_at IS NULL
+            """
+        ).fetchone()
+        status["deleted_parent_active_children"] = int(row[0]) if row else 0
+        row = connection.execute(
+            """
+            SELECT COUNT(*)
+            FROM zotero_attachments attachment
+            JOIN zotero_items parent ON parent.id = attachment.parent_zotero_item_id
+            WHERE parent.deleted_at IS NOT NULL
+              AND attachment.deleted_at IS NULL
+            """
+        ).fetchone()
+        status["deleted_parent_active_attachments"] = int(row[0]) if row else 0
+        row = connection.execute(
+            """
+            SELECT COUNT(*)
+            FROM zotero_profile_items membership
+            LEFT JOIN zotero_sync_profiles profile
+              ON profile.id = membership.profile_id
+            LEFT JOIN zotero_items item
+              ON item.id = membership.zotero_item_id
+            LEFT JOIN registered_sources source
+              ON source.id = membership.profile_id
+            WHERE profile.id IS NULL
+               OR item.id IS NULL
+               OR source.id IS NULL
+               OR source.kind != 'zotero_profile'
+               OR source.zotero_source_id IS NOT profile.source_id
+               OR profile.source_id IS NOT item.source_id
+            """
+        ).fetchone()
+        status["profile_item_source_mismatches"] = int(row[0]) if row else 0
+        row = connection.execute(
+            """
+            SELECT COUNT(*)
+            FROM zotero_profile_items membership
+            JOIN zotero_sync_profiles profile ON profile.id = membership.profile_id
+            JOIN zotero_items item ON item.id = membership.zotero_item_id
+            JOIN registered_sources source ON source.id = membership.profile_id
+            WHERE membership.is_member = 1
+              AND (
+                   item.deleted_at IS NOT NULL
+                OR source.removed_at IS NOT NULL
+                OR profile.materialization_signature IS NULL
+              )
+            """
+        ).fetchone()
+        status["inactive_profile_item_memberships"] = int(row[0]) if row else 0
     except sqlite3.Error:
         status["check_errors"] += 1
         return status
@@ -1141,6 +1337,7 @@ def _empty_source_job_consistency() -> dict[str, int]:
     return {
         "check_errors": 0,
         "invalid_source_config_json": 0,
+        "invalid_source_identities": 0,
         "invalid_job_params_json": 0,
         "invalid_job_result_json": 0,
         "jobs_missing_required_source": 0,
@@ -1155,14 +1352,36 @@ def _source_job_consistency(connection: sqlite3.Connection) -> dict[str, int]:
     status = _empty_source_job_consistency()
     try:
         source_cursor = connection.execute(
-            "SELECT config_json FROM registered_sources ORDER BY id"
+            """
+            SELECT id, kind, root_path, zotero_source_id, profile_signature,
+                   config_json
+            FROM registered_sources
+            ORDER BY id
+            """
         )
         for rows in iter(lambda: source_cursor.fetchmany(256), []):
             for row in rows:
                 try:
-                    load_json_object(row["config_json"])
+                    config = load_json_object(row["config_json"])
                 except StoredJSONError:
                     status["invalid_source_config_json"] += 1
+                    continue
+                kind = str(row["kind"])
+                locator = (
+                    os.path.normcase(os.path.normpath(str(row["root_path"])))
+                    if kind == "corpus_directory"
+                    else str(row["zotero_source_id"])
+                )
+                expected_id, expected_signature = registered_source_identity(
+                    kind=kind,
+                    locator=locator,
+                    config=config if kind == "zotero_profile" else None,
+                )
+                if (
+                    str(row["id"]) != expected_id
+                    or str(row["profile_signature"]) != expected_signature
+                ):
+                    status["invalid_source_identities"] += 1
 
         job_cursor = connection.execute(
             "SELECT params_json, result_summary_json FROM jobs ORDER BY queue_sequence"
@@ -1286,6 +1505,11 @@ def _counts(repository: Repository) -> dict[str, int]:
         "zotero_item_tags",
         "zotero_attachments",
         "zotero_document_links",
+        "zotero_sync_profiles",
+        "zotero_profile_items",
+        "zotero_sync_run_details",
+        "zotero_child_items",
+        "zotero_tombstones",
     )
     counts = {
         table_name: repository.count_rows(table_name) for table_name in table_names

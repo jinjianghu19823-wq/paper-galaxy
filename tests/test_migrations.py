@@ -22,6 +22,9 @@ from paper_galaxy.storage.provenance import (
 V6_SCHEMA_FIXTURE = Path(__file__).parent / "fixtures" / "storage" / "schema_v6.sql"
 V6_SCHEMA_SHA256 = "eaab6c5bf9bfd1d60c6d2164ff3ebeed57b6c64ae17535d677f048664ee90326"
 V6_SCHEMA_SOURCE_COMMIT = "c3be2cec83d57cba8ee8badac003fc6b8870c8ac"
+V9_SCHEMA_FIXTURE = Path(__file__).parent / "fixtures" / "storage" / "schema_v9.sql"
+V9_SCHEMA_SHA256 = "79b89774e7054ea4fa117620e1c3a111880fac87afe744d0a243e45e9cde8440"
+V9_SCHEMA_SOURCE_COMMIT = "2c2f98d69306519ba292442be6f2cc1fc8d92682"
 
 
 def _current_schema_version() -> int:
@@ -130,6 +133,67 @@ def _create_v8_database(database_path: Path) -> sqlite3.Connection:
     return connection
 
 
+def _create_v9_database(database_path: Path) -> sqlite3.Connection:
+    connection = sqlite3.connect(database_path)
+    connection.execute("PRAGMA foreign_keys = ON")
+    connection.executescript(V9_SCHEMA_FIXTURE.read_text(encoding="utf-8"))
+    connection.execute(
+        "INSERT INTO schema_meta(key, value) VALUES ('schema_version', '9')"
+    )
+    for migration in migrations.MIGRATIONS:
+        if 7 <= migration.version <= 9:
+            connection.execute(
+                "INSERT INTO schema_migrations(version, name) VALUES (?, ?)",
+                (migration.version, migration.name),
+            )
+    connection.execute(
+        """
+        INSERT INTO corpora(id, root_path, created_at, updated_at)
+        VALUES ('historical-corpus', '/synthetic-corpus', '2026-01-01', '2026-01-01')
+        """
+    )
+    connection.execute(
+        """
+        INSERT INTO documents(
+          id, corpus_id, path, relative_path, file_type, title, sha256,
+          size_bytes, mtime_ns, char_count, status, first_seen_at,
+          last_seen_at, updated_at
+        ) VALUES (
+          'historical-document', 'historical-corpus',
+          '/synthetic-corpus/paper.md', 'paper.md', '.md',
+          'Historical v6 paper', 'historical-content-hash', 123, 456, 27,
+          'active', '2026-01-01', '2026-01-01', '2026-01-01'
+        )
+        """
+    )
+    connection.execute(
+        """
+        INSERT INTO document_texts(document_id, text)
+        VALUES ('historical-document', 'preserve this historical text')
+        """
+    )
+    connection.execute(
+        """
+        INSERT INTO chunks(id, document_id, chunk_index, text, char_count)
+        VALUES (
+          'historical-chunk', 'historical-document', 0,
+          'preserve this historical text', 29
+        )
+        """
+    )
+    connection.execute(
+        """
+        INSERT INTO documents_fts(document_id, title, relative_path, text)
+        VALUES (
+          'historical-document', 'Historical v6 paper', 'paper.md',
+          'preserve this historical text'
+        )
+        """
+    )
+    connection.commit()
+    return connection
+
+
 def _assert_historical_rows_preserved(connection: sqlite3.Connection) -> None:
     document = connection.execute(
         """
@@ -205,6 +269,16 @@ def test_v6_fixture_is_exact_historical_schema() -> None:
     assert len(fixture.splitlines()) == 421
 
 
+def test_v9_fixture_is_exact_stage_five_schema() -> None:
+    """The v9→v10 boundary is frozen from the last Stage 5 checkpoint."""
+
+    fixture = V9_SCHEMA_FIXTURE.read_bytes()
+
+    assert V9_SCHEMA_SOURCE_COMMIT == "2c2f98d69306519ba292442be6f2cc1fc8d92682"
+    assert hashlib.sha256(fixture).hexdigest() == V9_SCHEMA_SHA256
+    assert len(fixture.splitlines()) == 539
+
+
 def test_bootstrap_commits_current_schema_version_before_reopen(tmp_path: Path) -> None:
     database_path = tmp_path / "bootstrap.sqlite3"
     assert _current_schema_version() > 6
@@ -249,7 +323,7 @@ def test_real_v6_database_migrates_without_losing_data(tmp_path: Path) -> None:
         )
         assert reopened.execute(
             "SELECT version FROM schema_migrations ORDER BY version"
-        ).fetchall() == [(7,), (8,), (9,)]
+        ).fetchall() == [(7,), (8,), (9,), (10,)]
         assert reopened.execute("PRAGMA quick_check").fetchone() == ("ok",)
         assert reopened.execute("PRAGMA foreign_key_check").fetchall() == []
     finally:
@@ -356,7 +430,7 @@ def test_v7_migrates_vector_provenance_without_trusting_legacy_rows(
         ).fetchone() == (0, None)
         assert reopened.execute(
             "SELECT version FROM schema_migrations ORDER BY version"
-        ).fetchall() == [(7,), (8,), (9,)]
+        ).fetchall() == [(7,), (8,), (9,), (10,)]
         assert reopened.execute("PRAGMA quick_check").fetchone() == ("ok",)
         assert reopened.execute("PRAGMA foreign_key_check").fetchall() == []
     finally:
@@ -397,7 +471,7 @@ def test_v8_migration_hashes_chunks_in_bounded_pages(tmp_path: Path) -> None:
     connection.close()
 
 
-def test_real_v8_database_migrates_to_v9_without_losing_data(
+def test_real_v8_database_migrates_to_current_without_losing_data(
     tmp_path: Path,
 ) -> None:
     database_path = tmp_path / "schema-v8.sqlite3"
@@ -418,10 +492,10 @@ def test_real_v8_database_migrates_to_v9_without_losing_data(
 
     reopened = sqlite3.connect(database_path)
     try:
-        assert _schema_version(reopened) == 9
+        assert _schema_version(reopened) == _current_schema_version()
         assert reopened.execute(
             "SELECT version FROM schema_migrations ORDER BY version"
-        ).fetchall() == [(7,), (8,), (9,)]
+        ).fetchall() == [(7,), (8,), (9,), (10,)]
         assert reopened.execute(
             "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'jobs'"
         ).fetchone() == ("jobs",)
@@ -530,6 +604,21 @@ def test_v9_backfills_legacy_corpus_and_zotero_sources(tmp_path: Path) -> None:
     assert connection.execute(
         "SELECT COUNT(*) FROM registered_sources WHERE root_path LIKE 'zotero://%'"
     ).fetchone() == (0,)
+    assert connection.execute(
+        """
+        SELECT id, source_id, profile_signature, materialization_signature,
+               last_version, requires_full_sync, revision
+        FROM zotero_sync_profiles
+        """
+    ).fetchone() == (
+        zotero_source_id,
+        "legacy-zotero",
+        zotero_signature,
+        None,
+        None,
+        1,
+        0,
+    )
     assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
     connection.close()
 
@@ -588,6 +677,52 @@ def test_v9_backfill_canonicalizes_zotero_profile_without_duplicate_registration
 
     assert created is False
     assert profiles == [profile]
+
+
+def test_v10_migration_does_not_claim_removed_empty_zotero_profile(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "removed-empty-v9.sqlite3"
+    connection = _create_v9_database(database_path)
+    connection.execute(
+        """
+        INSERT INTO zotero_sources(
+          id, source_type, local_api_url, library_id, library_type, name,
+          created_at, updated_at
+        ) VALUES (
+          'removed-empty-source', 'local_api',
+          'http://127.0.0.1:23119/api', '0', 'user', 'Removed empty source',
+          '2026-01-01', '2026-01-01'
+        )
+        """
+    )
+    connection.execute(
+        """
+        INSERT INTO registered_sources(
+          id, kind, display_name, root_path, zotero_source_id,
+          profile_signature, config_json, created_at, updated_at, removed_at
+        ) VALUES (
+          'removed-empty-profile', 'zotero_profile', 'Removed empty profile',
+          NULL, 'removed-empty-source', 'removed-empty-signature',
+          '{"filters":{}}', '2026-01-01', '2026-01-02', '2026-01-02'
+        )
+        """
+    )
+    connection.commit()
+
+    migrations.initialize_database(
+        connection,
+        backup_path=tmp_path / "removed-empty-v9.pre-migration.sqlite3",
+    )
+
+    assert (
+        connection.execute(
+            "SELECT 1 FROM zotero_sync_profiles WHERE id = 'removed-empty-profile'"
+        ).fetchone()
+        is None
+    )
+    assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
+    connection.close()
 
 
 @pytest.mark.parametrize(
@@ -940,6 +1075,7 @@ def test_v9_migration_failure_rolls_back_tables_and_source_backfill(
         "MIGRATIONS",
         (version_seven, version_eight, FailingVersionNine()),
     )
+    monkeypatch.setattr(migrations, "CURRENT_SCHEMA_VERSION", 9)
 
     migrating = sqlite3.connect(database_path)
     with pytest.raises(RuntimeError, match="synthetic v9 failure"):
@@ -972,6 +1108,85 @@ def test_v9_migration_failure_rolls_back_tables_and_source_backfill(
         _assert_historical_rows_preserved(reopened)
     finally:
         reopened.close()
+
+
+def test_v10_migration_failure_rolls_back_columns_tables_and_history(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    database_path = tmp_path / "v10-rollback.sqlite3"
+    connection = _create_v9_database(database_path)
+    connection.close()
+    original = list(migrations.MIGRATIONS)
+    real_version_ten = next(entry for entry in original if entry.version == 10)
+
+    class FailingVersionTen:
+        version = 10
+        name = real_version_ten.name
+
+        @staticmethod
+        def up(connection: sqlite3.Connection) -> None:
+            real_version_ten.up(connection)
+            assert connection.execute(
+                "SELECT name FROM sqlite_schema WHERE name = 'zotero_sync_profiles'"
+            ).fetchone() == ("zotero_sync_profiles",)
+            raise RuntimeError("synthetic v10 failure")
+
+    monkeypatch.setattr(
+        migrations,
+        "MIGRATIONS",
+        tuple(
+            FailingVersionTen() if entry.version == 10 else entry for entry in original
+        ),
+    )
+    migrating = sqlite3.connect(database_path)
+    with pytest.raises(RuntimeError, match="synthetic v10 failure"):
+        migrations.initialize_database(
+            migrating,
+            backup_path=tmp_path / "v10-rollback.pre-migration.sqlite3",
+        )
+    migrating.close()
+
+    reopened = sqlite3.connect(database_path)
+    try:
+        assert _schema_version(reopened) == 9
+        assert reopened.execute(
+            "SELECT version FROM schema_migrations ORDER BY version"
+        ).fetchall() == [(7,), (8,), (9,)]
+        assert (
+            reopened.execute(
+                """
+            SELECT name FROM sqlite_schema
+            WHERE name IN (
+              'zotero_sync_profiles', 'zotero_sync_run_details',
+              'zotero_profile_items', 'zotero_child_items', 'zotero_tombstones'
+            )
+            """
+            ).fetchall()
+            == []
+        )
+        item_columns = {
+            str(row[1]) for row in reopened.execute("PRAGMA table_info(zotero_items)")
+        }
+        assert "deleted_at" not in item_columns
+        assert "deleted_version" not in item_columns
+    finally:
+        reopened.close()
+
+
+def test_v9_capability_rejects_partially_applied_v10_columns(tmp_path: Path) -> None:
+    database_path = tmp_path / "partial-v10.sqlite3"
+    connection = _create_v9_database(database_path)
+    connection.execute("ALTER TABLE zotero_items ADD COLUMN deleted_at TEXT")
+    connection.commit()
+    connection.close()
+
+    migrating = sqlite3.connect(database_path)
+    with pytest.raises(UnsupportedSchemaError, match="future columns deleted_at"):
+        migrations.initialize_database(
+            migrating,
+            backup_path=tmp_path / "partial-v10.pre-migration.sqlite3",
+        )
+    migrating.close()
 
 
 def test_future_schema_is_rejected_without_downgrade(tmp_path: Path) -> None:
@@ -1121,3 +1336,222 @@ def test_concurrent_initializers_serialize_without_partial_schema(
         assert connection.execute("PRAGMA quick_check").fetchone() == ("ok",)
     finally:
         connection.close()
+
+
+def test_frozen_v9_zotero_document_is_rematerialized_on_first_v10_sync(
+    tmp_path: Path,
+) -> None:
+    from paper_galaxy.storage.sqlite import connect_read_only
+    from paper_galaxy.zotero.importers import (
+        import_from_zotero,
+        stable_zotero_corpus_id,
+        stable_zotero_document_id,
+        stable_zotero_item_id,
+        stable_zotero_source_id,
+    )
+    from paper_galaxy.zotero.models import ZoteroDeletedBatch, ZoteroSyncBatch
+
+    project_dir = tmp_path / "project"
+    metadata_dir = project_dir / ".paper-galaxy"
+    metadata_dir.mkdir(parents=True)
+    database_path = metadata_dir / "paper_galaxy.sqlite3"
+    connection = _create_v9_database(database_path)
+    api_url = "http://127.0.0.1:23119/api"
+    source_id = stable_zotero_source_id(api_url, "0")
+    corpus_id = stable_zotero_corpus_id(source_id)
+    item_id = stable_zotero_item_id(source_id, "PARENT01")
+    document_id = stable_zotero_document_id(source_id, "PARENT01")
+    source_config = {
+        "local_api_url": api_url,
+        "data_dir": None,
+        "library_id": "0",
+        "library_type": "user",
+        "filters": {"include_status": "all", "pdf_policy": "metadata"},
+    }
+    profile_id, profile_signature = registered_source_identity(
+        kind="zotero_profile",
+        locator=source_id,
+        config=source_config,
+    )
+    parent_v5: dict[str, object] = {
+        "key": "PARENT01",
+        "version": 5,
+        "library": {"id": 0, "type": "user", "name": "Synthetic"},
+        "data": {
+            "key": "PARENT01",
+            "version": 5,
+            "itemType": "journalArticle",
+            "title": "Legacy v9 Zotero paper",
+            "date": "2024",
+            "creators": [],
+            "tags": [],
+            "collections": [],
+        },
+    }
+    connection.execute(
+        """
+        INSERT INTO zotero_sources(
+          id, source_type, local_api_url, library_id, library_type, name,
+          last_version, created_at, updated_at
+        ) VALUES (?, 'local_api', ?, '0', 'user', 'Legacy Zotero', 5, ?, ?)
+        """,
+        (source_id, api_url, "2026-01-01", "2026-01-01"),
+    )
+    connection.execute(
+        """
+        INSERT INTO registered_sources(
+          id, kind, display_name, zotero_source_id, profile_signature,
+          config_json, created_at, updated_at
+        ) VALUES (?, 'zotero_profile', 'Legacy Zotero', ?, ?, ?, ?, ?)
+        """,
+        (
+            profile_id,
+            source_id,
+            profile_signature,
+            json.dumps(source_config, sort_keys=True, separators=(",", ":")),
+            "2026-01-01",
+            "2026-01-01",
+        ),
+    )
+    connection.execute(
+        """
+        INSERT INTO corpora(id, root_path, created_at, updated_at)
+        VALUES (?, ?, ?, ?)
+        """,
+        (corpus_id, f"zotero://sources/{source_id}", "2026-01-01", "2026-01-01"),
+    )
+    connection.execute(
+        """
+        INSERT INTO zotero_items(
+          id, source_id, zotero_key, version, item_type, title, reading_status,
+          data_json, child_manifest_json, created_at, updated_at
+        ) VALUES (?, ?, 'PARENT01', 5, 'journalArticle', ?, 'unknown', ?, NULL, ?, ?)
+        """,
+        (
+            item_id,
+            source_id,
+            "Legacy v9 Zotero paper",
+            json.dumps(parent_v5, sort_keys=True),
+            "2026-01-01",
+            "2026-01-01",
+        ),
+    )
+    connection.execute(
+        """
+        INSERT INTO documents(
+          id, corpus_id, path, relative_path, file_type, title, sha256,
+          size_bytes, mtime_ns, char_count, status, first_seen_at,
+          last_seen_at, updated_at
+        ) VALUES (?, ?, ?, ?, 'zotero', ?, 'legacy-sha', 0, 0, 18, 'active', ?, ?, ?)
+        """,
+        (
+            document_id,
+            corpus_id,
+            "zotero://select/items/PARENT01",
+            "zotero/PARENT01",
+            "Legacy v9 Zotero paper",
+            "2026-01-01",
+            "2026-01-01",
+            "2026-01-01",
+        ),
+    )
+    connection.execute(
+        "INSERT INTO document_texts(document_id, text) VALUES (?, ?)",
+        (document_id, "stale v9 materialization"),
+    )
+    connection.execute(
+        """
+        INSERT INTO chunks(id, document_id, chunk_index, text, char_count)
+        VALUES ('legacy-zotero-chunk', ?, 0, 'stale v9 materialization', 24)
+        """,
+        (document_id,),
+    )
+    connection.execute(
+        """
+        INSERT INTO documents_fts(document_id, title, relative_path, text)
+        VALUES (?, ?, 'zotero/PARENT01', 'stale v9 materialization')
+        """,
+        (document_id, "Legacy v9 Zotero paper"),
+    )
+    connection.execute(
+        """
+        INSERT INTO zotero_document_links(document_id, zotero_item_id, role)
+        VALUES (?, ?, 'primary')
+        """,
+        (document_id, item_id),
+    )
+    connection.commit()
+    connection.close()
+
+    parent_v6 = json.loads(json.dumps(parent_v5))
+    parent_v6["version"] = 6
+    assert isinstance(parent_v6["data"], dict)
+    parent_v6["data"]["version"] = 6
+    note_v6 = {
+        "key": "NOTE0001",
+        "version": 6,
+        "data": {
+            "key": "NOTE0001",
+            "version": 6,
+            "itemType": "note",
+            "parentItem": "PARENT01",
+            "note": "<p>fresh v10 evidence</p>",
+        },
+    }
+
+    class FrozenV9Client:
+        def sync_collections(self, *, cancel_requested=None):
+            del cancel_requested
+            return ZoteroSyncBatch((), 6)
+
+        def sync_items(self, *, since, limit=None, cancel_requested=None):
+            del limit, cancel_requested
+            assert since == 0
+            return ZoteroSyncBatch((parent_v6, note_v6), 6)
+
+        def items_by_keys(self, keys, *, cancel_requested=None):
+            del keys, cancel_requested
+            return ZoteroSyncBatch((), 6)
+
+        def deleted_since(self, *, since, cancel_requested=None):
+            del cancel_requested
+            assert since == 0
+            return ZoteroDeletedBatch({}, 6)
+
+    summary = import_from_zotero(
+        project_dir=project_dir,
+        api_url=api_url,
+        client=FrozenV9Client(),
+        pdf_policy="metadata",
+        min_chars=1,
+        build_reading_map=False,
+    )
+
+    migrated = connect_read_only(project_dir)
+    try:
+        text = migrated.execute(
+            "SELECT text FROM document_texts WHERE document_id = ?", (document_id,)
+        ).fetchone()[0]
+        profile = migrated.execute(
+            """
+            SELECT materialization_signature, last_version, requires_full_sync
+            FROM zotero_sync_profiles WHERE id = ?
+            """,
+            (profile_id,),
+        ).fetchone()
+        membership = migrated.execute(
+            """
+            SELECT is_member FROM zotero_profile_items
+            WHERE profile_id = ? AND zotero_item_id = ?
+            """,
+            (profile_id, item_id),
+        ).fetchone()
+    finally:
+        migrated.close()
+
+    assert summary.full_sync is True
+    assert summary.last_version_after == 6
+    assert "fresh v10 evidence" in text
+    assert "stale v9 materialization" not in text
+    assert profile[0] is not None and tuple(profile)[1:] == (6, 0)
+    assert tuple(membership) == (1,)

@@ -16,6 +16,7 @@ from typing import Any
 
 from paper_galaxy.storage.json import load_json_object
 from paper_galaxy.storage.provenance import registered_source_identity
+from paper_galaxy.storage.repository import Repository
 from paper_galaxy.storage.sqlite import (
     connect_read_only,
     connect_read_write,
@@ -56,6 +57,17 @@ class SourceRecord:
     created_at: str
     updated_at: str
     removed_at: str | None
+
+
+@dataclass(frozen=True)
+class ZoteroProfileRegistration:
+    """Canonical, write-free identity for one local Zotero filter profile."""
+
+    id: str
+    profile_signature: str
+    zotero_source_id: str
+    display_name: str
+    config: dict[str, object]
 
 
 def register_corpus_source(
@@ -158,38 +170,76 @@ def register_zotero_source(
             "Only a read-only Zotero Desktop local API source is supported."
         )
 
-    api_url = _canonical_loopback_api_url(row["local_api_url"])
-    data_dir = _canonical_data_dir(row["data_dir"])
-    if data_dir is not None:
+    registration = prepare_zotero_profile_registration(
+        resolved_project,
+        zotero_source_id=selected_zotero_id,
+        api_url=row["local_api_url"],
+        data_dir=row["data_dir"],
+        library_id=row["library_id"],
+        library_type=row["library_type"],
+        filters=normalized_filters,
+        display_name=display_name,
+        fallback_name=str(row["name"]),
+    )
+    return _register_source(
+        resolved_project,
+        source_id=registration.id,
+        kind=SOURCE_KIND_ZOTERO,
+        display_name=registration.display_name,
+        replace_display_name=display_name is not None,
+        root_path=None,
+        zotero_source_id=registration.zotero_source_id,
+        profile_signature=registration.profile_signature,
+        config=registration.config,
+    )
+
+
+def prepare_zotero_profile_registration(
+    project_dir: Path | str,
+    *,
+    zotero_source_id: str,
+    api_url: object,
+    data_dir: object,
+    library_id: object,
+    library_type: object,
+    filters: Mapping[str, object] | None,
+    display_name: str | None = None,
+    fallback_name: str = "Zotero Local Library",
+) -> ZoteroProfileRegistration:
+    """Compute a canonical Zotero profile identity without opening SQLite.
+
+    Import preflight and source registration share this function so locator or
+    filter drift cannot resolve to one profile before a run and another profile
+    after writes have started.
+    """
+
+    resolved_project = Path(project_dir).expanduser().resolve()
+    selected_zotero_id = _source_id(zotero_source_id, label="Zotero source id")
+    canonical_api_url = _canonical_loopback_api_url(api_url)
+    canonical_data_dir = _canonical_data_dir(data_dir)
+    if canonical_data_dir is not None:
         _reject_project_writes_inside_source(
             resolved_project,
-            Path(data_dir),
+            Path(canonical_data_dir),
             label="Zotero data directory",
         )
-    library_id = _bounded_stored_text(row["library_id"], "Zotero library id")
-    library_type = _bounded_stored_text(row["library_type"], "Zotero library type")
     config: dict[str, object] = {
-        "local_api_url": api_url,
-        "data_dir": data_dir,
-        "library_id": library_id,
-        "library_type": library_type,
-        "filters": normalized_filters,
+        "local_api_url": canonical_api_url,
+        "data_dir": canonical_data_dir,
+        "library_id": _bounded_stored_text(library_id, "Zotero library id"),
+        "library_type": _bounded_stored_text(library_type, "Zotero library type"),
+        "filters": _normalize_zotero_filters(filters),
     }
     source_id, signature = registered_source_identity(
         kind=SOURCE_KIND_ZOTERO,
         locator=selected_zotero_id,
         config=config,
     )
-    selected_name = _display_name(display_name, str(row["name"]))
-    return _register_source(
-        resolved_project,
-        source_id=source_id,
-        kind=SOURCE_KIND_ZOTERO,
-        display_name=selected_name,
-        replace_display_name=display_name is not None,
-        root_path=None,
-        zotero_source_id=selected_zotero_id,
+    return ZoteroProfileRegistration(
+        id=source_id,
         profile_signature=signature,
+        zotero_source_id=selected_zotero_id,
+        display_name=_display_name(display_name, fallback_name),
         config=config,
     )
 
@@ -234,6 +284,15 @@ def validate_source_locator_for_use(
             resolved,
             label="corpus source",
         )
+        expected_id, expected_signature = registered_source_identity(
+            kind=SOURCE_KIND_CORPUS,
+            locator=os.path.normcase(os.path.normpath(str(resolved))),
+        )
+        if source.id != expected_id or source.profile_signature != expected_signature:
+            raise ValueError(
+                "Registered corpus identity no longer matches its trusted locator; "
+                "re-register the source."
+            )
         return source
     if source.kind == SOURCE_KIND_ZOTERO:
         if source.zotero_source_id is None:
@@ -255,6 +314,16 @@ def validate_source_locator_for_use(
         if filters is not None and not isinstance(filters, Mapping):
             raise ValueError("Zotero profile filters are malformed.")
         canonical_config["filters"] = _normalize_zotero_filters(filters)
+        expected_id, expected_signature = registered_source_identity(
+            kind=SOURCE_KIND_ZOTERO,
+            locator=source.zotero_source_id,
+            config=canonical_config,
+        )
+        if source.id != expected_id or source.profile_signature != expected_signature:
+            raise ValueError(
+                "Registered Zotero profile identity no longer matches its trusted "
+                "configuration; re-register the profile."
+            )
         return replace(source, config=canonical_config)
     raise ValueError("Unknown source kind.")
 
@@ -293,6 +362,12 @@ def remove_source(project_dir: Path | str, source_id: str) -> SourceRecord:
             """,
             (now, now, selected_id),
         )
+        if str(row["kind"]) == SOURCE_KIND_ZOTERO:
+            repository = Repository(connection, resolve_database_path(project_dir))
+            repository.reconcile_zotero_document_activity(
+                repository.list_zotero_profile_item_ids(selected_id),
+                now=now,
+            )
         updated = connection.execute(
             "SELECT * FROM registered_sources WHERE id = ?", (selected_id,)
         ).fetchone()
@@ -446,6 +521,7 @@ def _register_source(
             )
         else:
             source_id = str(existing["id"])
+            was_removed = existing["removed_at"] is not None
             persisted_display_name = (
                 display_name if replace_display_name else str(existing["display_name"])
             )
@@ -472,6 +548,12 @@ def _register_source(
                         now,
                         source_id,
                     ),
+                )
+            if was_removed and kind == SOURCE_KIND_ZOTERO:
+                repository = Repository(connection, resolve_database_path(project_dir))
+                repository.reconcile_zotero_document_activity(
+                    repository.list_zotero_profile_item_ids(source_id),
+                    now=now,
                 )
         row = connection.execute(
             "SELECT * FROM registered_sources WHERE id = ?",

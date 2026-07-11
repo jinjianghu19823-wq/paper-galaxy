@@ -4,6 +4,40 @@
 
 ## Unreleased
 
+- Added schema v10 and true profile-scoped, read-only Zotero synchronization.
+  Default syncs resume from a CAS-fenced cursor owned by the exact registered
+  collection/tag/status profile; `--full` is explicit. The local API client
+  preserves `Last-Modified-Version` across safe pagination, retries bounded
+  transient reads, consumes `/items?since=` and `/deleted?since=`, batches
+  parent hydration, and rejects version drift before publishing a cursor.
+  Child-only note, annotation, and attachment updates now rebuild their parent
+  documents without per-parent child requests. Verified remote deletions are
+  tombstoned and cascade through child/attachment/profile state; deleted parents
+  leave live search/maps, while collection renames/deletions refresh affected
+  parent documents. Versioned profile-item membership now applies union
+  visibility across active profiles and source removal. A source-global
+  materialization fingerprint covers attachment/include/PDF/note/metadata,
+  reading-tag, minimum-text, and chunk settings; changes require explicit
+  `--full`, and default jobs inherit the latest compatible completed-run
+  configuration. Incomplete runs never advance a cursor, and unchanged
+  materializations skip PDF extraction and preserve chunks/vectors. Migration
+  tests use a frozen real v9 schema fixture, and the first v10 baseline
+  deliberately rematerializes instead of trusting the legacy global cursor.
+  Locator drift is rejected before remote access or writes, initial
+  source/profile/run registration is atomic, and each changed parent now
+  refreshes membership across all compatible active profiles without advancing
+  their cursors. A failed first locator remains auditable without claiming the
+  project, while a source-wide monotonic version fence rejects older snapshots
+  before each business transaction and final cursor publication. Full-sync
+  generation preparation is deferred until the complete remote response has
+  passed that shared version check and source-wide fence, so a stale full
+  response cannot invalidate the last published generation. Content-changing
+  full syncs prepare attachment/PDF/text/chunk work outside the write
+  transaction, then publish the generation, memberships, documents, vectors,
+  cursor, and run audit atomically; incomplete, cancelled, failed, or crashed
+  runs retain the previous generation. The initial registration transaction
+  also rechecks the exact source and active-profile locator, closing a
+  concurrent first-registration overwrite race.
 - Added the first local research workstation checkpoint: schema v9 registered
   corpus/Zotero sources, a durable single-writer job queue with cooperative
   cancellation and crash recovery, safe project initialization, and

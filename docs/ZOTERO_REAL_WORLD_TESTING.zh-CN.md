@@ -60,7 +60,7 @@ paper-galaxy zotero import --project-dir . --pdf-policy skip-missing --dry-run
 
 `--collection` 可以使用 collection key、精确名称或路径。名称和路径匹配大小写不敏感；歧义名称会在导入前报错。
 
-## 完整本地导入
+## 第一次完整本地导入
 
 ```bash
 paper-galaxy zotero import --project-dir . --include-pdfs --include-notes --pdf-policy extract --build-reading-map --json-out zotero-import.json
@@ -87,13 +87,26 @@ paper-galaxy serve --project-dir . --open
 
 ## 增量运行
 
-导入器会记录本地 API 返回的 Zotero version。大库第一次导入之后，可以用增量运行：
+导入器会为每一个精确的 Zotero filter profile 分别保存本地 cursor。第一次完整导入后，
+重复运行同一个 profile 的命令且不要传 `--since-version`；Paper Galaxy 会自动从该
+profile 已保存的 cursor 继续：
 
 ```bash
-paper-galaxy zotero import --project-dir . --since-version VERSION --json-out zotero-import.json
+paper-galaxy zotero import --project-dir . --include-pdfs --include-notes --pdf-policy extract --build-reading-map --json-out zotero-import.json
 ```
 
-summary 会包含 fetched、selected、filtered、skipped、unchanged、warning、PDF、attachment 和 annotation 计数。
+`--since-version` 不是普通增量流程。它只用于专家诊断或恢复，并且只允许等于当前精确
+profile 已保存的 cursor；不要把一个 collection、tag 或 status profile 的 cursor 复制给
+另一个 profile。需要从 version 0 完整 reconciliation 时使用 `--full`。如果还要明确覆盖
+本地完全相同的 materialization，请使用 `--full --force`；单独使用 `--force` 只作用于
+changed feed 中实际出现的记录，不会把增量运行变成全量运行。stale full response 会在
+准备新 materialization generation 前失败，当前已发布 documents、chunks、vectors 和
+memberships 保持不变。attachment/PDF/text/chunk 在写事务外准备；generation 原子发布，
+因此取消、失败或进程终止也会保留上一代。
+
+summary 会报告 previous/new cursor、changed parent/child 数量、deleted record 数量、
+duration，以及已有的 fetched、selected、filtered、skipped、unchanged、warning、PDF、
+attachment 和 annotation 计数。
 
 ## 状态和 PDF 策略
 
@@ -114,7 +127,7 @@ PDF 策略：
 - 缺少 `storage/` 文件夹意味着 stored Zotero PDF 可能无法解析，但 metadata-only 导入仍可能工作。
 - 位于 Zotero data dir 外的 linked PDFs 会被就地引用，不会被复制。
 - 启用 `--include-metadata-only` 或使用 `--pdf-policy metadata` 时，缺失 PDF 不一定阻塞导入。
-- 对大库做完整导入前，始终先跑一个小的 dry-run。
+- 对大库做第一次完整导入前，始终先跑一个小的 dry-run。
 
 ## 手动验证清单
 
@@ -122,7 +135,7 @@ PDF 策略：
 - `zotero items --limit 5`：打印 top-level item 表格。
 - `zotero items --collection <name>`：只显示该 collection 内的条目。
 - dry-run 导入：JSON 中有 `"dry_run": true`；如果项目数据库原本不存在，dry-run 不应创建数据库。
-- 完整导入：显示 imported/updated/unchanged 计数和 warning summary；当有足够文档可建图时，`map_run_id` 应存在。
+- 第一次完整导入：显示 imported/updated/unchanged 计数和 warning summary；当有足够文档可建图时，`map_run_id` 应存在。
 - `zotero validate`：报告已导入计数和 dangling-link 计数。
 - 浏览器应用：选择 Zotero source，看到点，点击一个点，并检查 Zotero key、作者、年份、DOI/URL、标签、collection、PDF 状态和 Open in Zotero。
 
