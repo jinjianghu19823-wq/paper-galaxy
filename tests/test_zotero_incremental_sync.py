@@ -8,6 +8,7 @@ from typing import Any
 from urllib.error import HTTPError, URLError
 
 import pytest
+from click import unstyle
 from typer.testing import CliRunner
 
 from paper_galaxy.cli import app
@@ -1294,7 +1295,7 @@ def test_api_boundary_cancel_maps_to_interrupted_import_without_cursor(
 
 def test_zotero_import_help_distinguishes_force_from_full() -> None:
     result = CliRunner().invoke(app, ["zotero", "import", "--help"])
-    normalized = " ".join(result.output.replace("│", " ").split())
+    normalized = " ".join(unstyle(result.output).replace("│", " ").split())
 
     assert result.exit_code == 0
     assert "Rematerialize records returned by the changed feed" in normalized
