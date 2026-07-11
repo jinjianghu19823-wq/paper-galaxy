@@ -166,3 +166,27 @@ paper-galaxy validate-project --project-dir .
 
 Validation reports counts, schema status, warnings, and errors without full
 extracted text.
+
+## Semantic Search Says No Current Vectors
+
+Current builds reject legacy, orphaned, inactive, stale-source, malformed, or
+model-fingerprint-mismatched vectors instead of returning them as valid hits.
+Inspect the local-only counts without changing the project:
+
+```bash
+paper-galaxy prune-stale-vectors --project-dir .
+paper-galaxy validate-project --project-dir .
+```
+
+Re-run `paper-galaxy embed` with the intended local model path to rebuild
+current rows. If you have reviewed the report and want to remove only invalid
+SQLite vector/index-metadata rows, use:
+
+```bash
+paper-galaxy prune-stale-vectors --project-dir . --apply --yes
+```
+
+This command never removes papers, project databases, backups, or user files.
+If the local model directory changes while loading, stabilize that directory
+and retry; Paper Galaxy will not bind vectors to an unverified path-only model
+identity.

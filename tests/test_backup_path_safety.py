@@ -14,6 +14,7 @@ from typer.testing import CliRunner
 from paper_galaxy.backup import export_project, import_project, inspect_backup
 from paper_galaxy.cli import app
 from paper_galaxy.indexer import index_corpus
+from paper_galaxy.storage.migrations import SCHEMA_VERSION
 from paper_galaxy.storage.sqlite import resolve_database_path
 from tests.test_indexer import copy_tiny_corpus
 
@@ -372,7 +373,7 @@ def test_legacy_v1_clean_wal_database_is_normalized_and_restored(
     manifest = {
         "format": "paper-galaxy-backup-v1",
         "paper_galaxy_version": "legacy-test",
-        "schema_version": "7",
+        "schema_version": SCHEMA_VERSION,
         "created_at": "2026-01-01T00:00:00+00:00",
         "project_dir_name": "legacy-project",
         "contains_database": True,

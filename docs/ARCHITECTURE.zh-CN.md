@@ -47,13 +47,13 @@ Phase 2 引入 `.paper-galaxy/paper_galaxy.sqlite3`。SQLite 保存文档、文�
 
 ### SQLite 生命周期与连接边界
 
-Schema v7 不再在每次连接时隐式执行整份 `CREATE IF NOT EXISTS`，而是采用显式、只向前的生命周期：
+Schema v8 不再在每次连接时隐式执行整份 `CREATE IF NOT EXISTS`，而是采用显式、只向前的生命周期：
 
 - 新数据库在一个明确事务中直接 bootstrap 到当前版本，并在 `schema_migrations` 记录当前 migration registry；函数返回前自行 commit。
-- 当前最早支持的历史版本是 v6。测试 fixture 来自仓库真实历史，升级必须按 registry 执行 v6 -> v7。v7 新增 migration history，为 scan、embedding 和 Zotero import run 增加结构化的 `error_code` / `error_message`，并为 Zotero 派生文档保存私有 child-version manifest。
+- 当前最早支持的历史版本是 v6。测试 fixture 来自仓库真实历史，升级必须按 registry 执行 v6 -> v7 -> v8。v7 新增 migration history、结构化 run error 与 Zotero child-version manifest；v8 增加覆盖 title、relative path 与完整提取正文的 document content revision、chunk hash、模型内容 fingerprint、vector 的 source/model/algorithm provenance、run owner PID 和 vector-index provenance。无法证明 freshness 的历史向量保留为 `legacy-unknown`，重建前不会进入语义结果。
 - 修改 schema 前，系统用 SQLite online backup API 创建唯一的 mode-`0600` 快照，并对快照执行 `quick_check` 与 `foreign_key_check`。它不会覆盖已有备份、活动数据库或 WAL/SHM sidecar。
 - migration 序列、schema version 更新和 history 记录位于同一个 `BEGIN IMMEDIATE` 事务；任一步失败都会完整 rollback。成功迁移不依赖调用者日后碰巧 commit。
-- 低于 v6 且没有受支持路径的数据库会被明确拒绝；高于当前版本的 future schema 同样会被拒绝，绝不会降级或把版本号改回 v7。
+- 低于 v6 且没有受支持路径的数据库会被明确拒绝；高于当前版本的 future schema 同样会被拒绝，绝不会降级或把版本号改回 v8。
 - 系统不会只相信版本号；bootstrap、migration 和运行连接还会验证表/列、主键顺序、关键 UNIQUE 身份、外键目标及删除行为、索引、FTS5 虚表与 `MATCH`、migration history。
 
 连接类型按用途分开：
@@ -67,7 +67,7 @@ Schema v7 不再在每次连接时隐式执行整份 `CREATE IF NOT EXISTS`，�
 
 SQLite 中的 JSON 现在按预期形状严格解码：可空 list/object 字段有明确空默认值；损坏 JSON、重复 key、NaN/Infinity、要求容器时得到 scalar、或嵌套类型不匹配都会抛出结构化 `StoredJSONError`，不再被静默吞掉并替换为空值。普通 Web API 还会过滤 Zotero raw payload、本地路径和内部配置。
 
-项目验证通过诊断专用只读连接运行，检查 SQLite `quick_check`、`foreign_key_check`、表/列/PK/UNIQUE/FK/索引/FTS 能力、migration history、FTS 与 documents/chunks/text 的一致性、孤立或过期向量、dimension/BLOB/metadata/provenance，以及 Zotero cursor、parent/collection/attachment version、child manifest 和 filter profile 一致性。无法执行的检查会明确标记为 `not_run` 或 `check_errors`，不会伪装成计数为零的成功状态。
+项目验证通过诊断专用只读连接运行，检查 SQLite `quick_check`、`foreign_key_check`、表/列/PK/UNIQUE/FK/索引/FTS 能力、migration history、FTS 与 documents/chunks/text 的一致性，以及向量的 target、active 状态、source hash、模型 fingerprint、algorithm、dimension、dtype、BLOB、有限浮点和 index provenance；还会检查 Zotero cursor、parent/collection/attachment version、child manifest 和 filter profile 一致性。无法执行的检查会明确标记为 `not_run` 或 `check_errors`，不会伪装成计数为零的成功状态。
 
 ### 备份归档与恢复边界
 
@@ -93,6 +93,8 @@ recovery、preflight、校验到发布一直持有 exclusive maintenance marker�
 prepared sibling transaction 本身也会阻断普通 connection，直到恢复完成。Dry run 不创建
 marker。私有 staging root 带版本化 operation/target/PID ownership metadata；后续同类
 操作只保守清理由失效 PID 留下的已认领 orphan。
+PID 存活检查在 Windows 上使用无破坏进程句柄，绝不会调用 POSIX 风格的
+`os.kill(pid, 0)`。
 
 v2 manifest 明确记录项目相对数据库与向量索引目标。项目内部自定义数据库路径可原位
 round-trip；绝对或逃逸路径会映射到内部默认位置，项目外向量索引会被省略。恢复目标
@@ -101,9 +103,9 @@ basename-only 向量索引因无法证明逻辑路径而不会自动恢复。
 
 ### 短写事务与运行审计
 
-索引的文件发现、stat、hash、抽取和 chunk 准备发生在 SQLite 写事务之外；每个文件结果、抽取诊断或 document/chunk replacement 使用短原子事务。单文件抽取失败会被记录并允许其他文件继续；编排或 JSON sidecar 输出失败会把 run 标为 `failed`，中断则标为 `interrupted`，并保存安全且有长度上限的错误类型与信息，不会永久停在 `running`。
+索引的文件发现、stat、hash、抽取和 chunk 准备发生在 SQLite 写事务之外；每个文件结果、抽取诊断或 document/chunk replacement 使用短原子事务。单文件抽取失败会被记录并允许其他文件继续；编排或 JSON sidecar 输出失败会把 run 标为 `failed`，中断则标为 `interrupted`，并保存安全且有长度上限的错误类型与信息。显式 writer readiness 还会检查未完成 scan、embedding、Zotero run 的 owner PID：死亡进程遗留行在短事务中转为 `interrupted`，存活进程不会被改写，只读连接也不会执行恢复写入。
 
-Embedding inference 与 vector encoding 同样发生在写事务之外，验证后的 vectors 按有界 batch 提交；后续 batch 失败时，audit 计数只反映已经 commit 的进度。文档或 chunks 被替换/停用时会删除对应 vectors 并失效 vector-index metadata；完全相同的 Zotero sync 则保留 chunks/vectors。Zotero 网络获取、规范化和 PDF 抽取不会包在一个长写事务内：run 在 fetch 前登记，条目以短事务提交，source cursor 只在全部成功后的最后事务推进。fetch、规范化、条目或进程中断都会进入 audit；导入完成后的 reading-map 构建失败只产生可重试 warning。回退、同版本内容分叉或部分 parent/collection/attachment/note/annotation 响应会失败并 rollback，cursor 不推进。v6 升级后的未知 child 状态必须通过显式 `--force` 完整子抓取建立基线；在后续增量 checkpoint 加入 tombstone 前，child 遗漏不会被当作删除。
+Embedding inference 与 vector encoding 同样发生在写事务之外，验证后的 vectors 按有界 batch 提交；每批落库前再次比较 document/chunk source revision，推理期间已变化的来源会丢弃结果并计入 `sources_changed`。document revision 以带算法命名空间的 canonical JSON array 编码 title、corpus-relative path 与完整提取正文，字段中的 NUL 等边界字符不会产生拼接碰撞，也不会因原文件 bytes 未变而误复用旧提取结果；chunk revision 使用精确 chunk text。后续 batch 失败时，audit 计数只反映已经 commit 的进度。文档或 chunks 被替换/停用时会删除对应 vectors；任何 vector 写入都会失效相关 vector-index metadata；完全相同的 Zotero sync 则保留 chunks/vectors。Zotero 网络获取、规范化和 PDF 抽取不会包在一个长写事务内：run 在 fetch 前登记，条目以短事务提交，source cursor 只在全部成功后的最后事务推进。fetch、规范化、条目或进程中断都会进入 audit；导入完成后的 reading-map 构建失败只产生可重试 warning。回退、同版本内容分叉或部分 parent/collection/attachment/note/annotation 响应会失败并 rollback，cursor 不推进。v6 升级后的未知 child 状态必须通过显式 `--force` 完整子抓取建立基线；在后续增量 checkpoint 加入 tombstone 前，child 遗漏不会被当作删除。
 
 保存地图的普通 API 与 export 共用 maps 领域层的深层白名单；旧数据中的嵌套 raw JSON、绝对路径、内部 metadata 和原始 warnings 不会跨越该边界。
 
@@ -156,9 +158,13 @@ OCR 仍然是可选、本地、默认关闭的。
 
 ## Phase 5 语义 embeddings
 
-Phase 5 增加可选本地 dense embeddings。向量存储在 SQLite 中，使用明确的本地模型身份和文本 hash 跳过未变化向量。
+Phase 5 增加可选本地 dense embeddings。向量存储在 SQLite 中；本地模型 fingerprint 覆盖相对文件布局、长度与精确字节，并在加载前后复核，不能只靠路径或名称识别权重。向量同时保存 source hash、模型 fingerprint 与 algorithm version。
 
 远程模型名默认被拒绝，避免隐藏下载。用户必须提供本地模型路径，或显式使用 `--allow-model-download`。
+
+语义搜索只流式读取 active 且 provenance 与当前 source/model 一致的向量，使用 NumPy 有界 block 计算精确 top-k，并一次批量读取展示 metadata，不再逐向量 N+1 查询。neighbor comparison 使用 SQLite `data_version` 做有界乐观快照重试，索引并发提交时不会把旧 TF-IDF text 与新 dense metadata 混为一个结果。当前实现不宣称或安装未实际维护的 FAISS 路径。
+
+`paper-galaxy prune-stale-vectors --project-dir .` 默认只读报告 stale/orphan/invalid vector；只有同时传入 `--apply --yes` 才删除对应 SQLite vector 与 index metadata，绝不删除源论文、项目数据库、备份或用户文件。
 
 ## Phase 6 可解释性与标签
 

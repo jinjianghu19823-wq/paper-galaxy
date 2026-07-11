@@ -28,6 +28,8 @@ class _RecordingEncoder:
     fail: bool = False
     model_name: str = "transaction-boundary-test-encoder"
     dimension: int = 3
+    model_fingerprint: str = "2" * 64
+    fingerprint_algorithm: str = "synthetic-test-fingerprint-v1"
     transaction_states: list[bool] = field(default_factory=list)
 
     def encode(
@@ -230,6 +232,8 @@ def test_embedding_batch_validation_failure_does_not_overcount_or_write(
     class InvalidSecondVectorEncoder:
         model_name = "invalid-second-vector"
         dimension = 3
+        model_fingerprint = "3" * 64
+        fingerprint_algorithm = "synthetic-test-fingerprint-v1"
 
         def encode(
             self,
@@ -273,6 +277,8 @@ def test_embedding_failed_run_counts_only_committed_batches(tmp_path: Path) -> N
     class FailSecondBatchEncoder:
         model_name = "fail-second-batch"
         dimension = 2
+        model_fingerprint = "4" * 64
+        fingerprint_algorithm = "synthetic-test-fingerprint-v1"
         calls = 0
 
         def encode(

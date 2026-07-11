@@ -11,6 +11,8 @@ import tempfile
 from pathlib import Path
 from typing import TypedDict
 
+from paper_galaxy.processes import process_is_alive as _process_is_alive
+
 _STAGING_FORMAT = "paper-galaxy-private-staging-v1"
 _STAGING_MARKER = ".paper-galaxy-staging.json"
 _MAX_MARKER_BYTES = 4096
@@ -200,18 +202,6 @@ def _safe_private_directory_status(path: Path) -> os.stat_result | None:
     if os.name != "nt" and stat.S_IMODE(status.st_mode) & 0o077:
         return None
     return status
-
-
-def _process_is_alive(pid: int) -> bool:
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True
-    except OSError as exc:
-        return exc.errno != errno.ESRCH
-    return True
 
 
 def _fsync_directory(path: Path) -> None:

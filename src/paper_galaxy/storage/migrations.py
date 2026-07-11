@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import os
 import re
 import sqlite3
@@ -20,10 +21,12 @@ from paper_galaxy.errors import (
     FutureSchemaError,
     UnsupportedSchemaError,
 )
+from paper_galaxy.storage.provenance import document_content_revision_sha256
 
-CURRENT_SCHEMA_VERSION = 7
+CURRENT_SCHEMA_VERSION = 8
 SCHEMA_VERSION = str(CURRENT_SCHEMA_VERSION)
 OLDEST_SUPPORTED_SCHEMA_VERSION = 6
+LEGACY_UNKNOWN_PROVENANCE = "legacy-unknown"
 
 
 def _columns(names: str) -> frozenset[str]:
@@ -116,7 +119,7 @@ _V6_REQUIRED_COLUMNS: dict[str, frozenset[str]] = {
     "zotero_document_links": _columns("document_id zotero_item_id attachment_id role"),
 }
 
-_CURRENT_REQUIRED_COLUMNS = {
+_V7_REQUIRED_COLUMNS = {
     **_V6_REQUIRED_COLUMNS,
     "schema_migrations": _columns("version name applied_at"),
     "scan_runs": _V6_REQUIRED_COLUMNS["scan_runs"]
@@ -129,11 +132,45 @@ _CURRENT_REQUIRED_COLUMNS = {
     | _columns("child_manifest_json"),
 }
 
+_CURRENT_REQUIRED_COLUMNS = {
+    **_V7_REQUIRED_COLUMNS,
+    "scan_runs": _V7_REQUIRED_COLUMNS["scan_runs"] | _columns("owner_pid"),
+    "documents": _V7_REQUIRED_COLUMNS["documents"]
+    | _columns("content_revision_sha256"),
+    "chunks": _V7_REQUIRED_COLUMNS["chunks"] | _columns("text_sha256"),
+    "embedding_models": _V7_REQUIRED_COLUMNS["embedding_models"]
+    | _columns("model_fingerprint fingerprint_algorithm"),
+    "vectors": _V7_REQUIRED_COLUMNS["vectors"]
+    | _columns("source_content_sha256 model_fingerprint algorithm_version"),
+    "embedding_runs": _V7_REQUIRED_COLUMNS["embedding_runs"]
+    | _columns("sources_changed owner_pid"),
+    "vector_indexes": _V7_REQUIRED_COLUMNS["vector_indexes"]
+    | _columns("model_fingerprint algorithm_version vector_set_sha256"),
+    "zotero_import_runs": _V7_REQUIRED_COLUMNS["zotero_import_runs"]
+    | _columns("owner_pid"),
+}
+
 _V6_FORBIDDEN_COLUMNS: dict[str, frozenset[str]] = {
-    "scan_runs": _columns("error_code error_message"),
-    "embedding_runs": _columns("error_code error_message"),
-    "zotero_import_runs": _columns("error_code error_message"),
+    "scan_runs": _columns("error_code error_message owner_pid"),
+    "documents": _columns("content_revision_sha256"),
+    "chunks": _columns("text_sha256"),
+    "embedding_models": _columns("model_fingerprint fingerprint_algorithm"),
+    "vectors": _columns("source_content_sha256 model_fingerprint algorithm_version"),
+    "embedding_runs": _columns("error_code error_message sources_changed owner_pid"),
+    "vector_indexes": _columns("model_fingerprint algorithm_version vector_set_sha256"),
+    "zotero_import_runs": _columns("error_code error_message owner_pid"),
     "zotero_items": _columns("child_manifest_json"),
+}
+
+_V7_FORBIDDEN_COLUMNS: dict[str, frozenset[str]] = {
+    "scan_runs": _columns("owner_pid"),
+    "documents": _columns("content_revision_sha256"),
+    "chunks": _columns("text_sha256"),
+    "embedding_models": _columns("model_fingerprint fingerprint_algorithm"),
+    "vectors": _columns("source_content_sha256 model_fingerprint algorithm_version"),
+    "embedding_runs": _columns("sources_changed owner_pid"),
+    "vector_indexes": _columns("model_fingerprint algorithm_version vector_set_sha256"),
+    "zotero_import_runs": _columns("owner_pid"),
 }
 
 _REQUIRED_INDEXES: dict[str, tuple[str, tuple[str, ...]]] = {
@@ -210,6 +247,11 @@ _REQUIRED_INDEXES: dict[str, tuple[str, tuple[str, ...]]] = {
     "idx_zotero_items_title": ("zotero_items", ("title",)),
 }
 
+_CURRENT_REQUIRED_INDEXES = {
+    **_REQUIRED_INDEXES,
+    "idx_chunks_text_sha256": ("chunks", ("text_sha256",)),
+}
+
 _V6_REQUIRED_PRIMARY_KEYS: dict[str, tuple[str, ...]] = {
     "schema_meta": ("key",),
     "corpora": ("id",),
@@ -238,10 +280,12 @@ _V6_REQUIRED_PRIMARY_KEYS: dict[str, tuple[str, ...]] = {
     "zotero_document_links": ("document_id", "zotero_item_id", "role"),
 }
 
-_CURRENT_REQUIRED_PRIMARY_KEYS = {
+_V7_REQUIRED_PRIMARY_KEYS = {
     **_V6_REQUIRED_PRIMARY_KEYS,
     "schema_migrations": ("version",),
 }
+
+_CURRENT_REQUIRED_PRIMARY_KEYS = _V7_REQUIRED_PRIMARY_KEYS
 
 _V6_REQUIRED_UNIQUE_KEYS: dict[str, tuple[tuple[str, ...], ...]] = {
     "documents": (("corpus_id", "relative_path"),),
@@ -254,10 +298,12 @@ _V6_REQUIRED_UNIQUE_KEYS: dict[str, tuple[tuple[str, ...], ...]] = {
     "zotero_attachments": (("source_id", "zotero_key"),),
 }
 
-_CURRENT_REQUIRED_UNIQUE_KEYS = {
+_V7_REQUIRED_UNIQUE_KEYS = {
     **_V6_REQUIRED_UNIQUE_KEYS,
     "schema_migrations": (("name",),),
 }
+
+_CURRENT_REQUIRED_UNIQUE_KEYS = _V7_REQUIRED_UNIQUE_KEYS
 
 _REQUIRED_FOREIGN_KEYS: dict[
     str,
@@ -384,8 +430,143 @@ def _migrate_v7(connection: sqlite3.Connection) -> None:
     )
 
 
+def _migrate_v8(connection: sqlite3.Connection) -> None:
+    """Record content provenance needed to reject stale vectors safely."""
+
+    connection.execute("ALTER TABLE scan_runs ADD COLUMN owner_pid INTEGER")
+    connection.execute(
+        """
+        ALTER TABLE documents
+        ADD COLUMN content_revision_sha256 TEXT NOT NULL DEFAULT 'legacy-unknown'
+        """
+    )
+    last_document_rowid = 0
+    while True:
+        document_rows = connection.execute(
+            """
+            SELECT d.rowid, d.id, d.title, d.relative_path, dt.text
+            FROM documents d
+            JOIN document_texts dt ON dt.document_id = d.id
+            WHERE d.rowid > ?
+            ORDER BY d.rowid
+            LIMIT 500
+            """,
+            (last_document_rowid,),
+        ).fetchall()
+        if not document_rows:
+            break
+        connection.executemany(
+            "UPDATE documents SET content_revision_sha256 = ? WHERE id = ?",
+            (
+                (
+                    document_content_revision_sha256(
+                        title=str(row[2]),
+                        relative_path=str(row[3]),
+                        text=str(row[4]),
+                    ),
+                    str(row[1]),
+                )
+                for row in document_rows
+            ),
+        )
+        last_document_rowid = int(document_rows[-1][0])
+    connection.execute(
+        """
+        ALTER TABLE chunks
+        ADD COLUMN text_sha256 TEXT NOT NULL DEFAULT 'legacy-unknown'
+        """
+    )
+    last_chunk_rowid = 0
+    while True:
+        chunk_rows = connection.execute(
+            """
+            SELECT rowid, id, text
+            FROM chunks
+            WHERE rowid > ?
+            ORDER BY rowid
+            LIMIT 500
+            """,
+            (last_chunk_rowid,),
+        ).fetchall()
+        if not chunk_rows:
+            break
+        connection.executemany(
+            "UPDATE chunks SET text_sha256 = ? WHERE id = ?",
+            (
+                (
+                    hashlib.sha256(str(row[2]).encode("utf-8")).hexdigest(),
+                    str(row[1]),
+                )
+                for row in chunk_rows
+            ),
+        )
+        last_chunk_rowid = int(chunk_rows[-1][0])
+    connection.execute(
+        """
+        ALTER TABLE embedding_models
+        ADD COLUMN model_fingerprint TEXT NOT NULL DEFAULT 'legacy-unknown'
+        """
+    )
+    connection.execute(
+        """
+        ALTER TABLE embedding_models
+        ADD COLUMN fingerprint_algorithm TEXT NOT NULL DEFAULT 'legacy-unknown'
+        """
+    )
+    connection.execute(
+        """
+        ALTER TABLE vectors
+        ADD COLUMN source_content_sha256 TEXT NOT NULL DEFAULT 'legacy-unknown'
+        """
+    )
+    connection.execute(
+        """
+        ALTER TABLE vectors
+        ADD COLUMN model_fingerprint TEXT NOT NULL DEFAULT 'legacy-unknown'
+        """
+    )
+    connection.execute(
+        """
+        ALTER TABLE vectors
+        ADD COLUMN algorithm_version TEXT NOT NULL DEFAULT 'legacy-unknown'
+        """
+    )
+    connection.execute(
+        """
+        ALTER TABLE embedding_runs
+        ADD COLUMN sources_changed INTEGER NOT NULL DEFAULT 0
+        """
+    )
+    connection.execute("ALTER TABLE embedding_runs ADD COLUMN owner_pid INTEGER")
+    connection.execute(
+        """
+        ALTER TABLE vector_indexes
+        ADD COLUMN model_fingerprint TEXT NOT NULL DEFAULT 'legacy-unknown'
+        """
+    )
+    connection.execute(
+        """
+        ALTER TABLE vector_indexes
+        ADD COLUMN algorithm_version TEXT NOT NULL DEFAULT 'legacy-unknown'
+        """
+    )
+    connection.execute(
+        """
+        ALTER TABLE vector_indexes
+        ADD COLUMN vector_set_sha256 TEXT NOT NULL DEFAULT 'legacy-unknown'
+        """
+    )
+    # No historical vector index has a trustworthy model/vector-set signature.
+    # Deleting metadata is safe; build-owned files remain untouched for a future
+    # explicit maintenance command rather than being recursively removed here.
+    connection.execute("DELETE FROM vector_indexes")
+    connection.execute("ALTER TABLE zotero_import_runs ADD COLUMN owner_pid INTEGER")
+    connection.execute("CREATE INDEX idx_chunks_text_sha256 ON chunks(text_sha256)")
+
+
 MIGRATIONS: tuple[Migration, ...] | dict[int, Migration] = (
     Migration(7, "record_migrations_and_run_failures", _migrate_v7),
+    Migration(8, "record_vector_source_provenance", _migrate_v8),
 )
 
 
@@ -553,10 +734,20 @@ def validate_schema_capability(
         required_columns = _V6_REQUIRED_COLUMNS
         required_primary_keys = _V6_REQUIRED_PRIMARY_KEYS
         required_unique_keys = _V6_REQUIRED_UNIQUE_KEYS
+        required_indexes = _REQUIRED_INDEXES
+        forbidden_columns = _V6_FORBIDDEN_COLUMNS
+    elif version == 7:
+        required_columns = _V7_REQUIRED_COLUMNS
+        required_primary_keys = _V7_REQUIRED_PRIMARY_KEYS
+        required_unique_keys = _V7_REQUIRED_UNIQUE_KEYS
+        required_indexes = _REQUIRED_INDEXES
+        forbidden_columns = _V7_FORBIDDEN_COLUMNS
     elif version == CURRENT_SCHEMA_VERSION:
         required_columns = _CURRENT_REQUIRED_COLUMNS
         required_primary_keys = _CURRENT_REQUIRED_PRIMARY_KEYS
         required_unique_keys = _CURRENT_REQUIRED_UNIQUE_KEYS
+        required_indexes = _CURRENT_REQUIRED_INDEXES
+        forbidden_columns = {}
     else:
         raise UnsupportedSchemaError(
             path,
@@ -589,15 +780,15 @@ def validate_schema_capability(
     if version == OLDEST_SUPPORTED_SCHEMA_VERSION:
         if "schema_migrations" in tables:
             problems.append("v6 unexpectedly contains schema_migrations")
-        for table_name, forbidden in sorted(_V6_FORBIDDEN_COLUMNS.items()):
-            if table_name not in tables:
-                continue
-            present = sorted(forbidden & set(_table_columns(connection, table_name)))
-            if present:
-                problems.append(
-                    f"v6 table {table_name} already contains migration columns "
-                    f"{', '.join(present)}"
-                )
+    for table_name, forbidden in sorted(forbidden_columns.items()):
+        if table_name not in tables:
+            continue
+        present = sorted(forbidden & set(_table_columns(connection, table_name)))
+        if present:
+            problems.append(
+                f"v{version} table {table_name} already contains future columns "
+                f"{', '.join(present)}"
+            )
 
     _check_table_constraints(
         connection,
@@ -607,10 +798,10 @@ def validate_schema_capability(
         problems,
     )
     _check_required_foreign_keys(connection, tables, problems)
-    _check_required_indexes(connection, problems)
+    _check_required_indexes(connection, required_indexes, problems)
     _check_fts_shape(connection, problems)
-    if version == CURRENT_SCHEMA_VERSION and "schema_migrations" in tables:
-        _check_migration_history(connection, problems)
+    if version >= 7 and "schema_migrations" in tables:
+        _check_migration_history(connection, through_version=version, problems=problems)
 
     if problems:
         raise UnsupportedSchemaError(
@@ -729,6 +920,7 @@ def _table_foreign_keys(
 
 def _check_required_indexes(
     connection: sqlite3.Connection,
+    required_indexes: dict[str, tuple[str, tuple[str, ...]]],
     problems: list[str],
 ) -> None:
     rows = connection.execute(
@@ -740,7 +932,7 @@ def _check_required_indexes(
     ).fetchall()
     indexes = {str(row[0]): (str(row[1]), row[2]) for row in rows}
     for index_name, (expected_table, expected_columns) in sorted(
-        _REQUIRED_INDEXES.items()
+        required_indexes.items()
     ):
         definition = indexes.get(index_name)
         if definition is None:
@@ -799,11 +991,14 @@ def _check_fts_shape(
 
 def _check_migration_history(
     connection: sqlite3.Connection,
+    *,
+    through_version: int,
     problems: list[str],
 ) -> None:
     expected = {
         int(migration.version): str(migration.name)
         for migration in _migration_entries()
+        if int(migration.version) <= through_version
     }
     rows = connection.execute(
         "SELECT version, name FROM schema_migrations ORDER BY version"

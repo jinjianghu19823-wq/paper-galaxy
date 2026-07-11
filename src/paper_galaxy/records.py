@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -25,6 +26,7 @@ class IndexedDocument:
     first_seen_at: str
     last_seen_at: str
     updated_at: str
+    content_revision_sha256: str = ""
 
 
 @dataclass(frozen=True)
@@ -36,6 +38,15 @@ class IndexedChunk:
     chunk_index: int
     text: str
     char_count: int
+    text_sha256: str = ""
+
+    def __post_init__(self) -> None:
+        if not self.text_sha256:
+            object.__setattr__(
+                self,
+                "text_sha256",
+                hashlib.sha256(self.text.encode("utf-8")).hexdigest(),
+            )
 
 
 @dataclass(frozen=True)

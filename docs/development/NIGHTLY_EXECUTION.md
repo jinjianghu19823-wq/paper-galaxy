@@ -5,17 +5,18 @@ Milestone: **Paper Galaxy Local Research Workstation & Evidence-First Insight En
 ## Current checkpoint
 
 - Branch: `codex/local-research-workstation`
-- Committed head: `ddc5d3e` (`Add transactional migrations and safe SQLite connections`)
+- Stage 4 base head: `3943cf3` (`Make backups consistent, portable and atomic`)
 - Dependency: Draft PR #1 (`codex/safe-reproducible-release`) remains open and
-  green. The workstation branch was created from its head and Stage 2 is pushed.
-  Creating the stacked Draft PR is temporarily blocked by the GitHub connector
-  usage limit; when retried it must target PR #1's branch and begin with
-  `Depends on #1`.
-- Active phase: Stage 3 consistent, portable, attack-resistant backup/restore.
-  Implementation, documentation, 125 focused backup/lock tests, the 410-test
-  full suite, the independent security audit, and the complete release gate are
-  green. The checkpoint commit/push remains.
-- Next checkpoint commit: `Make backups consistent, portable and atomic`
+  green. The workstation branch was created from its head and Stages 2-3 are
+  pushed. Creating the stacked Draft PR is temporarily blocked because the
+  local `gh` credential is invalid; after `gh auth login -h github.com`, it must
+  target PR #1's branch and begin with `Depends on #1`.
+- Completed working checkpoint: Stage 4 index/vector/run consistency. Schema v8,
+  collision-safe model/source provenance, in-flight source CAS, dead-owner run
+  recovery, exact blockwise search, optimistic compare snapshots, validation,
+  and dry-run-first pruning are implemented. The 463-test full suite and all
+  release gates are green. This document is included in checkpoint commit
+  `Preserve index and vector consistency`; Stage 5 is next.
 - Safety boundary: only synthetic fixtures and pytest temporary directories
   were bootstrapped or migrated. No real Paper Galaxy project, user database,
   source corpus, Zotero profile, or Zotero database was opened for migration,
@@ -31,10 +32,10 @@ Milestone: **Paper Galaxy Local Research Workstation & Evidence-First Insight En
 3. **Completed and pushed:** add transactional SQLite migrations, explicit
    connection modes, strict stored JSON, consistency validation, and short
    audited write transactions.
-4. **Implementation/audit/release gate green; commit pending:** make
+4. **Completed and pushed:** make
    backup/restore consistent, portable, attack-resistant, and atomic.
-5. Preserve indexing/vector/run consistency.
-6. Add sources, durable jobs, and one-command local launch.
+5. **Completed in this checkpoint:** preserve indexing/vector/run consistency.
+6. **Next:** add sources, durable jobs, and one-command local launch.
 7. Implement incremental read-only Zotero sync.
 8. Add structured evidence, citations, and deterministic analysis snapshots.
 9. Add evidence-first insights and reading plans.
@@ -98,6 +99,39 @@ Record exact results here at each green checkpoint. The final gate is:
 - Final post-audit `make release-check` passes: 410 tests, sdist and wheel,
   deterministic demo build, static demo validation, and strict public-readiness
   validation are all green.
+- Stage 3 was committed as `3943cf3` and pushed to
+  `origin/codex/local-research-workstation`.
+- Stage 4 red characterization reproduced model-path weight reuse, in-flight
+  reindex vector resurrection, chunk-configuration reuse, stale vector-index
+  metadata, legacy provenance search, N+1 vector lookup, and hard-exit runs.
+- Stage 4 current green: schema v8 migration/model-fingerprint/storage,
+  ranking, run recovery, maintenance, transaction, validation, and embedding
+  focused suites pass. The final adversarial audit also reproduced and fixed a
+  NUL field-boundary collision in the first document-revision encoding and a
+  cross-query compare snapshot race. The revision now hashes a namespaced
+  canonical JSON array, semantic display loading recomputes exact document or
+  chunk embedding input, and compare retries `PRAGMA data_version` changes at
+  most three times before returning a safe actionable error.
+- `python -m pytest`: 463 passed with the existing Starlette/httpx deprecation
+  warning.
+- `python -m ruff check .`: passed; `python -m ruff format . --check`: 134
+  files already formatted; `python -m mypy src`: 82 source files passed.
+- `python -m build`: built the sdist and wheel successfully. Final `make
+  release-check` repeated Ruff, format, Mypy, all 463 tests, isolated package
+  build, deterministic demo publication/static validation, and strict public
+  readiness; all passed.
+- `python scripts/check_demo_site.py --dist site_dist --serve`: the restricted
+  sandbox correctly denied loopback binding, then the approved local-only retry
+  passed all English/Chinese routes and `tiny-map.json` with HTTP 200. The four
+  real JavaScript assets listed earlier also passed `node --check` again.
+- Two independent final Stage 4 audits report no remaining P0/P1. One
+  non-blocking corruption-repair limitation remains: if an external process
+  directly mutates SQLite text while deliberately leaving its stored revision
+  unchanged, validation and semantic search detect/refuse it, while the prune
+  command itself trusts the stored revision. Normal Repository writes cannot
+  create this state.
+- No real model, project database, corpus, Zotero profile, or user vector index
+  was opened or modified.
 
 ```text
 python -m pytest
@@ -123,12 +157,10 @@ git status --porcelain
 
 ## Unfinished work
 
-The stacked Draft PR still needs creation after the connector usage limit
-resets. Stage 3 still needs its checkpoint commit and push. Remaining vector
-lifecycle pruning and
-scalable top-k, launch, sources/jobs, true incremental Zotero sync, structured evidence,
-citations, immutable analysis snapshots, evidence-first insights, the workspace
-UI/security checkpoint, E2E coverage, benchmarks, and final bilingual/public
-demo work remain unfinished. Do not treat planned routes, schemas, jobs,
-insights, UI states, E2E tests, or benchmark commands as delivered before their
-checkpoint is green and committed.
+The stacked Draft PR still needs creation after local GitHub authentication is
+restored. Remaining launch, sources/jobs, true incremental Zotero sync,
+structured evidence, citations, immutable analysis snapshots, evidence-first
+insights, the workspace UI/security checkpoint, E2E coverage, benchmarks, and
+final bilingual/public demo work remain unfinished. Do not treat planned routes,
+schemas, jobs, insights, UI states, E2E tests, or benchmark commands as delivered
+before their checkpoint is green and committed.

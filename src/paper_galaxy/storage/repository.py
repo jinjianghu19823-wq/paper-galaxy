@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import sqlite3
 from collections import Counter
@@ -12,7 +13,12 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from paper_galaxy.embeddings.models import EmbeddingModelRecord, VectorRecord
+from paper_galaxy.embeddings.models import (
+    EmbeddingModelRecord,
+    SemanticResultSource,
+    VectorRecord,
+)
+from paper_galaxy.embeddings.ranking import VectorCandidate
 from paper_galaxy.records import (
     DatabaseStats,
     ExtractionReport,
@@ -20,7 +26,12 @@ from paper_galaxy.records import (
     IndexedDocument,
     SearchResult,
 )
-from paper_galaxy.storage.json import load_json_list, load_json_object
+from paper_galaxy.storage.json import (
+    StoredJSONError,
+    load_json_list,
+    load_json_object,
+)
+from paper_galaxy.storage.provenance import document_content_revision_sha256
 
 
 class Repository:
@@ -47,10 +58,12 @@ class Repository:
     ) -> None:
         self.connection.execute(
             """
-            INSERT INTO scan_runs(id, corpus_id, corpus_path, started_at, status)
-            VALUES (?, ?, ?, ?, 'running')
+            INSERT INTO scan_runs(
+              id, corpus_id, corpus_path, started_at, status, owner_pid
+            )
+            VALUES (?, ?, ?, ?, 'running', ?)
             """,
-            (scan_run_id, corpus_id, corpus_path, now),
+            (scan_run_id, corpus_id, corpus_path, now, os.getpid()),
         )
 
     def finish_scan_run(
@@ -127,7 +140,7 @@ class Repository:
             SELECT *
             FROM documents
             {status_sql}
-            ORDER BY relative_path
+            ORDER BY relative_path, id
             LIMIT ? OFFSET ?
             """,
             (*status_params, max(0, limit), max(0, offset)),
@@ -147,7 +160,7 @@ class Repository:
             FROM documents d
             JOIN document_texts dt ON dt.document_id = d.id
             {status_sql}
-            ORDER BY d.relative_path
+            ORDER BY d.relative_path, d.id
             LIMIT ?
             """,
             (*status_params, max(0, limit)),
@@ -181,7 +194,7 @@ class Repository:
     ) -> list[IndexedChunk]:
         rows = self.connection.execute(
             """
-            SELECT id, document_id, chunk_index, text, char_count
+            SELECT id, document_id, chunk_index, text, char_count, text_sha256
             FROM chunks
             WHERE document_id = ?
             ORDER BY chunk_index
@@ -196,6 +209,7 @@ class Repository:
                 chunk_index=int(row["chunk_index"]),
                 text=str(row["text"]),
                 char_count=int(row["char_count"]),
+                text_sha256=str(row["text_sha256"]),
             )
             for row in rows
         ]
@@ -224,6 +238,7 @@ class Repository:
               d.file_type AS document_file_type,
               d.title AS document_title,
               d.sha256 AS document_sha256,
+              d.content_revision_sha256 AS document_content_revision_sha256,
               d.size_bytes AS document_size_bytes,
               d.mtime_ns AS document_mtime_ns,
               d.char_count AS document_char_count,
@@ -235,11 +250,12 @@ class Repository:
               c.document_id AS chunk_document_id,
               c.chunk_index AS chunk_index,
               c.text AS chunk_text,
-              c.char_count AS chunk_char_count
+              c.char_count AS chunk_char_count,
+              c.text_sha256 AS chunk_text_sha256
             FROM chunks c
             JOIN documents d ON d.id = c.document_id
             {status_sql}
-            ORDER BY d.relative_path, c.chunk_index
+            ORDER BY d.relative_path, c.chunk_index, c.id
             LIMIT ?
             """,
             (*status_params, max(0, limit)),
@@ -253,6 +269,7 @@ class Repository:
                     chunk_index=int(row["chunk_index"]),
                     text=str(row["chunk_text"]),
                     char_count=int(row["chunk_char_count"]),
+                    text_sha256=str(row["chunk_text_sha256"]),
                 ),
             )
             for row in rows
@@ -261,31 +278,45 @@ class Repository:
     def get_document_by_id_or_relative_path(
         self, document_id_or_path: str
     ) -> IndexedDocument | None:
-        row = self.connection.execute(
+        exact = self.connection.execute(
+            "SELECT * FROM documents WHERE id = ?",
+            (document_id_or_path,),
+        ).fetchone()
+        if exact is not None:
+            return _document_from_row(exact)
+        rows = self.connection.execute(
             """
             SELECT *
             FROM documents
-            WHERE id = ? OR relative_path = ?
-            ORDER BY CASE WHEN id = ? THEN 0 ELSE 1 END
-            LIMIT 1
+            WHERE relative_path = ?
+            ORDER BY id
+            LIMIT 2
             """,
-            (document_id_or_path, document_id_or_path, document_id_or_path),
-        ).fetchone()
-        return _document_from_row(row) if row is not None else None
+            (document_id_or_path,),
+        ).fetchall()
+        if len(rows) > 1:
+            raise ValueError(
+                "Relative document path is ambiguous across corpora; use its "
+                "stable document ID."
+            )
+        return _document_from_row(rows[0]) if rows else None
 
     def upsert_embedding_model(self, model: EmbeddingModelRecord) -> None:
         self.connection.execute(
             """
             INSERT INTO embedding_models(
-              id, name, provider, dimension, distance, config_json, created_at
+              id, name, provider, dimension, distance, config_json,
+              model_fingerprint, fingerprint_algorithm, created_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
               name = excluded.name,
               provider = excluded.provider,
               dimension = excluded.dimension,
               distance = excluded.distance,
-              config_json = excluded.config_json
+              config_json = excluded.config_json,
+              model_fingerprint = excluded.model_fingerprint,
+              fingerprint_algorithm = excluded.fingerprint_algorithm
             """,
             (
                 model.id,
@@ -294,6 +325,8 @@ class Repository:
                 model.dimension,
                 model.distance,
                 json.dumps(model.config, sort_keys=True),
+                model.model_fingerprint,
+                model.fingerprint_algorithm,
                 model.created_at,
             ),
         )
@@ -314,10 +347,18 @@ class Repository:
     ) -> None:
         self.connection.execute(
             """
-            INSERT INTO embedding_runs(id, model_id, started_at, status, config_json)
-            VALUES (?, ?, ?, 'running', ?)
+            INSERT INTO embedding_runs(
+              id, model_id, started_at, status, config_json, owner_pid
+            )
+            VALUES (?, ?, ?, 'running', ?, ?)
             """,
-            (run_id, model_id, started_at, json.dumps(config, sort_keys=True)),
+            (
+                run_id,
+                model_id,
+                started_at,
+                json.dumps(config, sort_keys=True),
+                os.getpid(),
+            ),
         )
 
     def finish_embedding_run(
@@ -332,6 +373,7 @@ class Repository:
         chunks_seen: int,
         chunks_embedded: int,
         chunks_unchanged: int,
+        sources_changed: int = 0,
         errors: int = 0,
         error_code: str | None = None,
         error_message: str | None = None,
@@ -347,6 +389,7 @@ class Repository:
                 chunks_seen = ?,
                 chunks_embedded = ?,
                 chunks_unchanged = ?,
+                sources_changed = ?,
                 errors = ?,
                 error_code = ?,
                 error_message = ?
@@ -361,6 +404,7 @@ class Repository:
                 chunks_seen,
                 chunks_embedded,
                 chunks_unchanged,
+                sources_changed,
                 errors,
                 error_code,
                 error_message,
@@ -372,13 +416,17 @@ class Repository:
         self.connection.execute(
             """
             INSERT INTO vectors(
-              id, model_id, object_type, object_id, text_sha256, dimension, dtype,
-              vector, metadata_json, created_at, updated_at
+              id, model_id, object_type, object_id, text_sha256,
+              source_content_sha256, model_fingerprint, algorithm_version,
+              dimension, dtype, vector, metadata_json, created_at, updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(model_id, object_type, object_id) DO UPDATE SET
               id = excluded.id,
               text_sha256 = excluded.text_sha256,
+              source_content_sha256 = excluded.source_content_sha256,
+              model_fingerprint = excluded.model_fingerprint,
+              algorithm_version = excluded.algorithm_version,
               dimension = excluded.dimension,
               dtype = excluded.dtype,
               vector = excluded.vector,
@@ -391,6 +439,9 @@ class Repository:
                 vector.object_type,
                 vector.object_id,
                 vector.text_sha256,
+                vector.source_content_sha256,
+                vector.model_fingerprint,
+                vector.algorithm_version,
                 vector.dimension,
                 vector.dtype,
                 vector.vector,
@@ -399,6 +450,58 @@ class Repository:
                 vector.updated_at,
             ),
         )
+        self.connection.execute(
+            """
+            DELETE FROM vector_indexes
+            WHERE model_id = ? AND object_type = ?
+            """,
+            (vector.model_id, vector.object_type),
+        )
+
+    def current_vector_source_ids(
+        self,
+        sources: Mapping[tuple[str, str], str],
+    ) -> set[tuple[str, str]]:
+        """Batch-check active source revisions immediately before vector writes."""
+
+        current: set[tuple[str, str]] = set()
+        for object_type in ("document", "chunk"):
+            expected = {
+                object_id: source_hash
+                for (candidate_type, object_id), source_hash in sources.items()
+                if candidate_type == object_type
+            }
+            if not expected:
+                continue
+            placeholders = ", ".join("?" for _ in expected)
+            if object_type == "document":
+                rows = self.connection.execute(
+                    f"""
+                    SELECT id, content_revision_sha256 AS source_hash
+                    FROM documents
+                    WHERE status = 'active' AND id IN ({placeholders})
+                    """,
+                    tuple(expected),
+                ).fetchall()
+            else:
+                rows = self.connection.execute(
+                    f"""
+                    SELECT c.id, c.text_sha256 AS source_hash
+                    FROM chunks c
+                    JOIN documents d ON d.id = c.document_id
+                    WHERE d.status = 'active' AND c.id IN ({placeholders})
+                    """,
+                    tuple(expected),
+                ).fetchall()
+            current.update(
+                (object_type, object_id)
+                for row in rows
+                if (
+                    (object_id := str(row["id"])) in expected
+                    and str(row["source_hash"]) == expected[object_id]
+                )
+            )
+        return current
 
     def get_vector(
         self, model_id: str, object_type: str, object_id: str
@@ -424,6 +527,328 @@ class Repository:
             (model_id, object_type),
         ).fetchall()
         return [_vector_from_row(row) for row in rows]
+
+    def iter_eligible_vector_candidates(
+        self,
+        *,
+        model_id: str,
+        model_name: str,
+        model_provider: str,
+        model_dimension: int,
+        model_distance: str,
+        model_config: Mapping[str, Any],
+        object_type: str,
+        model_fingerprint: str,
+        fingerprint_algorithm: str,
+        algorithm_version: str,
+        include_missing: bool = False,
+        fetch_size: int = 256,
+    ) -> Iterable[VectorCandidate]:
+        """Stream active vectors whose stored provenance matches their source."""
+
+        if object_type == "document":
+            status_clause = (
+                "d.status IN ('active', 'missing')"
+                if include_missing
+                else "d.status = 'active'"
+            )
+            sql = f"""
+                SELECT
+                  v.id AS vector_id,
+                  v.object_id,
+                  d.relative_path,
+                  NULL AS chunk_index,
+                  v.dimension,
+                  v.vector,
+                  v.source_content_sha256,
+                  v.text_sha256,
+                  v.updated_at,
+                  v.model_fingerprint,
+                  v.algorithm_version,
+                  v.dtype,
+                  v.metadata_json
+                FROM vectors v
+                JOIN embedding_models m ON m.id = v.model_id
+                JOIN documents d ON d.id = v.object_id
+                WHERE v.model_id = ?
+                  AND v.object_type = 'document'
+                  AND m.name = ?
+                  AND m.provider = ?
+                  AND m.dimension = ?
+                  AND m.distance = ?
+                  AND m.config_json = ?
+                  AND {status_clause}
+                  AND v.source_content_sha256 = d.content_revision_sha256
+                  AND length(v.source_content_sha256) = 64
+                  AND v.source_content_sha256 NOT GLOB '*[^0-9a-f]*'
+                  AND length(v.text_sha256) = 64
+                  AND v.text_sha256 NOT GLOB '*[^0-9a-f]*'
+                  AND v.model_fingerprint = ?
+                  AND m.model_fingerprint = ?
+                  AND m.fingerprint_algorithm = ?
+                  AND v.algorithm_version = ?
+                  AND typeof(v.dimension) = 'integer'
+                  AND typeof(m.dimension) = 'integer'
+                  AND v.dimension > 0
+                  AND v.dimension = m.dimension
+                  AND v.dtype = 'float32'
+                  AND typeof(v.vector) = 'blob'
+                  AND length(v.vector) = v.dimension * 4
+                ORDER BY d.relative_path, v.object_id
+            """
+        elif object_type == "chunk":
+            sql = """
+                SELECT
+                  v.id AS vector_id,
+                  v.object_id,
+                  d.relative_path,
+                  c.chunk_index,
+                  v.dimension,
+                  v.vector,
+                  v.source_content_sha256,
+                  v.text_sha256,
+                  v.updated_at,
+                  v.model_fingerprint,
+                  v.algorithm_version,
+                  v.dtype,
+                  v.metadata_json
+                FROM vectors v
+                JOIN embedding_models m ON m.id = v.model_id
+                JOIN chunks c ON c.id = v.object_id
+                JOIN documents d ON d.id = c.document_id
+                WHERE v.model_id = ?
+                  AND v.object_type = 'chunk'
+                  AND m.name = ?
+                  AND m.provider = ?
+                  AND m.dimension = ?
+                  AND m.distance = ?
+                  AND m.config_json = ?
+                  AND d.status = 'active'
+                  AND v.source_content_sha256 = c.text_sha256
+                  AND length(v.source_content_sha256) = 64
+                  AND v.source_content_sha256 NOT GLOB '*[^0-9a-f]*'
+                  AND length(v.text_sha256) = 64
+                  AND v.text_sha256 NOT GLOB '*[^0-9a-f]*'
+                  AND v.model_fingerprint = ?
+                  AND m.model_fingerprint = ?
+                  AND m.fingerprint_algorithm = ?
+                  AND v.algorithm_version = ?
+                  AND typeof(v.dimension) = 'integer'
+                  AND typeof(m.dimension) = 'integer'
+                  AND v.dimension > 0
+                  AND v.dimension = m.dimension
+                  AND v.dtype = 'float32'
+                  AND typeof(v.vector) = 'blob'
+                  AND length(v.vector) = v.dimension * 4
+                ORDER BY d.relative_path, c.chunk_index, v.object_id
+            """
+        else:
+            return
+        cursor = self.connection.execute(
+            sql,
+            (
+                model_id,
+                model_name,
+                model_provider,
+                model_dimension,
+                model_distance,
+                json.dumps(dict(model_config), sort_keys=True),
+                model_fingerprint,
+                model_fingerprint,
+                fingerprint_algorithm,
+                algorithm_version,
+            ),
+        )
+        while rows := cursor.fetchmany(max(1, fetch_size)):
+            for row in rows:
+                try:
+                    metadata = load_json_object(row["metadata_json"])
+                except StoredJSONError:
+                    continue
+                yield VectorCandidate(
+                    object_id=str(row["object_id"]),
+                    relative_path=str(row["relative_path"]),
+                    chunk_index=(
+                        int(row["chunk_index"])
+                        if row["chunk_index"] is not None
+                        else None
+                    ),
+                    dimension=int(row["dimension"]),
+                    blob=bytes(row["vector"]),
+                    source_content_sha256=str(row["source_content_sha256"]),
+                    vector_id=str(row["vector_id"]),
+                    text_sha256=str(row["text_sha256"]),
+                    updated_at=str(row["updated_at"]),
+                    model_fingerprint=str(row["model_fingerprint"]),
+                    algorithm_version=str(row["algorithm_version"]),
+                    dtype=str(row["dtype"]),
+                    metadata=metadata,
+                )
+
+    def get_semantic_result_sources(
+        self,
+        *,
+        model_id: str,
+        model_name: str,
+        model_provider: str,
+        model_dimension: int,
+        model_distance: str,
+        model_config: Mapping[str, Any],
+        model_fingerprint: str,
+        fingerprint_algorithm: str,
+        object_type: str,
+        object_ids: Iterable[str],
+        include_missing: bool = False,
+    ) -> dict[str, SemanticResultSource]:
+        """Load display metadata and bounded-source text in one query."""
+
+        ids = tuple(dict.fromkeys(str(object_id) for object_id in object_ids))
+        if not ids:
+            return {}
+        placeholders = ", ".join("?" for _ in ids)
+        if object_type == "document":
+            status_clause = (
+                "d.status IN ('active', 'missing')"
+                if include_missing
+                else "d.status = 'active'"
+            )
+            sql = f"""
+                SELECT
+                  d.id AS document_id,
+                  d.corpus_id AS document_corpus_id,
+                  d.path AS document_path,
+                  d.relative_path AS document_relative_path,
+                  d.file_type AS document_file_type,
+                  d.title AS document_title,
+                  d.sha256 AS document_sha256,
+                  d.content_revision_sha256 AS document_content_revision_sha256,
+                  d.size_bytes AS document_size_bytes,
+                  d.mtime_ns AS document_mtime_ns,
+                  d.char_count AS document_char_count,
+                  d.status AS document_status,
+                  d.first_seen_at AS document_first_seen_at,
+                  d.last_seen_at AS document_last_seen_at,
+                  d.updated_at AS document_updated_at,
+                  dt.text AS source_text,
+                  NULL AS chunk_index,
+                  d.content_revision_sha256 AS current_source_sha256,
+                  cv.id AS current_vector_id,
+                  cv.text_sha256 AS current_vector_text_sha256,
+                  cv.updated_at AS current_vector_updated_at,
+                  cv.vector AS current_vector_blob,
+                  cv.dimension AS current_vector_dimension,
+                  cv.dtype AS current_vector_dtype,
+                  cv.model_fingerprint AS current_vector_model_fingerprint,
+                  cv.algorithm_version AS current_vector_algorithm_version
+                FROM documents d
+                JOIN document_texts dt ON dt.document_id = d.id
+                JOIN vectors cv
+                  ON cv.model_id = ?
+                 AND cv.object_type = 'document'
+                 AND cv.object_id = d.id
+                 AND cv.source_content_sha256 = d.content_revision_sha256
+                 AND typeof(cv.vector) = 'blob'
+                 AND typeof(cv.dimension) = 'integer'
+                JOIN embedding_models cm
+                  ON cm.id = cv.model_id
+                 AND cm.name = ?
+                 AND cm.provider = ?
+                 AND cm.dimension = ?
+                 AND cm.distance = ?
+                 AND cm.config_json = ?
+                 AND cm.model_fingerprint = ?
+                 AND cm.fingerprint_algorithm = ?
+                WHERE d.id IN ({placeholders}) AND {status_clause}
+            """
+        elif object_type == "chunk":
+            sql = f"""
+                SELECT
+                  c.id AS object_id,
+                  d.id AS document_id,
+                  d.corpus_id AS document_corpus_id,
+                  d.path AS document_path,
+                  d.relative_path AS document_relative_path,
+                  d.file_type AS document_file_type,
+                  d.title AS document_title,
+                  d.sha256 AS document_sha256,
+                  d.content_revision_sha256 AS document_content_revision_sha256,
+                  d.size_bytes AS document_size_bytes,
+                  d.mtime_ns AS document_mtime_ns,
+                  d.char_count AS document_char_count,
+                  d.status AS document_status,
+                  d.first_seen_at AS document_first_seen_at,
+                  d.last_seen_at AS document_last_seen_at,
+                  d.updated_at AS document_updated_at,
+                  c.text AS source_text,
+                  c.chunk_index AS chunk_index,
+                  c.text_sha256 AS current_source_sha256,
+                  cv.id AS current_vector_id,
+                  cv.text_sha256 AS current_vector_text_sha256,
+                  cv.updated_at AS current_vector_updated_at,
+                  cv.vector AS current_vector_blob,
+                  cv.dimension AS current_vector_dimension,
+                  cv.dtype AS current_vector_dtype,
+                  cv.model_fingerprint AS current_vector_model_fingerprint,
+                  cv.algorithm_version AS current_vector_algorithm_version
+                FROM chunks c
+                JOIN documents d ON d.id = c.document_id
+                JOIN vectors cv
+                  ON cv.model_id = ?
+                 AND cv.object_type = 'chunk'
+                 AND cv.object_id = c.id
+                 AND cv.source_content_sha256 = c.text_sha256
+                 AND typeof(cv.vector) = 'blob'
+                 AND typeof(cv.dimension) = 'integer'
+                JOIN embedding_models cm
+                  ON cm.id = cv.model_id
+                 AND cm.name = ?
+                 AND cm.provider = ?
+                 AND cm.dimension = ?
+                 AND cm.distance = ?
+                 AND cm.config_json = ?
+                 AND cm.model_fingerprint = ?
+                 AND cm.fingerprint_algorithm = ?
+                WHERE c.id IN ({placeholders}) AND d.status = 'active'
+            """
+        else:
+            return {}
+        rows = self.connection.execute(
+            sql,
+            (
+                model_id,
+                model_name,
+                model_provider,
+                model_dimension,
+                model_distance,
+                json.dumps(dict(model_config), sort_keys=True),
+                model_fingerprint,
+                fingerprint_algorithm,
+                *ids,
+            ),
+        ).fetchall()
+        result: dict[str, SemanticResultSource] = {}
+        for row in rows:
+            document = _document_from_prefix(row, "document_")
+            object_id = (
+                document.id if object_type == "document" else str(row["object_id"])
+            )
+            result[object_id] = SemanticResultSource(
+                document=document,
+                text=str(row["source_text"]),
+                chunk_index=(
+                    int(row["chunk_index"]) if row["chunk_index"] is not None else None
+                ),
+                source_content_sha256=str(row["current_source_sha256"]),
+                vector_id=str(row["current_vector_id"]),
+                vector_text_sha256=str(row["current_vector_text_sha256"]),
+                vector_updated_at=str(row["current_vector_updated_at"]),
+                vector_blob=bytes(row["current_vector_blob"]),
+                vector_dimension=int(row["current_vector_dimension"]),
+                vector_dtype=str(row["current_vector_dtype"]),
+                vector_model_fingerprint=str(row["current_vector_model_fingerprint"]),
+                vector_algorithm_version=str(row["current_vector_algorithm_version"]),
+            )
+        return result
 
     def vector_stats(self) -> dict[str, object]:
         model_rows = self.connection.execute(
@@ -475,6 +900,8 @@ class Repository:
                     "provider": str(row["provider"]),
                     "dimension": int(row["dimension"]),
                     "distance": str(row["distance"]),
+                    "model_fingerprint": str(row["model_fingerprint"]),
+                    "fingerprint_algorithm": str(row["fingerprint_algorithm"]),
                     "config": load_json_object(row["config_json"]),
                     "created_at": str(row["created_at"]),
                 }
@@ -501,6 +928,9 @@ class Repository:
                     "object_type": str(row["object_type"]),
                     "index_path": str(row["index_path"]),
                     "vector_count": int(row["vector_count"]),
+                    "model_fingerprint": str(row["model_fingerprint"]),
+                    "algorithm_version": str(row["algorithm_version"]),
+                    "vector_set_sha256": str(row["vector_set_sha256"]),
                     "created_at": str(row["created_at"]),
                     "metadata": load_json_object(row["metadata_json"]),
                 }
@@ -853,11 +1283,17 @@ class Repository:
         self.connection.execute(
             """
             INSERT INTO zotero_import_runs(
-              id, source_id, started_at, status, config_json
+              id, source_id, started_at, status, config_json, owner_pid
             )
-            VALUES (?, ?, ?, 'running', ?)
+            VALUES (?, ?, ?, 'running', ?, ?)
             """,
-            (run_id, source_id, started_at, json.dumps(dict(config), sort_keys=True)),
+            (
+                run_id,
+                source_id,
+                started_at,
+                json.dumps(dict(config), sort_keys=True),
+                os.getpid(),
+            ),
         )
 
     def finish_zotero_import_run(
@@ -1769,20 +2205,26 @@ class Repository:
     def upsert_document(
         self, document: IndexedDocument, text: str, chunks: list[IndexedChunk]
     ) -> None:
+        content_revision = document_content_revision_sha256(
+            title=document.title,
+            relative_path=document.relative_path,
+            text=text,
+        )
         self._delete_vectors_for_document(document.id)
         self.connection.execute(
             """
             INSERT INTO documents(
               id, corpus_id, path, relative_path, file_type, title, sha256,
-              size_bytes, mtime_ns, char_count, status, first_seen_at,
-              last_seen_at, updated_at
+              content_revision_sha256, size_bytes, mtime_ns, char_count,
+              status, first_seen_at, last_seen_at, updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
               path = excluded.path,
               file_type = excluded.file_type,
               title = excluded.title,
               sha256 = excluded.sha256,
+              content_revision_sha256 = excluded.content_revision_sha256,
               size_bytes = excluded.size_bytes,
               mtime_ns = excluded.mtime_ns,
               char_count = excluded.char_count,
@@ -1798,6 +2240,7 @@ class Repository:
                 document.file_type,
                 document.title,
                 document.sha256,
+                content_revision,
                 document.size_bytes,
                 document.mtime_ns,
                 document.char_count,
@@ -1820,8 +2263,10 @@ class Repository:
         )
         self.connection.executemany(
             """
-            INSERT INTO chunks(id, document_id, chunk_index, text, char_count)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT INTO chunks(
+              id, document_id, chunk_index, text, char_count, text_sha256
+            )
+            VALUES (?, ?, ?, ?, ?, ?)
             """,
             [
                 (
@@ -1830,6 +2275,7 @@ class Repository:
                     chunk.chunk_index,
                     chunk.text,
                     chunk.char_count,
+                    chunk.text_sha256,
                 )
                 for chunk in chunks
             ],
@@ -2135,6 +2581,7 @@ def _document_from_row(row: sqlite3.Row) -> IndexedDocument:
         first_seen_at=str(row["first_seen_at"]),
         last_seen_at=str(row["last_seen_at"]),
         updated_at=str(row["updated_at"]),
+        content_revision_sha256=str(row["content_revision_sha256"]),
     )
 
 
@@ -2154,6 +2601,7 @@ def _document_from_prefix(row: sqlite3.Row, prefix: str) -> IndexedDocument:
         first_seen_at=str(row[f"{prefix}first_seen_at"]),
         last_seen_at=str(row[f"{prefix}last_seen_at"]),
         updated_at=str(row[f"{prefix}updated_at"]),
+        content_revision_sha256=str(row[f"{prefix}content_revision_sha256"]),
     )
 
 
@@ -2165,6 +2613,8 @@ def _embedding_model_from_row(row: sqlite3.Row) -> EmbeddingModelRecord:
         dimension=int(row["dimension"]),
         distance=str(row["distance"]),
         config=load_json_object(row["config_json"]),
+        model_fingerprint=str(row["model_fingerprint"]),
+        fingerprint_algorithm=str(row["fingerprint_algorithm"]),
         created_at=str(row["created_at"]),
     )
 
@@ -2176,6 +2626,9 @@ def _vector_from_row(row: sqlite3.Row) -> VectorRecord:
         object_type=str(row["object_type"]),
         object_id=str(row["object_id"]),
         text_sha256=str(row["text_sha256"]),
+        source_content_sha256=str(row["source_content_sha256"]),
+        model_fingerprint=str(row["model_fingerprint"]),
+        algorithm_version=str(row["algorithm_version"]),
         dimension=int(row["dimension"]),
         dtype=str(row["dtype"]),
         vector=bytes(row["vector"]),
@@ -2201,6 +2654,7 @@ def _embedding_run_payload(row: sqlite3.Row | None) -> dict[str, object] | None:
         "chunks_seen": int(row["chunks_seen"]),
         "chunks_embedded": int(row["chunks_embedded"]),
         "chunks_unchanged": int(row["chunks_unchanged"]),
+        "sources_changed": int(row["sources_changed"]),
         "errors": int(row["errors"]),
         "config": load_json_object(row["config_json"]),
     }

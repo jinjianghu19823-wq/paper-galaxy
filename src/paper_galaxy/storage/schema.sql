@@ -32,6 +32,7 @@ CREATE TABLE IF NOT EXISTS scan_runs (
   status TEXT NOT NULL,
   error_code TEXT,
   error_message TEXT,
+  owner_pid INTEGER,
   FOREIGN KEY(corpus_id) REFERENCES corpora(id)
 );
 
@@ -43,6 +44,7 @@ CREATE TABLE IF NOT EXISTS documents (
   file_type TEXT NOT NULL,
   title TEXT NOT NULL,
   sha256 TEXT NOT NULL,
+  content_revision_sha256 TEXT NOT NULL DEFAULT 'legacy-unknown',
   size_bytes INTEGER NOT NULL,
   mtime_ns INTEGER NOT NULL,
   char_count INTEGER NOT NULL,
@@ -66,6 +68,7 @@ CREATE TABLE IF NOT EXISTS chunks (
   chunk_index INTEGER NOT NULL,
   text TEXT NOT NULL,
   char_count INTEGER NOT NULL,
+  text_sha256 TEXT NOT NULL DEFAULT 'legacy-unknown',
   FOREIGN KEY(document_id) REFERENCES documents(id) ON DELETE CASCADE,
   UNIQUE(document_id, chunk_index)
 );
@@ -106,6 +109,8 @@ CREATE TABLE IF NOT EXISTS embedding_models (
   dimension INTEGER NOT NULL,
   distance TEXT NOT NULL,
   config_json TEXT NOT NULL DEFAULT '{}',
+  model_fingerprint TEXT NOT NULL DEFAULT 'legacy-unknown',
+  fingerprint_algorithm TEXT NOT NULL DEFAULT 'legacy-unknown',
   created_at TEXT NOT NULL,
   UNIQUE(name, provider, dimension, distance, config_json)
 );
@@ -116,6 +121,9 @@ CREATE TABLE IF NOT EXISTS vectors (
   object_type TEXT NOT NULL,
   object_id TEXT NOT NULL,
   text_sha256 TEXT NOT NULL,
+  source_content_sha256 TEXT NOT NULL DEFAULT 'legacy-unknown',
+  model_fingerprint TEXT NOT NULL DEFAULT 'legacy-unknown',
+  algorithm_version TEXT NOT NULL DEFAULT 'legacy-unknown',
   dimension INTEGER NOT NULL,
   dtype TEXT NOT NULL,
   vector BLOB NOT NULL,
@@ -138,10 +146,12 @@ CREATE TABLE IF NOT EXISTS embedding_runs (
   chunks_seen INTEGER NOT NULL DEFAULT 0,
   chunks_embedded INTEGER NOT NULL DEFAULT 0,
   chunks_unchanged INTEGER NOT NULL DEFAULT 0,
+  sources_changed INTEGER NOT NULL DEFAULT 0,
   errors INTEGER NOT NULL DEFAULT 0,
   config_json TEXT NOT NULL DEFAULT '{}',
   error_code TEXT,
   error_message TEXT,
+  owner_pid INTEGER,
   FOREIGN KEY(model_id) REFERENCES embedding_models(id)
 );
 
@@ -151,6 +161,9 @@ CREATE TABLE IF NOT EXISTS vector_indexes (
   object_type TEXT NOT NULL,
   index_path TEXT NOT NULL,
   vector_count INTEGER NOT NULL,
+  model_fingerprint TEXT NOT NULL DEFAULT 'legacy-unknown',
+  algorithm_version TEXT NOT NULL DEFAULT 'legacy-unknown',
+  vector_set_sha256 TEXT NOT NULL DEFAULT 'legacy-unknown',
   created_at TEXT NOT NULL,
   metadata_json TEXT NOT NULL DEFAULT '{}',
   FOREIGN KEY(model_id) REFERENCES embedding_models(id)
@@ -248,6 +261,7 @@ CREATE TABLE IF NOT EXISTS zotero_import_runs (
   config_json TEXT NOT NULL DEFAULT '{}',
   error_code TEXT,
   error_message TEXT,
+  owner_pid INTEGER,
   FOREIGN KEY(source_id) REFERENCES zotero_sources(id)
 );
 
@@ -366,6 +380,9 @@ CREATE INDEX IF NOT EXISTS idx_documents_sha256
 
 CREATE INDEX IF NOT EXISTS idx_chunks_document_id
   ON chunks(document_id);
+
+CREATE INDEX IF NOT EXISTS idx_chunks_text_sha256
+  ON chunks(text_sha256);
 
 CREATE INDEX IF NOT EXISTS idx_scan_runs_corpus_started_at
   ON scan_runs(corpus_id, started_at);

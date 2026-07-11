@@ -14,6 +14,7 @@ from itertools import pairwise
 from pathlib import Path, PurePosixPath
 from typing import TypedDict
 
+from paper_galaxy.processes import process_is_alive as _process_is_alive
 from paper_galaxy.storage.locking import (
     PROJECT_LOCK_MARKER,
     PROJECT_LOCK_RELATIVE_PATH,
@@ -519,18 +520,6 @@ def _sha256_file(path: Path) -> str:
         while chunk := handle.read(1024 * 1024):
             digest.update(chunk)
     return digest.hexdigest()
-
-
-def _process_is_alive(pid: int) -> bool:
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True
-    except OSError as exc:
-        return exc.errno != errno.ESRCH
-    return True
 
 
 def _project_publish_plan(

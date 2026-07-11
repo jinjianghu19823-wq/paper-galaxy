@@ -28,6 +28,7 @@ from paper_galaxy.storage.migrations import (
     read_schema_version,
     validate_schema_capability,
 )
+from paper_galaxy.storage.run_recovery import recover_interrupted_runs
 
 DEFAULT_DATABASE_PATH = ".paper-galaxy/paper_galaxy.sqlite3"
 
@@ -242,6 +243,7 @@ def ensure_database_ready(
         try:
             initialize_database(connection)
             _configure_writer_journal(connection, database_path)
+            recover_interrupted_runs(connection)
         except DatabaseError:
             raise
         except sqlite3.Error as exc:

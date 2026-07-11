@@ -26,6 +26,7 @@ from paper_galaxy.storage.sqlite import (
 )
 
 EXTRACTOR_VERSION = "4"
+CHUNKING_VERSION = "paper-galaxy-character-overlap-v1"
 
 
 def index_corpus(
@@ -139,6 +140,9 @@ def _index_with_repository(
         include_images=include_images,
         ocr=ocr,
         ocr_language=ocr_language,
+        min_chars=min_chars,
+        chunk_size=chunk_size,
+        chunk_overlap=chunk_overlap,
     )
     seen_document_ids: set[str] = set()
     report_payloads: list[dict[str, object]] = []
@@ -512,7 +516,14 @@ def _utc_now() -> str:
 
 
 def _extraction_fingerprint(
-    *, include_pdf: bool, include_images: bool, ocr: bool, ocr_language: str
+    *,
+    include_pdf: bool,
+    include_images: bool,
+    ocr: bool,
+    ocr_language: str,
+    min_chars: int,
+    chunk_size: int,
+    chunk_overlap: int,
 ) -> str:
     payload = {
         "extractor_version": EXTRACTOR_VERSION,
@@ -520,6 +531,10 @@ def _extraction_fingerprint(
         "include_images": include_images,
         "ocr": ocr,
         "ocr_language": ocr_language,
+        "min_chars": min_chars,
+        "chunking_version": CHUNKING_VERSION,
+        "chunk_size": chunk_size,
+        "chunk_overlap": chunk_overlap,
     }
     digest = hashlib.sha256(
         json.dumps(payload, sort_keys=True).encode("utf-8")

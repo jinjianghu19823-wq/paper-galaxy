@@ -4,6 +4,14 @@
 
 ## Unreleased
 
+- Added schema v8 vector provenance and lifecycle hardening: exact local-model
+  fingerprints, collision-safe canonical document revisions,
+  source-revision compare-and-swap writes, automatic dead-owner
+  run recovery, active/provenance-only semantic reads, bounded-memory NumPy
+  top-k with batched metadata loading, expanded vector validation, and an
+  explicit dry-run-first stale-vector prune. Replaced Windows `os.kill(pid, 0)`
+  probes in run and backup recovery with non-destructive process handles, and
+  removed the unused FAISS extra.
 - Replaced implicit SQLite initialization with schema v7 transactional
   bootstrap/migrations, explicit read-only/read-write/migration connections,
   future-schema refusal, strict schema/JSON validation, short audited write

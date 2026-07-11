@@ -234,6 +234,7 @@ paper-galaxy embed --project-dir . --model /path/to/local/sentence-transformer-m
 paper-galaxy semantic-search "operator learning for PDEs" --project-dir . --model /path/to/local/sentence-transformer-model
 paper-galaxy compare-neighbors neural_operators/fourier_neural_operator.md --project-dir . --model /path/to/local/sentence-transformer-model
 paper-galaxy vector-stats --project-dir .
+paper-galaxy prune-stale-vectors --project-dir .
 paper-galaxy clusters --project-dir .
 paper-galaxy explain-pair neural_operators/fourier_neural_operator.md neural_operators/deep_operator_network.txt --project-dir .
 paper-galaxy rename-cluster CLUSTER_SIGNATURE "Neural Operators" --project-dir .
@@ -357,20 +358,36 @@ Database files live under `.paper-galaxy/` and are gitignored.
 
 `paper-galaxy embed` is the Phase 5 local semantic layer. It reads active
 indexed documents and chunks, constructs transparent embedding text, stores
-normalized float32 vectors in SQLite, and skips unchanged vectors using the
-exact embedded text hash unless `--force` is set. Document vectors use the title
-three times, the corpus-relative path once, and the first `--max-document-chars`
-characters of extracted text. Chunk vectors use chunk text capped by
-`--max-chunk-chars`.
+normalized float32 vectors in SQLite, and skips unchanged vectors only when
+the embedding input, source revision, exact model-content fingerprint,
+dimension, and algorithm version all still match. A source that changes during
+local inference fails the pre-write compare-and-swap and is counted rather than
+receiving a stale vector. A document source revision hashes its title,
+corpus-relative path, and full extracted text through a namespaced canonical
+JSON array, so field-boundary characters cannot collide and a forced
+re-extraction cannot reuse a vector merely because the source-file bytes stayed
+unchanged. Document
+vectors use the title three times, the
+corpus-relative path once, and the first `--max-document-chars` characters of
+extracted text. Chunk vectors use chunk text capped by `--max-chunk-chars`.
 
 `paper-galaxy semantic-search` embeds the query locally with the same model and
-searches stored document or chunk vectors. It does not build vectors or download
-models implicitly. `paper-galaxy compare-neighbors` shows three rankings for a
+searches only active, provenance-matching document or chunk vectors. It uses a
+bounded-memory NumPy top-k and batched metadata query rather than loading every
+vector result through N+1 queries. It does not build vectors or download models
+implicitly. `paper-galaxy compare-neighbors` shows three rankings for a
 document: TF-IDF cosine neighbors, dense embedding neighbors, and a configurable
 hybrid score. If vectors were built with `--no-normalize`, pass `--no-normalize`
 to `semantic-search` and `compare-neighbors` so they use the matching local
-model identity. `paper-galaxy vector-stats` reports registered models, vector
-counts, and the last embedding run.
+model identity. Neighbor comparison retries an optimistic SQLite snapshot if
+indexing commits between its document, TF-IDF, and dense-vector reads; it never
+combines old TF-IDF text with new dense metadata. `paper-galaxy vector-stats`
+reports registered models, vector
+counts, and the last embedding run. `paper-galaxy prune-stale-vectors` is a
+read-only report by default; deleting only stale SQLite vector/index-metadata
+rows requires `--apply --yes`. It never deletes a source corpus, database,
+backup, or user file. The maintained implementation is exact blockwise NumPy;
+the optional install no longer advertises an unused FAISS path.
 
 Phase 6 adds local explainability commands. `paper-galaxy clusters` lists
 generated cluster labels, stable cluster signatures, representative documents,

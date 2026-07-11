@@ -61,8 +61,11 @@ source for nearest-neighbor search and proximity explanations.
 - `embeddings.builder`: local document/chunk embedding build orchestration.
 - `embeddings.search`: SQLite-backed semantic search and vector stats.
 - `embeddings.similarity`: TF-IDF, dense, and hybrid neighbor comparison.
-- `embeddings.index`: optional local vector index path and FAISS availability
-  helpers.
+- `embeddings.ranking`: bounded-memory NumPy cosine scoring and deterministic
+  top-k selection.
+- `embeddings.maintenance`: explicit dry-run-first stale-vector pruning.
+- `embeddings.index`: compatibility path helper for build-owned local indexes;
+  no FAISS implementation is advertised in this checkpoint.
 - `maps.runs`: persisted saved map run creation, lookup, and JSON export.
 - `validation`: project health checks for config, schema, FTS, counts, dangling
   rows, optional dependencies, and map run consistency.
@@ -170,7 +173,7 @@ The static Phase 1 `scan` command remains file-based and independent.
 
 ### SQLite lifecycle and connection boundaries
 
-Schema version 7 replaces implicit `CREATE IF NOT EXISTS` initialization with
+Schema version 8 replaces implicit `CREATE IF NOT EXISTS` initialization with
 an explicit, forward-only lifecycle:
 
 - A new database is bootstrapped directly at the current schema in one explicit
@@ -178,9 +181,14 @@ an explicit, forward-only lifecycle:
   `schema_migrations` and commits before returning.
 - The oldest supported historical schema is v6. Its fixture is reconstructed
   from repository history and upgraded only through the registered v6 -> v7
-  migration. v7 adds migration history and structured `error_code` /
+  -> v8 sequence. v7 adds migration history and structured `error_code` /
   `error_message` fields to scan, embedding, and Zotero import runs, plus a
-  private child-version manifest for monotonic Zotero-derived documents.
+  private child-version manifest for monotonic Zotero-derived documents. v8
+  records a document content revision over title, relative path, and extracted
+  text, plus chunk hashes, model fingerprints, vector source/model/algorithm
+  provenance, run owner PIDs, and vector-index provenance. Existing vectors
+  whose freshness cannot be reconstructed remain marked `legacy-unknown` and
+  are excluded from semantic results until rebuilt.
 - Migration takes a unique, mode-`0600` snapshot with SQLite's online backup
   API before changing schema, then verifies the snapshot with `quick_check` and
   `foreign_key_check`. It never replaces an existing backup or the live
@@ -240,7 +248,9 @@ Project validation now runs through the read-only connection and reports:
 - schema tables/columns, PK/UNIQUE/FK/index/FTS identity, and migration history;
 - FTS/document/chunk/text presence and content consistency;
 - orphan model/document/chunk vectors, dimensions, BLOB sizes, invalid JSON,
-  stale provenance, and legacy vectors whose freshness cannot be proven; and
+  invalid object/dtype/non-finite values, source/model/algorithm provenance,
+  stale index metadata, and legacy vectors whose freshness cannot be proven;
+  and
 - invalid or lagging Zotero cursors/record versions and filter-profile
   inconsistencies, including child/collection/attachment versions and child
   manifest shape.
@@ -281,6 +291,8 @@ the stable build-owned marker. A sibling prepared transaction is itself an
 operational connection gate until recovery. Dry-run never creates that marker.
 Private staging roots carry versioned operation/target/PID ownership metadata;
 later matching invocations conservatively remove dead owned orphans only.
+PID liveness checks use non-destructive Windows process handles; the POSIX
+signal-zero probe is never called on Windows.
 
 The v2 manifest records explicit project-relative database and vector-index
 destinations. Custom internal database paths round-trip. Absolute or escaping
@@ -299,13 +311,20 @@ in a short atomic unit. A single extraction failure is recorded for that file
 and does not poison the whole corpus run; an orchestration or sidecar-output
 failure marks the run `failed` (or `interrupted` for interruption) with a safe,
 bounded error code/message instead of leaving it permanently `running`.
+Explicit writer readiness also checks the recorded owner PID for unfinished
+scan, embedding, and Zotero runs. Rows owned by a dead process become
+`interrupted` in one short transaction; live owners are never rewritten and
+read-only connections perform no recovery writes.
 
 Embedding inference and vector encoding also happen outside the write
 transaction. Validated vector records are committed in bounded batches, and
 the audit row records only successfully committed progress if a later batch
-fails. Replacing or deactivating a document removes its document/chunk vectors
-and invalidates affected vector-index metadata; an identical Zotero sync keeps
-unchanged chunks and vectors intact. Zotero network fetching, normalization,
+fails. Immediately before each batch write, the repository compares the
+document or chunk source hash again. An inference result whose source changed
+in flight is discarded and counted as `sources_changed`. Replacing or
+deactivating a document removes its document/chunk vectors, and every vector
+write invalidates affected vector-index metadata; an identical Zotero sync
+keeps unchanged chunks and vectors intact. Zotero network fetching, normalization,
 and PDF extraction do not occupy
 one long writer transaction: the run is registered before fetching, item
 changes commit in short units, and the source cursor advances only in the final
@@ -521,20 +540,41 @@ Model loading is intentionally strict. `--model PATH_OR_NAME` loads a local path
 when it exists. A non-local name is refused by default with an explanation that
 remote or cached model names are disabled to avoid hidden downloads. Only
 `--allow-model-download` lets Sentence Transformers resolve or download a model
-name.
+name. Local model identity hashes the relative file layout, sizes, and exact
+bytes before and after loading; a changed directory is rejected. Explicitly
+allowed non-local models must expose a deterministic loaded state fingerprint.
+Model path/name alone is never accepted as weight identity.
 
 Document embedding text repeats the title three times, includes the
 corpus-relative path once, and appends the first configured slice of extracted
 text. Chunk embeddings use chunk text directly. Missing and unindexed documents
-are not embedded by default.
+are not embedded by default. The vector source revision is independent from the
+raw file hash: document revisions cover title, relative path, and full extracted
+text using namespaced canonical JSON rather than ambiguous delimiter joining,
+while chunk revisions hash exact chunk text. This also catches extraction
+algorithm changes that produce different text from identical source bytes.
 
-`paper-galaxy semantic-search` embeds the query locally and computes cosine
-similarity against stored vectors in SQLite. It does not build vectors
-implicitly and does not require FAISS for correctness. `paper-galaxy
+`paper-galaxy semantic-search` embeds the query locally and streams only active
+vectors whose source hash, model fingerprint, dimension, and algorithm version
+match current records. NumPy scores bounded blocks and retains only the exact,
+deterministically tie-broken top-k; display metadata is loaded in one batch, so
+search no longer performs per-vector document/text queries. It does not build
+vectors implicitly. `paper-galaxy
 compare-neighbors` computes TF-IDF neighbors from the inspectable baseline,
 dense neighbors from stored vectors, and hybrid neighbors with configurable
-weights. `/api/vector-stats` exposes model and vector counts to the local web
+weights. Its document, text, and vector reads use an optimistic SQLite
+`data_version` snapshot with bounded retries, preventing concurrent indexing
+from mixing stale TF-IDF scores with current dense results without holding a
+long read lock. `/api/vector-stats` exposes model and vector counts to the local web
 app without loading embedding models.
+
+`paper-galaxy prune-stale-vectors --project-dir .` is read-only by default and
+reports orphaned, inactive, stale, malformed, or unverifiable vector rows. The
+bounded deletion path requires both `--apply` and `--yes`; it removes only
+SQLite vector/index-metadata rows and never source documents, databases,
+backups, or on-disk user files. FAISS is not installed or claimed by the
+embedding extra in this checkpoint; exact blockwise NumPy scoring is the
+maintained implementation.
 
 ## Phase 6 Explainability And Labeling
 

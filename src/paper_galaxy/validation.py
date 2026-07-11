@@ -4,10 +4,20 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import math
 import sqlite3
+import struct
 from pathlib import Path
 from typing import Any
 
+from paper_galaxy.embeddings.builder import (
+    CHUNK_VECTOR_ALGORITHM_VERSION,
+    DOCUMENT_VECTOR_ALGORITHM_VERSION,
+)
+from paper_galaxy.embeddings.models import (
+    LEGACY_UNKNOWN_PROVENANCE,
+    stable_embedding_model_id,
+)
 from paper_galaxy.errors import DatabaseError, UnsupportedSchemaError
 from paper_galaxy.paths import project_config_path
 from paper_galaxy.storage.json import StoredJSONError, load_json_list, load_json_object
@@ -16,6 +26,7 @@ from paper_galaxy.storage.migrations import (
     SCHEMA_VERSION,
     validate_schema_capability,
 )
+from paper_galaxy.storage.provenance import document_content_revision_sha256
 from paper_galaxy.storage.repository import Repository
 from paper_galaxy.storage.sqlite import (
     connect_diagnostic_read_only,
@@ -29,7 +40,6 @@ OPTIONAL_DEPENDENCIES: tuple[tuple[str, str], ...] = (
     ("sklearn", "sklearn"),
     ("umap", "umap"),
     ("sentence_transformers", "sentence_transformers"),
-    ("faiss", "faiss"),
     ("fastapi", "fastapi"),
     ("uvicorn", "uvicorn"),
     ("plotly", "plotly"),
@@ -75,21 +85,53 @@ REQUIRED_COLUMNS: dict[str, set[str]] = {
         "status",
         "error_code",
         "error_message",
+        "owner_pid",
     },
-    "documents": {"id", "relative_path", "sha256", "status"},
+    "documents": {
+        "id",
+        "relative_path",
+        "sha256",
+        "content_revision_sha256",
+        "status",
+    },
     "document_texts": {"document_id", "text"},
-    "chunks": {"id", "document_id", "chunk_index", "text"},
-    "embedding_models": {"id", "dimension", "config_json"},
-    "embedding_runs": {"id", "status", "error_code", "error_message"},
+    "chunks": {"id", "document_id", "chunk_index", "text", "text_sha256"},
+    "embedding_models": {
+        "id",
+        "dimension",
+        "config_json",
+        "model_fingerprint",
+        "fingerprint_algorithm",
+    },
+    "embedding_runs": {
+        "id",
+        "status",
+        "error_code",
+        "error_message",
+        "sources_changed",
+        "owner_pid",
+    },
     "vectors": {
         "id",
         "model_id",
         "object_type",
         "object_id",
         "text_sha256",
+        "source_content_sha256",
+        "model_fingerprint",
+        "algorithm_version",
         "dimension",
         "dtype",
         "vector",
+        "metadata_json",
+    },
+    "vector_indexes": {
+        "id",
+        "model_id",
+        "object_type",
+        "model_fingerprint",
+        "algorithm_version",
+        "vector_set_sha256",
     },
     "zotero_sources": {"id", "last_version"},
     "zotero_import_runs": {
@@ -99,6 +141,7 @@ REQUIRED_COLUMNS: dict[str, set[str]] = {
         "config_json",
         "error_code",
         "error_message",
+        "owner_pid",
     },
     "zotero_items": {
         "id",
@@ -520,13 +563,30 @@ def _empty_fts_status() -> dict[str, object]:
 
 def _empty_vector_consistency() -> dict[str, int]:
     return {
+        "unknown_object_types": 0,
+        "vectors_without_targets": 0,
         "vectors_without_documents": 0,
         "vectors_without_chunks": 0,
         "vectors_without_models": 0,
+        "vectors_for_inactive_targets": 0,
         "vectors_for_inactive_documents": 0,
         "vectors_for_inactive_chunks": 0,
+        "document_source_hash_mismatches": 0,
+        "chunk_source_hash_mismatches": 0,
+        "source_hash_mismatches": 0,
+        "invalid_source_hashes": 0,
+        "invalid_embedding_input_hashes": 0,
+        "document_content_hash_mismatches": 0,
+        "chunk_text_hash_mismatches": 0,
+        "model_fingerprint_mismatches": 0,
+        "fingerprint_algorithm_mismatches": 0,
+        "model_identity_mismatches": 0,
+        "unknown_algorithm_versions": 0,
         "dimension_mismatches": 0,
+        "dtype_mismatches": 0,
         "blob_size_mismatches": 0,
+        "nonfinite_float32_vectors": 0,
+        "vector_index_provenance_mismatches": 0,
         "check_errors": 0,
         "invalid_vector_metadata": 0,
         "unverifiable_vectors": 0,
@@ -536,106 +596,371 @@ def _empty_vector_consistency() -> dict[str, int]:
 
 def _vector_consistency(connection: sqlite3.Connection) -> dict[str, int]:
     status = _empty_vector_consistency()
-    queries = {
-        "vectors_without_documents": """
+    queries: dict[str, tuple[str, tuple[object, ...]]] = {
+        "unknown_object_types": (
+            """
+            SELECT COUNT(*) FROM vectors
+            WHERE object_type NOT IN ('document', 'chunk')
+            """,
+            (),
+        ),
+        "vectors_without_documents": (
+            """
             SELECT COUNT(*) FROM vectors v
             LEFT JOIN documents d
               ON v.object_type = 'document' AND d.id = v.object_id
             WHERE v.object_type = 'document' AND d.id IS NULL
-        """,
-        "vectors_without_chunks": """
+            """,
+            (),
+        ),
+        "vectors_without_chunks": (
+            """
             SELECT COUNT(*) FROM vectors v
             LEFT JOIN chunks c
               ON v.object_type = 'chunk' AND c.id = v.object_id
             WHERE v.object_type = 'chunk' AND c.id IS NULL
-        """,
-        "vectors_without_models": """
+            """,
+            (),
+        ),
+        "vectors_without_models": (
+            """
             SELECT COUNT(*) FROM vectors v
             LEFT JOIN embedding_models m ON m.id = v.model_id
             WHERE m.id IS NULL
-        """,
-        "vectors_for_inactive_documents": """
+            """,
+            (),
+        ),
+        "vectors_for_inactive_documents": (
+            """
             SELECT COUNT(*) FROM vectors v
             JOIN documents d
               ON v.object_type = 'document' AND d.id = v.object_id
             WHERE v.object_type = 'document' AND d.status != 'active'
-        """,
-        "vectors_for_inactive_chunks": """
+            """,
+            (),
+        ),
+        "vectors_for_inactive_chunks": (
+            """
             SELECT COUNT(*) FROM vectors v
             JOIN chunks c
               ON v.object_type = 'chunk' AND c.id = v.object_id
             JOIN documents d ON d.id = c.document_id
             WHERE v.object_type = 'chunk' AND d.status != 'active'
-        """,
-        "dimension_mismatches": """
+            """,
+            (),
+        ),
+        "document_source_hash_mismatches": (
+            """
+            SELECT COUNT(*) FROM vectors v
+            JOIN documents d ON v.object_type = 'document' AND d.id = v.object_id
+            WHERE v.object_type = 'document'
+              AND v.source_content_sha256 != d.content_revision_sha256
+            """,
+            (),
+        ),
+        "chunk_source_hash_mismatches": (
+            """
+            SELECT COUNT(*) FROM vectors v
+            JOIN chunks c ON v.object_type = 'chunk' AND c.id = v.object_id
+            WHERE v.object_type = 'chunk'
+              AND v.source_content_sha256 != c.text_sha256
+            """,
+            (),
+        ),
+        "invalid_source_hashes": (
+            """
+            SELECT COUNT(*) FROM vectors
+            WHERE typeof(source_content_sha256) != 'text'
+               OR length(source_content_sha256) != 64
+               OR source_content_sha256 GLOB '*[^0-9a-f]*'
+            """,
+            (),
+        ),
+        "invalid_embedding_input_hashes": (
+            """
+            SELECT COUNT(*) FROM vectors
+            WHERE typeof(text_sha256) != 'text'
+               OR length(text_sha256) != 64
+               OR text_sha256 GLOB '*[^0-9a-f]*'
+            """,
+            (),
+        ),
+        "model_fingerprint_mismatches": (
+            """
             SELECT COUNT(*) FROM vectors v
             JOIN embedding_models m ON m.id = v.model_id
-            WHERE v.dimension != m.dimension
-        """,
-        "blob_size_mismatches": """
-            SELECT COUNT(*) FROM vectors
-            WHERE length(vector) != dimension *
-              CASE dtype
-                WHEN 'float32' THEN 4
-                WHEN 'float64' THEN 8
-                ELSE -1
-              END
-        """,
-    }
-    try:
-        for key, query in queries.items():
-            row = connection.execute(query).fetchone()
-            status[key] = int(row[0]) if row else 0
-
-        rows = connection.execute(
+            WHERE v.model_fingerprint = ?
+               OR m.model_fingerprint = ?
+               OR length(v.model_fingerprint) != 64
+               OR length(m.model_fingerprint) != 64
+               OR v.model_fingerprint GLOB '*[^0-9a-f]*'
+               OR m.model_fingerprint GLOB '*[^0-9a-f]*'
+               OR v.model_fingerprint != m.model_fingerprint
+            """,
+            (LEGACY_UNKNOWN_PROVENANCE, LEGACY_UNKNOWN_PROVENANCE),
+        ),
+        "unknown_algorithm_versions": (
             """
-            SELECT
-              v.object_type,
-              v.text_sha256,
-              v.metadata_json,
-              d.title AS current_title,
-              d.relative_path AS current_relative_path,
-              CASE
-                WHEN v.object_type = 'document' THEN dt.text
-                WHEN v.object_type = 'chunk' THEN c.text
-              END AS current_text
+            SELECT COUNT(*) FROM vectors
+            WHERE (object_type = 'document' AND algorithm_version != ?)
+               OR (object_type = 'chunk' AND algorithm_version != ?)
+            """,
+            (
+                DOCUMENT_VECTOR_ALGORITHM_VERSION,
+                CHUNK_VECTOR_ALGORITHM_VERSION,
+            ),
+        ),
+        "dimension_mismatches": (
+            """
+            SELECT COUNT(*) FROM vectors v
+            LEFT JOIN embedding_models m ON m.id = v.model_id
+            WHERE typeof(v.dimension) != 'integer'
+               OR v.dimension <= 0
+               OR (
+                 m.id IS NOT NULL
+                 AND (
+                   typeof(m.dimension) != 'integer'
+                   OR m.dimension <= 0
+                   OR v.dimension != m.dimension
+                 )
+               )
+            """,
+            (),
+        ),
+        "dtype_mismatches": (
+            """
+            SELECT COUNT(*) FROM vectors
+            WHERE dtype != 'float32'
+            """,
+            (),
+        ),
+        "blob_size_mismatches": (
+            """
+            SELECT COUNT(*) FROM vectors
+            WHERE typeof(vector) != 'blob'
+               OR typeof(dimension) != 'integer'
+               OR dimension <= 0
+               OR length(vector) != dimension * 4
+            """,
+            (),
+        ),
+        "unverifiable_vectors": (
+            """
+            SELECT COUNT(*) FROM vectors v
+            LEFT JOIN embedding_models m ON m.id = v.model_id
+            WHERE v.source_content_sha256 = ?
+               OR v.model_fingerprint = ?
+               OR v.algorithm_version = ?
+               OR (m.id IS NOT NULL AND m.model_fingerprint = ?)
+               OR (m.id IS NOT NULL AND m.fingerprint_algorithm IN (?, ''))
+            """,
+            (
+                LEGACY_UNKNOWN_PROVENANCE,
+                LEGACY_UNKNOWN_PROVENANCE,
+                LEGACY_UNKNOWN_PROVENANCE,
+                LEGACY_UNKNOWN_PROVENANCE,
+                LEGACY_UNKNOWN_PROVENANCE,
+            ),
+        ),
+        "stale_vectors": (
+            """
+            SELECT COUNT(*)
             FROM vectors v
+            LEFT JOIN embedding_models m ON m.id = v.model_id
             LEFT JOIN documents d
               ON v.object_type = 'document' AND d.id = v.object_id
-            LEFT JOIN document_texts dt
-              ON v.object_type = 'document' AND dt.document_id = v.object_id
             LEFT JOIN chunks c
               ON v.object_type = 'chunk' AND c.id = v.object_id
-            WHERE (v.object_type = 'document' AND dt.document_id IS NOT NULL)
-               OR (v.object_type = 'chunk' AND c.id IS NOT NULL)
-            """
-        ).fetchall()
-        stale_vectors = 0
-        for row in rows:
-            try:
-                metadata = load_json_object(row["metadata_json"])
-            except StoredJSONError:
-                status["invalid_vector_metadata"] += 1
-                continue
-            current_hash = _text_sha256(str(row["current_text"]))
-            source_hash = metadata.get("source_text_sha256")
-            identity_hash = metadata.get("source_identity_sha256")
-            if row["object_type"] == "document" and isinstance(identity_hash, str):
-                current_identity = _text_sha256(
-                    f"{row['current_title']}\0{row['current_relative_path']}\0"
-                    f"{row['current_text']}"
+            WHERE (
+                v.object_type = 'document'
+                AND d.id IS NOT NULL
+                AND v.source_content_sha256 != ?
+                AND v.source_content_sha256 != d.content_revision_sha256
+              )
+               OR (
+                v.object_type = 'chunk'
+                AND c.id IS NOT NULL
+                AND v.source_content_sha256 != ?
+                AND v.source_content_sha256 != c.text_sha256
+              )
+               OR (
+                m.id IS NOT NULL
+                AND v.model_fingerprint != ?
+                AND m.model_fingerprint != ?
+                AND (
+                  length(v.model_fingerprint) != 64
+                  OR length(m.model_fingerprint) != 64
+                  OR v.model_fingerprint GLOB '*[^0-9a-f]*'
+                  OR m.model_fingerprint GLOB '*[^0-9a-f]*'
+                  OR v.model_fingerprint != m.model_fingerprint
                 )
-                stale_vectors += int(current_identity != identity_hash)
-            elif isinstance(source_hash, str):
-                stale_vectors += int(current_hash != source_hash)
-            elif "document_id" not in metadata:
-                # Legacy/manual rows may hash raw text directly. Older vectors
-                # created by Paper Galaxy carry document_id but lack enough
-                # provenance to reconstruct their weighted/truncated input.
-                stale_vectors += int(current_hash != str(row["text_sha256"]))
-            else:
-                status["unverifiable_vectors"] += 1
-        status["stale_vectors"] = stale_vectors
+              )
+               OR (
+                v.algorithm_version != ?
+                AND (
+                  (v.object_type = 'document' AND v.algorithm_version != ?)
+                  OR (v.object_type = 'chunk' AND v.algorithm_version != ?)
+                )
+              )
+            """,
+            (
+                LEGACY_UNKNOWN_PROVENANCE,
+                LEGACY_UNKNOWN_PROVENANCE,
+                LEGACY_UNKNOWN_PROVENANCE,
+                LEGACY_UNKNOWN_PROVENANCE,
+                LEGACY_UNKNOWN_PROVENANCE,
+                DOCUMENT_VECTOR_ALGORITHM_VERSION,
+                CHUNK_VECTOR_ALGORITHM_VERSION,
+            ),
+        ),
+        "vector_index_provenance_mismatches": (
+            """
+            SELECT COUNT(*) FROM vector_indexes i
+            LEFT JOIN embedding_models m ON m.id = i.model_id
+            WHERE i.object_type NOT IN ('document', 'chunk')
+               OR m.id IS NULL
+               OR i.model_fingerprint = ?
+               OR m.model_fingerprint = ?
+               OR i.model_fingerprint != m.model_fingerprint
+               OR length(i.vector_set_sha256) != 64
+               OR i.vector_set_sha256 GLOB '*[^0-9a-f]*'
+               OR (i.object_type = 'document' AND i.algorithm_version != ?)
+               OR (i.object_type = 'chunk' AND i.algorithm_version != ?)
+            """,
+            (
+                LEGACY_UNKNOWN_PROVENANCE,
+                LEGACY_UNKNOWN_PROVENANCE,
+                DOCUMENT_VECTOR_ALGORITHM_VERSION,
+                CHUNK_VECTOR_ALGORITHM_VERSION,
+            ),
+        ),
+    }
+    try:
+        for key, (query, parameters) in queries.items():
+            row = connection.execute(query, parameters).fetchone()
+            status[key] = int(row[0]) if row else 0
+
+        status["vectors_without_targets"] = (
+            status["vectors_without_documents"] + status["vectors_without_chunks"]
+        )
+        status["vectors_for_inactive_targets"] = (
+            status["vectors_for_inactive_documents"]
+            + status["vectors_for_inactive_chunks"]
+        )
+        status["source_hash_mismatches"] = (
+            status["document_source_hash_mismatches"]
+            + status["chunk_source_hash_mismatches"]
+        )
+
+        metadata_cursor = connection.execute(
+            "SELECT metadata_json FROM vectors ORDER BY id"
+        )
+        for rows in iter(lambda: metadata_cursor.fetchmany(256), []):
+            for row in rows:
+                try:
+                    load_json_object(row["metadata_json"])
+                except StoredJSONError:
+                    status["invalid_vector_metadata"] += 1
+
+        identity_cursor = connection.execute(
+            """
+            SELECT
+              m.id,
+              m.name,
+              m.provider,
+              m.dimension,
+              typeof(m.dimension) AS dimension_type,
+              m.distance,
+              m.config_json,
+              m.model_fingerprint,
+              m.fingerprint_algorithm
+            FROM vectors v
+            JOIN embedding_models m ON m.id = v.model_id
+            ORDER BY v.id
+            """
+        )
+        for rows in iter(lambda: identity_cursor.fetchmany(256), []):
+            for row in rows:
+                try:
+                    config = load_json_object(row["config_json"])
+                except StoredJSONError:
+                    status["fingerprint_algorithm_mismatches"] += 1
+                    status["model_identity_mismatches"] += 1
+                    continue
+                if config.get("model_fingerprint") != str(
+                    row["model_fingerprint"]
+                ) or config.get("fingerprint_algorithm") != str(
+                    row["fingerprint_algorithm"]
+                ):
+                    status["fingerprint_algorithm_mismatches"] += 1
+                try:
+                    expected_model_id = stable_embedding_model_id(
+                        provider=str(row["provider"]),
+                        name=str(row["name"]),
+                        dimension=int(row["dimension"]),
+                        distance=str(row["distance"]),
+                        config=config,
+                        model_fingerprint=str(row["model_fingerprint"]),
+                        fingerprint_algorithm=str(row["fingerprint_algorithm"]),
+                    )
+                except (TypeError, ValueError):
+                    status["model_identity_mismatches"] += 1
+                    continue
+                if (
+                    str(row["dimension_type"]) != "integer"
+                    or json.dumps(config, sort_keys=True) != str(row["config_json"])
+                    or expected_model_id != str(row["id"])
+                ):
+                    status["model_identity_mismatches"] += 1
+
+        vector_cursor = connection.execute(
+            """
+            SELECT vector
+            FROM vectors
+            WHERE dtype = 'float32'
+              AND typeof(dimension) = 'integer'
+              AND dimension > 0
+              AND typeof(vector) = 'blob'
+              AND length(vector) = dimension * 4
+              AND length(vector) % 4 = 0
+            ORDER BY id
+            """
+        )
+        for rows in iter(lambda: vector_cursor.fetchmany(256), []):
+            for row in rows:
+                blob = bytes(row["vector"])
+                if any(
+                    not math.isfinite(value[0])
+                    for value in struct.iter_unpack("<f", blob)
+                ):
+                    status["nonfinite_float32_vectors"] += 1
+
+        chunk_cursor = connection.execute(
+            "SELECT text, text_sha256 FROM chunks ORDER BY id"
+        )
+        for rows in iter(lambda: chunk_cursor.fetchmany(256), []):
+            for row in rows:
+                current_hash = _text_sha256(str(row["text"]))
+                if current_hash != str(row["text_sha256"]):
+                    status["chunk_text_hash_mismatches"] += 1
+
+        document_cursor = connection.execute(
+            """
+            SELECT d.title, d.relative_path, d.content_revision_sha256, dt.text
+            FROM documents d
+            JOIN document_texts dt ON dt.document_id = d.id
+            ORDER BY d.id
+            """
+        )
+        for rows in iter(lambda: document_cursor.fetchmany(256), []):
+            for row in rows:
+                current_revision = document_content_revision_sha256(
+                    title=str(row["title"]),
+                    relative_path=str(row["relative_path"]),
+                    text=str(row["text"]),
+                )
+                if current_revision != str(row["content_revision_sha256"]):
+                    status["document_content_hash_mismatches"] += 1
     except sqlite3.Error:
         status["check_errors"] += 1
         return status

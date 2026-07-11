@@ -6,6 +6,13 @@
 
 ## Unreleased
 
+- 增加 schema v8 向量 provenance 与生命周期加固：本地模型精确 fingerprint、
+  无字段边界碰撞的 canonical document revision、source revision
+  compare-and-swap 落库、死亡 owner run 自动恢复、仅 active 且
+  provenance 匹配的语义读取、NumPy 有界内存 top-k 与批量 metadata 查询、更完整的
+  vector validation，以及默认 dry-run 的 stale-vector prune；移除未实际使用的
+  FAISS extra。run/backup recovery 在 Windows 上改用无破坏进程句柄检查，不再以
+  `os.kill(pid, 0)` 探测存活进程。
 - 用 schema v7 事务化 bootstrap/migration、显式只读/读写/migration connection、
   future-schema 拒绝、严格 schema/JSON 校验、短写事务审计和 SQLite backup API
   migration snapshot，替换隐式 SQLite 初始化。

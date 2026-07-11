@@ -10,9 +10,22 @@ from paper_galaxy.embeddings.models import (
     stable_vector_id,
     text_sha256,
 )
+from paper_galaxy.records import IndexedChunk
 from paper_galaxy.storage.migrations import initialize_database
 from paper_galaxy.storage.repository import Repository
 from paper_galaxy.storage.sqlite import connect_database, resolve_database_path
+
+
+def test_new_chunk_record_derives_exact_text_hash() -> None:
+    chunk = IndexedChunk(
+        id="chunk-1",
+        document_id="document-1",
+        chunk_index=0,
+        text="synthetic chunk evidence",
+        char_count=24,
+    )
+
+    assert chunk.text_sha256 == text_sha256("synthetic chunk evidence")
 
 
 def test_embedding_model_and_vector_upserts_work(tmp_path: Path) -> None:

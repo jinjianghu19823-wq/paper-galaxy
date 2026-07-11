@@ -11,14 +11,18 @@ from rich.table import Table
 
 from paper_galaxy import __version__
 from paper_galaxy.backup import export_project, import_project
-from paper_galaxy.embeddings.builder import build_embeddings
+from paper_galaxy.embeddings.builder import MAX_EMBEDDING_BATCH_SIZE, build_embeddings
+from paper_galaxy.embeddings.maintenance import prune_stale_vectors
 from paper_galaxy.embeddings.models import NeighborResult
 from paper_galaxy.embeddings.search import (
     NoVectorsFoundError,
     semantic_search,
     vector_stats,
 )
-from paper_galaxy.embeddings.sentence_transformers import ModelDownloadDisabledError
+from paper_galaxy.embeddings.sentence_transformers import (
+    ModelDownloadDisabledError,
+    ModelFingerprintError,
+)
 from paper_galaxy.embeddings.similarity import compare_neighbors
 from paper_galaxy.errors import (
     DatabaseError,
@@ -91,7 +95,6 @@ OPTIONAL_MODULES: tuple[tuple[str, str], ...] = (
     ("sklearn", "sklearn"),
     ("umap", "umap"),
     ("sentence_transformers", "sentence_transformers"),
-    ("faiss", "faiss"),
     ("fastapi", "fastapi"),
     ("uvicorn", "uvicorn"),
     ("plotly", "plotly"),
@@ -685,8 +688,8 @@ def embed_command(
     if object_type not in {"document", "chunk", "both"}:
         console.print("--object-type must be document, chunk, or both.")
         raise typer.Exit(1)
-    if batch_size <= 0:
-        console.print("--batch-size must be positive.")
+    if not 1 <= batch_size <= MAX_EMBEDDING_BATCH_SIZE:
+        console.print(f"--batch-size must be between 1 and {MAX_EMBEDDING_BATCH_SIZE}.")
         raise typer.Exit(1)
     try:
         summary = build_embeddings(
@@ -701,7 +704,7 @@ def embed_command(
             max_chunk_chars=max_chunk_chars,
             normalize=normalize,
         )
-    except ModelDownloadDisabledError as exc:
+    except (ModelDownloadDisabledError, ModelFingerprintError, ValueError) as exc:
         console.print(str(exc), markup=False)
         raise typer.Exit(1) from exc
     except MissingDependencyError as exc:
@@ -722,6 +725,7 @@ def embed_command(
     table.add_row("Chunks seen", str(summary.chunks_seen))
     table.add_row("Chunks embedded", str(summary.chunks_embedded))
     table.add_row("Chunks unchanged", str(summary.chunks_unchanged))
+    table.add_row("Sources changed during inference", str(summary.sources_changed))
     table.add_row("Errors", str(summary.errors))
     console.print(table)
 
@@ -802,7 +806,7 @@ def semantic_search_command(
             include_missing=include_missing,
             normalize=normalize,
         )
-    except ModelDownloadDisabledError as exc:
+    except (ModelDownloadDisabledError, ModelFingerprintError, ValueError) as exc:
         console.print(str(exc), markup=False)
         raise typer.Exit(1) from exc
     except MissingDependencyError as exc:
@@ -898,7 +902,7 @@ def compare_neighbors_command(
             tfidf_weight=tfidf_weight,
             normalize=normalize,
         )
-    except ModelDownloadDisabledError as exc:
+    except (ModelDownloadDisabledError, ModelFingerprintError) as exc:
         console.print(str(exc), markup=False)
         raise typer.Exit(1) from exc
     except MissingDependencyError as exc:
@@ -968,6 +972,61 @@ def vector_stats_command(
                 str(row["last_vector_at"]),
             )
     get_console().print(counts_table)
+
+
+@app.command("prune-stale-vectors")
+def prune_stale_vectors_command(
+    project_dir: Annotated[
+        Path,
+        typer.Option(
+            "--project-dir", help="Project directory containing .paper-galaxy."
+        ),
+    ] = Path("."),
+    dry_run: Annotated[
+        bool,
+        typer.Option(
+            "--dry-run/--apply",
+            help="Report stale vectors, or explicitly apply the bounded prune.",
+        ),
+    ] = True,
+    yes: Annotated[
+        bool,
+        typer.Option(
+            "--yes",
+            "-y",
+            help="Required confirmation when --apply is selected.",
+        ),
+    ] = False,
+) -> None:
+    """Report or prune only vector rows that cannot be proven current."""
+
+    try:
+        report = prune_stale_vectors(
+            project_dir.expanduser().resolve(),
+            dry_run=dry_run,
+            yes=yes,
+        )
+    except (DatabaseError, ValueError) as exc:
+        get_console().print(str(exc), markup=False)
+        raise typer.Exit(1) from exc
+
+    table = Table(title="Paper Galaxy Vector Maintenance")
+    table.add_column("Metric", style="bold")
+    table.add_column("Value", overflow="fold")
+    table.add_row("Mode", "dry-run" if report.dry_run else "applied")
+    table.add_row("Vectors scanned", str(report.vectors_scanned))
+    table.add_row("Stale vectors", str(report.stale_vectors))
+    table.add_row("Vectors deleted", str(report.vectors_deleted))
+    table.add_row("Stale index metadata", str(report.stale_index_metadata))
+    table.add_row("Index metadata deleted", str(report.index_metadata_deleted))
+    for reason, count in report.reasons.items():
+        table.add_row(f"Reason: {reason}", str(count))
+    get_console().print(table)
+    if report.dry_run and report.stale_vectors:
+        get_console().print(
+            "No rows were changed. Re-run with --apply --yes after reviewing "
+            "this report."
+        )
 
 
 @app.command("clusters")

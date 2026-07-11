@@ -3,28 +3,38 @@ from __future__ import annotations
 import hashlib
 import json
 import sqlite3
+import struct
 from pathlib import Path
 
 import pytest
 
 import paper_galaxy.validation as validation_module
-from paper_galaxy.embeddings.builder import build_embeddings
+from paper_galaxy.embeddings.builder import (
+    CHUNK_VECTOR_ALGORITHM_VERSION,
+    DOCUMENT_VECTOR_ALGORITHM_VERSION,
+    build_embeddings,
+)
 from paper_galaxy.embeddings.codec import encode_vector
-from paper_galaxy.embeddings.models import text_sha256
+from paper_galaxy.embeddings.models import LEGACY_UNKNOWN_PROVENANCE, text_sha256
 from paper_galaxy.indexer import index_corpus
 from paper_galaxy.storage.migrations import (
     CURRENT_SCHEMA_VERSION,
     initialize_database,
 )
+from paper_galaxy.storage.provenance import document_content_revision_sha256
 from paper_galaxy.storage.sqlite import connect_database, resolve_database_path
 from paper_galaxy.validation import validate_project
 
 NOW = "2026-07-11T00:00:00+00:00"
+MODEL_FINGERPRINT = "a" * 64
+FINGERPRINT_ALGORITHM = "synthetic-validation-fingerprint-v1"
 
 
 class _ValidationEncoder:
     model_name = "validation-local-model"
     dimension = 2
+    model_fingerprint = MODEL_FINGERPRINT
+    fingerprint_algorithm = FINGERPRINT_ALGORITHM
 
     def encode(
         self,
@@ -72,14 +82,19 @@ def _insert_document(
     fts_text: str | None = None,
 ) -> str | None:
     relative_path = f"{document_id}.md"
+    content_revision = document_content_revision_sha256(
+        title=document_id,
+        relative_path=relative_path,
+        text=text,
+    )
     connection.execute(
         """
         INSERT INTO documents(
           id, corpus_id, path, relative_path, file_type, title, sha256,
-          size_bytes, mtime_ns, char_count, status, first_seen_at,
-          last_seen_at, updated_at
+          content_revision_sha256, size_bytes, mtime_ns, char_count, status,
+          first_seen_at, last_seen_at, updated_at
         )
-        VALUES (?, 'corpus', ?, ?, '.md', ?, ?, ?, 1, ?, 'active', ?, ?, ?)
+        VALUES (?, 'corpus', ?, ?, '.md', ?, ?, ?, ?, 1, ?, 'active', ?, ?, ?)
         """,
         (
             document_id,
@@ -87,6 +102,7 @@ def _insert_document(
             relative_path,
             document_id,
             hashlib.sha256(text.encode()).hexdigest(),
+            content_revision,
             len(text.encode()),
             len(text),
             NOW,
@@ -103,10 +119,12 @@ def _insert_document(
         chunk_id = f"chunk_{document_id}"
         connection.execute(
             """
-            INSERT INTO chunks(id, document_id, chunk_index, text, char_count)
-            VALUES (?, ?, 0, ?, ?)
+            INSERT INTO chunks(
+              id, document_id, chunk_index, text, char_count, text_sha256
+            )
+            VALUES (?, ?, 0, ?, ?, ?)
             """,
-            (chunk_id, document_id, text, len(text)),
+            (chunk_id, document_id, text, len(text), text_sha256(text)),
         )
     if fts_text is not None:
         connection.execute(
@@ -256,6 +274,33 @@ def test_validation_reports_missing_schema_capabilities(tmp_path: Path) -> None:
     assert "schema_capability_missing" in _issue_codes(report)
 
 
+def test_validation_capability_contract_includes_v8_provenance_columns() -> None:
+    expected = {
+        "scan_runs": {"owner_pid"},
+        "documents": {"content_revision_sha256"},
+        "chunks": {"text_sha256"},
+        "embedding_models": {"model_fingerprint", "fingerprint_algorithm"},
+        "vectors": {
+            "source_content_sha256",
+            "model_fingerprint",
+            "algorithm_version",
+        },
+        "embedding_runs": {"sources_changed", "owner_pid"},
+        "vector_indexes": {
+            "model_fingerprint",
+            "algorithm_version",
+            "vector_set_sha256",
+        },
+        "zotero_import_runs": {"owner_pid"},
+    }
+
+    for table_name, columns in expected.items():
+        assert columns <= validation_module.REQUIRED_COLUMNS[table_name]
+    assert "faiss" not in {
+        label for label, _module in validation_module.OPTIONAL_DEPENDENCIES
+    }
+
+
 def test_validation_reports_fts_document_and_chunk_inconsistency(
     tmp_path: Path,
 ) -> None:
@@ -337,30 +382,55 @@ def test_validation_reports_orphan_stale_and_malformed_vectors(
     try:
         connection.execute("PRAGMA foreign_keys = OFF")
         _insert_corpus(connection)
-        document_texts: dict[str, str] = {}
+        document_hashes: dict[str, str] = {}
         chunk_ids: dict[str, str] = {}
         for document_id in (
             "valid",
             "missing_model",
             "dimension_mismatch",
             "bad_blob",
+            "inactive_document",
+            "inactive_chunk",
             "legacy_provenance",
             "stale_document",
             "stale_chunk",
+            "fingerprint_mismatch",
+            "unknown_algorithm",
+            "wrong_dtype",
+            "nonfinite",
+            "invalid_metadata",
+            "bad_chunk_hash",
         ):
             value = f"text for {document_id}"
-            document_texts[document_id] = value
+            document_hashes[document_id] = document_content_revision_sha256(
+                title=document_id,
+                relative_path=f"{document_id}.md",
+                text=value,
+            )
             chunk_id = _insert_document(connection, document_id, text=value)
             assert chunk_id is not None
             chunk_ids[document_id] = chunk_id
         connection.execute(
+            "UPDATE documents SET status = 'missing' WHERE id = 'inactive_document'"
+        )
+        connection.execute(
+            "UPDATE documents SET status = 'unindexed' WHERE id = 'inactive_chunk'"
+        )
+        connection.execute(
+            "UPDATE chunks SET text_sha256 = ? WHERE id = ?",
+            ("0" * 64, chunk_ids["bad_chunk_hash"]),
+        )
+        connection.execute(
             """
             INSERT INTO embedding_models(
-              id, name, provider, dimension, distance, config_json, created_at
+              id, name, provider, dimension, distance, config_json,
+              model_fingerprint, fingerprint_algorithm, created_at
             )
-            VALUES ('model', 'synthetic', 'test', 2, 'cosine', '{}', ?)
+            VALUES (
+              'model', 'synthetic', 'test', 2, 'cosine', '{}', ?, ?, ?
+            )
             """,
-            (NOW,),
+            (MODEL_FINGERPRINT, FINGERPRINT_ALGORITHM, NOW),
         )
 
         def insert_vector(
@@ -369,26 +439,42 @@ def test_validation_reports_orphan_stale_and_malformed_vectors(
             model_id: str = "model",
             object_type: str,
             object_id: str,
-            text_hash: str,
+            source_hash: str,
             dimension: int = 2,
             blob: bytes | None = None,
+            dtype: str = "float32",
+            model_fingerprint: str = MODEL_FINGERPRINT,
+            algorithm_version: str | None = None,
+            metadata_json: str = "{}",
         ) -> None:
+            selected_algorithm = algorithm_version
+            if selected_algorithm is None:
+                selected_algorithm = (
+                    CHUNK_VECTOR_ALGORITHM_VERSION
+                    if object_type == "chunk"
+                    else DOCUMENT_VECTOR_ALGORITHM_VERSION
+                )
             connection.execute(
                 """
                 INSERT INTO vectors(
-                  id, model_id, object_type, object_id, text_sha256, dimension,
-                  dtype, vector, metadata_json, created_at, updated_at
+                  id, model_id, object_type, object_id, text_sha256,
+                  source_content_sha256, model_fingerprint, algorithm_version,
+                  dimension, dtype, vector, metadata_json, created_at, updated_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, 'float32', ?, '{}', ?, ?)
+                VALUES (?, ?, ?, ?, 'weighted-input-hash', ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     vector_id,
                     model_id,
                     object_type,
                     object_id,
-                    text_hash,
+                    source_hash,
+                    model_fingerprint,
+                    selected_algorithm,
                     dimension,
+                    dtype,
                     blob if blob is not None else encode_vector([1.0, 0.0]),
+                    metadata_json,
                     NOW,
                     NOW,
                 ),
@@ -398,32 +484,32 @@ def test_validation_reports_orphan_stale_and_malformed_vectors(
             "vector_valid",
             object_type="document",
             object_id="valid",
-            text_hash=text_sha256(document_texts["valid"]),
+            source_hash=document_hashes["valid"],
         )
         insert_vector(
             "vector_missing_document",
             object_type="document",
             object_id="absent_document",
-            text_hash=text_sha256("absent"),
+            source_hash="0" * 64,
         )
         insert_vector(
             "vector_missing_chunk",
             object_type="chunk",
             object_id="absent_chunk",
-            text_hash=text_sha256("absent"),
+            source_hash="0" * 64,
         )
         insert_vector(
             "vector_missing_model",
             model_id="absent_model",
             object_type="document",
             object_id="missing_model",
-            text_hash=text_sha256(document_texts["missing_model"]),
+            source_hash=document_hashes["missing_model"],
         )
         insert_vector(
             "vector_dimension_mismatch",
             object_type="document",
             object_id="dimension_mismatch",
-            text_hash=text_sha256(document_texts["dimension_mismatch"]),
+            source_hash=document_hashes["dimension_mismatch"],
             dimension=3,
             blob=encode_vector([1.0, 0.0, 0.0]),
         )
@@ -431,33 +517,99 @@ def test_validation_reports_orphan_stale_and_malformed_vectors(
             "vector_bad_blob",
             object_type="document",
             object_id="bad_blob",
-            text_hash=text_sha256(document_texts["bad_blob"]),
-            blob=encode_vector([1.0]),
+            source_hash=document_hashes["bad_blob"],
+            blob=b"/private/secret-vector",
         )
-        connection.execute(
-            """
-            INSERT INTO vectors(
-              id, model_id, object_type, object_id, text_sha256, dimension,
-              dtype, vector, metadata_json, created_at, updated_at
-            ) VALUES (
-              'vector_legacy', 'model', 'document', 'legacy_provenance',
-              'weighted-input-hash', 2, 'float32', ?,
-              '{"document_id":"legacy_provenance"}', ?, ?
-            )
-            """,
-            (encode_vector([1.0, 0.0]), NOW, NOW),
+        insert_vector(
+            "vector_unknown_object",
+            object_type="cluster",
+            object_id="unsupported_target",
+            source_hash="0" * 64,
+        )
+        insert_vector(
+            "vector_inactive_document",
+            object_type="document",
+            object_id="inactive_document",
+            source_hash=document_hashes["inactive_document"],
+        )
+        insert_vector(
+            "vector_inactive_chunk",
+            object_type="chunk",
+            object_id=chunk_ids["inactive_chunk"],
+            source_hash=text_sha256("text for inactive_chunk"),
         )
         insert_vector(
             "vector_stale_document",
             object_type="document",
             object_id="stale_document",
-            text_hash=text_sha256("old document text"),
+            source_hash="b" * 64,
         )
         insert_vector(
             "vector_stale_chunk",
             object_type="chunk",
             object_id=chunk_ids["stale_chunk"],
-            text_hash=text_sha256("old chunk text"),
+            source_hash="b" * 64,
+        )
+        insert_vector(
+            "vector_fingerprint_mismatch",
+            object_type="document",
+            object_id="fingerprint_mismatch",
+            source_hash=document_hashes["fingerprint_mismatch"],
+            model_fingerprint="c" * 64,
+        )
+        insert_vector(
+            "vector_legacy",
+            object_type="document",
+            object_id="legacy_provenance",
+            source_hash=LEGACY_UNKNOWN_PROVENANCE,
+            model_fingerprint=LEGACY_UNKNOWN_PROVENANCE,
+            algorithm_version=LEGACY_UNKNOWN_PROVENANCE,
+        )
+        insert_vector(
+            "vector_unknown_algorithm",
+            object_type="document",
+            object_id="unknown_algorithm",
+            source_hash=document_hashes["unknown_algorithm"],
+            algorithm_version="paper-galaxy-future-algorithm-v99",
+        )
+        insert_vector(
+            "vector_wrong_dtype",
+            object_type="document",
+            object_id="wrong_dtype",
+            source_hash=document_hashes["wrong_dtype"],
+            dtype="float64",
+        )
+        insert_vector(
+            "vector_nonfinite",
+            object_type="document",
+            object_id="nonfinite",
+            source_hash=document_hashes["nonfinite"],
+            blob=struct.pack("<2f", float("nan"), 0.0),
+        )
+        insert_vector(
+            "vector_invalid_metadata",
+            object_type="document",
+            object_id="invalid_metadata",
+            source_hash=document_hashes["invalid_metadata"],
+            metadata_json='{broken:"/private/secret-metadata"}',
+        )
+        connection.execute(
+            """
+            INSERT INTO vector_indexes(
+              id, model_id, object_type, index_path, vector_count,
+              model_fingerprint, algorithm_version, vector_set_sha256,
+              created_at, metadata_json
+            ) VALUES (
+              'stale-index', 'model', 'document', '/private/secret-index', 1,
+              ?, ?, ?, ?, '{}'
+            )
+            """,
+            (
+                MODEL_FINGERPRINT,
+                DOCUMENT_VECTOR_ALGORITHM_VERSION,
+                LEGACY_UNKNOWN_PROVENANCE,
+                NOW,
+            ),
         )
         connection.commit()
     finally:
@@ -466,15 +618,42 @@ def test_validation_reports_orphan_stale_and_malformed_vectors(
     report = validate_project(tmp_path, check_stale=False)
     vectors = report["vector_consistency"]
 
+    assert vectors["unknown_object_types"] == 1
+    assert vectors["vectors_without_targets"] == 2
     assert vectors["vectors_without_documents"] == 1
     assert vectors["vectors_without_chunks"] == 1
     assert vectors["vectors_without_models"] == 1
+    assert vectors["vectors_for_inactive_targets"] == 2
+    assert vectors["vectors_for_inactive_documents"] == 1
+    assert vectors["vectors_for_inactive_chunks"] == 1
+    assert vectors["document_source_hash_mismatches"] == 2
+    assert vectors["chunk_source_hash_mismatches"] == 1
+    assert vectors["source_hash_mismatches"] == 3
+    assert vectors["chunk_text_hash_mismatches"] == 1
+    assert vectors["model_fingerprint_mismatches"] == 2
+    assert vectors["unknown_algorithm_versions"] == 2
     assert vectors["dimension_mismatches"] == 1
+    assert vectors["dtype_mismatches"] == 1
     assert vectors["blob_size_mismatches"] == 1
-    assert vectors["stale_vectors"] == 2
+    assert vectors["nonfinite_float32_vectors"] == 1
+    assert vectors["invalid_vector_metadata"] == 1
+    assert vectors["vector_index_provenance_mismatches"] == 1
+    assert vectors["stale_vectors"] == 4
     assert vectors["unverifiable_vectors"] == 1
     assert "vector_consistency_failed" in _issue_codes(report)
     assert "vector_provenance_missing" in _issue_codes(report)
+    vector_output = json.dumps(vectors, sort_keys=True)
+    vector_issues = json.dumps(
+        [
+            issue
+            for issue in report["issues"]
+            if issue["code"]
+            in {"vector_consistency_failed", "vector_provenance_missing"}
+        ],
+        sort_keys=True,
+    )
+    assert "/private/secret" not in vector_output
+    assert "/private/secret" not in vector_issues
 
 
 def test_validation_reports_zotero_cursor_and_profile_inconsistency(
@@ -592,6 +771,99 @@ def test_vectors_built_by_current_pipeline_are_not_reported_stale(
 
     assert report["vector_consistency"]["stale_vectors"] == 0
     assert "vector_consistency_failed" not in _issue_codes(report)
+
+
+def test_validation_detects_stale_document_content_revision(tmp_path: Path) -> None:
+    corpus = tmp_path / "corpus"
+    corpus.mkdir()
+    (corpus / "paper.md").write_text(
+        "# Original\n\nSynthetic evidence for revision validation.",
+        encoding="utf-8",
+    )
+    index_corpus(corpus, project_dir=tmp_path, min_chars=1)
+    build_embeddings(
+        project_dir=tmp_path,
+        model="unused",
+        object_type="document",
+        encoder=_ValidationEncoder(),
+    )
+    with sqlite3.connect(resolve_database_path(tmp_path)) as connection:
+        connection.execute("UPDATE documents SET title = 'Tampered title'")
+        connection.commit()
+
+    report = validate_project(tmp_path, check_stale=False)
+
+    assert report["vector_consistency"]["document_content_hash_mismatches"] == 1
+    assert "vector_consistency_failed" in _issue_codes(report)
+
+
+def test_validation_reports_real_dimension_and_odd_blob_without_crashing(
+    tmp_path: Path,
+) -> None:
+    corpus = tmp_path / "corpus"
+    corpus.mkdir()
+    (corpus / "paper.md").write_text(
+        "# Synthetic paper\n\nA malformed vector must remain diagnosable.",
+        encoding="utf-8",
+    )
+    index_corpus(corpus, project_dir=tmp_path, min_chars=1)
+    build_embeddings(
+        project_dir=tmp_path,
+        model="unused",
+        object_type="document",
+        encoder=_ValidationEncoder(),
+    )
+    database_path = resolve_database_path(tmp_path)
+    with sqlite3.connect(database_path) as connection:
+        connection.execute("UPDATE embedding_models SET dimension = 2.25")
+        connection.execute(
+            "UPDATE vectors SET dimension = 2.25, vector = ?",
+            (sqlite3.Binary(b"123456789"),),
+        )
+        connection.commit()
+
+    report = validate_project(tmp_path, check_stale=False)
+
+    vectors = report["vector_consistency"]
+    assert vectors["dimension_mismatches"] == 1
+    assert vectors["blob_size_mismatches"] == 1
+    assert vectors["nonfinite_float32_vectors"] == 0
+    assert "vector_consistency_failed" in _issue_codes(report)
+
+
+def test_validation_reports_tampered_content_addressed_model_identity(
+    tmp_path: Path,
+) -> None:
+    corpus = tmp_path / "corpus"
+    corpus.mkdir()
+    (corpus / "paper.md").write_text(
+        "# Synthetic paper\n\nModel identity must remain content addressed.",
+        encoding="utf-8",
+    )
+    index_corpus(corpus, project_dir=tmp_path, min_chars=1)
+    encoder = _ValidationEncoder()
+    build_embeddings(
+        project_dir=tmp_path,
+        model="unused",
+        object_type="document",
+        encoder=encoder,
+    )
+    tampered_config = {
+        "normalize": False,
+        "model_fingerprint": encoder.model_fingerprint,
+        "fingerprint_algorithm": encoder.fingerprint_algorithm,
+    }
+    with sqlite3.connect(resolve_database_path(tmp_path)) as connection:
+        connection.execute(
+            "UPDATE embedding_models SET config_json = ?",
+            (json.dumps(tampered_config, sort_keys=True),),
+        )
+        connection.commit()
+
+    report = validate_project(tmp_path, check_stale=False)
+
+    assert report["vector_consistency"]["model_identity_mismatches"] == 1
+    assert "vector_consistency_failed" in _issue_codes(report)
 
 
 def test_validation_reports_future_schema_without_calling_it_corrupt(

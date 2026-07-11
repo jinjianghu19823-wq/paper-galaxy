@@ -148,3 +148,23 @@ paper-galaxy validate-project --project-dir .
 ```
 
 验证报告包含计数、schema 状态、warning 和 error，不包含完整抽取文本。
+
+## 语义搜索提示没有 current vectors
+
+当前版本不会把 legacy、orphan、inactive、source 已变化、格式损坏或模型 fingerprint
+不匹配的向量当作有效结果。先用只读方式检查：
+
+```bash
+paper-galaxy prune-stale-vectors --project-dir .
+paper-galaxy validate-project --project-dir .
+```
+
+用预期的本地模型路径重新运行 `paper-galaxy embed` 可重建当前向量。审核报告后，若要
+仅删除无效的 SQLite vector/index metadata，必须明确执行：
+
+```bash
+paper-galaxy prune-stale-vectors --project-dir . --apply --yes
+```
+
+该命令不会删除论文、项目数据库、备份或用户文件。如果模型目录在加载期间发生变化，
+请先让目录稳定再重试；Paper Galaxy 不会只凭模型路径绑定向量身份。

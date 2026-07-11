@@ -13,6 +13,7 @@ import pytest
 
 from paper_galaxy.errors import UnsupportedSchemaError
 from paper_galaxy.storage import migrations
+from paper_galaxy.storage.provenance import document_content_revision_sha256
 
 V6_SCHEMA_FIXTURE = Path(__file__).parent / "fixtures" / "storage" / "schema_v6.sql"
 V6_SCHEMA_SHA256 = "eaab6c5bf9bfd1d60c6d2164ff3ebeed57b6c64ae17535d677f048664ee90326"
@@ -90,6 +91,21 @@ def _create_v6_database(
           'preserve this historical text'
         )
         """
+    )
+    connection.commit()
+    return connection
+
+
+def _create_v7_database(database_path: Path) -> sqlite3.Connection:
+    connection = _create_v6_database(database_path)
+    migration = next(entry for entry in migrations.MIGRATIONS if entry.version == 7)
+    migration.up(connection)
+    connection.execute(
+        "INSERT INTO schema_migrations(version, name) VALUES (?, ?)",
+        (migration.version, migration.name),
+    )
+    connection.execute(
+        "UPDATE schema_meta SET value = '7' WHERE key = 'schema_version'"
     )
     connection.commit()
     return connection
@@ -206,10 +222,160 @@ def test_real_v6_database_migrates_without_losing_data(tmp_path: Path) -> None:
         assert _schema_version(reopened) == _current_schema_version()
         assert _current_schema_version() > 6
         _assert_historical_rows_preserved(reopened)
+        chunk_hash = reopened.execute(
+            "SELECT text_sha256 FROM chunks WHERE id = 'historical-chunk'"
+        ).fetchone()
+        assert chunk_hash == (
+            hashlib.sha256(b"preserve this historical text").hexdigest(),
+        )
+        assert reopened.execute(
+            "SELECT version FROM schema_migrations ORDER BY version"
+        ).fetchall() == [(7,), (8,)]
         assert reopened.execute("PRAGMA quick_check").fetchone() == ("ok",)
         assert reopened.execute("PRAGMA foreign_key_check").fetchall() == []
     finally:
         reopened.close()
+
+
+def test_v7_migrates_vector_provenance_without_trusting_legacy_rows(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "schema-v7.sqlite3"
+    connection = _create_v7_database(database_path)
+    connection.execute(
+        """
+        INSERT INTO embedding_models(
+          id, name, provider, dimension, distance, config_json, created_at
+        ) VALUES (
+          'legacy-model', '/models/local', 'sentence-transformers', 2,
+          'cosine', '{}', '2026-01-01'
+        )
+        """
+    )
+    connection.execute(
+        """
+        INSERT INTO vectors(
+          id, model_id, object_type, object_id, text_sha256, dimension, dtype,
+          vector, metadata_json, created_at, updated_at
+        ) VALUES (
+          'legacy-vector', 'legacy-model', 'document', 'historical-document',
+          'untrusted-input-hash', 2, 'float32', ?, '{}',
+          '2026-01-01', '2026-01-01'
+        )
+        """,
+        (b"\x00" * 8,),
+    )
+    connection.execute(
+        """
+        INSERT INTO vector_indexes(
+          id, model_id, object_type, index_path, vector_count, created_at,
+          metadata_json
+        ) VALUES (
+          'legacy-index', 'legacy-model', 'document', 'legacy.index', 1,
+          '2026-01-01', '{}'
+        )
+        """
+    )
+    connection.execute(
+        """
+        INSERT INTO embedding_runs(
+          id, model_id, started_at, status, config_json
+        ) VALUES (
+          'legacy-run', 'legacy-model', '2026-01-01', 'completed', '{}'
+        )
+        """
+    )
+    connection.commit()
+    connection.close()
+
+    migrating = sqlite3.connect(database_path)
+    migrations.initialize_database(
+        migrating,
+        backup_path=tmp_path / "schema-v7.pre-migration.sqlite3",
+    )
+    migrating.close()
+
+    reopened = sqlite3.connect(database_path)
+    try:
+        assert _schema_version(reopened) == 8
+        assert reopened.execute(
+            """
+            SELECT content_revision_sha256
+            FROM documents WHERE id = 'historical-document'
+            """
+        ).fetchone() == (
+            document_content_revision_sha256(
+                title="Historical v6 paper",
+                relative_path="paper.md",
+                text="preserve this historical text",
+            ),
+        )
+        assert reopened.execute(
+            """
+            SELECT model_fingerprint, fingerprint_algorithm
+            FROM embedding_models WHERE id = 'legacy-model'
+            """
+        ).fetchone() == ("legacy-unknown", "legacy-unknown")
+        assert reopened.execute(
+            """
+            SELECT source_content_sha256, model_fingerprint, algorithm_version
+            FROM vectors WHERE id = 'legacy-vector'
+            """
+        ).fetchone() == (
+            "legacy-unknown",
+            "legacy-unknown",
+            "legacy-unknown",
+        )
+        assert reopened.execute("SELECT COUNT(*) FROM vector_indexes").fetchone() == (
+            0,
+        )
+        assert reopened.execute(
+            """
+            SELECT sources_changed, owner_pid
+            FROM embedding_runs WHERE id = 'legacy-run'
+            """
+        ).fetchone() == (0, None)
+        assert reopened.execute(
+            "SELECT version FROM schema_migrations ORDER BY version"
+        ).fetchall() == [(7,), (8,)]
+        assert reopened.execute("PRAGMA quick_check").fetchone() == ("ok",)
+        assert reopened.execute("PRAGMA foreign_key_check").fetchall() == []
+    finally:
+        reopened.close()
+
+
+def test_v8_migration_hashes_chunks_in_bounded_pages(tmp_path: Path) -> None:
+    database_path = tmp_path / "many-chunks-v7.sqlite3"
+    connection = _create_v7_database(database_path)
+    connection.executemany(
+        """
+        INSERT INTO chunks(id, document_id, chunk_index, text, char_count)
+        VALUES (?, 'historical-document', ?, ?, ?)
+        """,
+        (
+            (
+                f"paged-chunk-{index:04d}",
+                index,
+                f"synthetic chunk {index}",
+                len(f"synthetic chunk {index}"),
+            )
+            for index in range(1, 602)
+        ),
+    )
+    connection.commit()
+
+    migrations.initialize_database(
+        connection,
+        backup_path=tmp_path / "many-chunks-v7.pre-migration.sqlite3",
+    )
+
+    assert connection.execute(
+        "SELECT COUNT(*) FROM chunks WHERE text_sha256 = 'legacy-unknown'"
+    ).fetchone() == (0,)
+    assert connection.execute(
+        "SELECT text_sha256 FROM chunks WHERE id = 'paged-chunk-0601'"
+    ).fetchone() == (hashlib.sha256(b"synthetic chunk 601").hexdigest(),)
+    connection.close()
 
 
 @pytest.mark.parametrize(
@@ -400,6 +566,78 @@ def test_migration_failure_rolls_back_every_change(
             is None
         )
         _assert_historical_rows_preserved(reopened)
+    finally:
+        reopened.close()
+
+
+def test_v8_migration_failure_restores_legacy_vectors_and_indexes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    database_path = tmp_path / "v8-rollback.sqlite3"
+    connection = _create_v7_database(database_path)
+    connection.execute(
+        """
+        INSERT INTO embedding_models(
+          id, name, provider, dimension, distance, config_json, created_at
+        ) VALUES ('model', 'model', 'test', 2, 'cosine', '{}', '2026-01-01')
+        """
+    )
+    connection.execute(
+        """
+        INSERT INTO vector_indexes(
+          id, model_id, object_type, index_path, vector_count, created_at,
+          metadata_json
+        ) VALUES (
+          'must-survive', 'model', 'document', 'legacy.index', 0,
+          '2026-01-01', '{}'
+        )
+        """
+    )
+    connection.commit()
+    connection.close()
+
+    original = list(migrations.MIGRATIONS)
+    version_seven = next(entry for entry in original if entry.version == 7)
+    real_version_eight = next(entry for entry in original if entry.version == 8)
+
+    class FailingVersionEight:
+        version = 8
+        name = real_version_eight.name
+
+        @staticmethod
+        def up(connection: sqlite3.Connection) -> None:
+            real_version_eight.up(connection)
+            raise RuntimeError("synthetic v8 failure")
+
+    monkeypatch.setattr(
+        migrations,
+        "MIGRATIONS",
+        (version_seven, FailingVersionEight()),
+    )
+    migrating = sqlite3.connect(database_path)
+    with pytest.raises(RuntimeError, match="synthetic v8 failure"):
+        migrations.initialize_database(
+            migrating,
+            backup_path=tmp_path / "v8-rollback.pre-migration.sqlite3",
+        )
+    assert migrating.in_transaction is False
+    migrating.close()
+
+    reopened = sqlite3.connect(database_path)
+    try:
+        assert _schema_version(reopened) == 7
+        assert "text_sha256" not in {
+            str(row[1]) for row in reopened.execute("PRAGMA table_info(chunks)")
+        }
+        assert "content_revision_sha256" not in {
+            str(row[1]) for row in reopened.execute("PRAGMA table_info(documents)")
+        }
+        assert reopened.execute("SELECT id FROM vector_indexes").fetchall() == [
+            ("must-survive",)
+        ]
+        assert reopened.execute(
+            "SELECT version FROM schema_migrations ORDER BY version"
+        ).fetchall() == [(7,)]
     finally:
         reopened.close()
 
