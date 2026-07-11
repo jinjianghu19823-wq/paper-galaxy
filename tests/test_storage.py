@@ -1,8 +1,14 @@
 import sqlite3
 from pathlib import Path
 
+import pytest
+
 from paper_galaxy.config import _validate_model
-from paper_galaxy.storage.migrations import initialize_database
+from paper_galaxy.errors import UnsupportedSchemaError
+from paper_galaxy.storage.migrations import (
+    CURRENT_SCHEMA_VERSION,
+    initialize_database,
+)
 from paper_galaxy.storage.repository import Repository
 from paper_galaxy.storage.sqlite import connect_database, resolve_database_path
 
@@ -79,10 +85,10 @@ def test_schema_initializes_expected_tables(tmp_path: Path) -> None:
     assert "documents_fts" in tables
 
     assert version is not None
-    assert version["value"] == "6"
+    assert version["value"] == str(CURRENT_SCHEMA_VERSION)
 
 
-def test_schema_upgrades_version_one_database_idempotently(tmp_path: Path) -> None:
+def test_unsupported_version_one_database_is_not_fabricated(tmp_path: Path) -> None:
     connection = connect_database(tmp_path)
     try:
         connection.execute(
@@ -91,33 +97,14 @@ def test_schema_upgrades_version_one_database_idempotently(tmp_path: Path) -> No
         connection.execute(
             "INSERT INTO schema_meta(key, value) VALUES ('schema_version', '1')"
         )
-        initialize_database(connection)
+        connection.commit()
+        with pytest.raises(UnsupportedSchemaError):
+            initialize_database(connection)
         report_table = connection.execute(
             """
             SELECT name
             FROM sqlite_master
             WHERE type = 'table' AND name = 'extraction_reports'
-            """
-        ).fetchone()
-        override_table = connection.execute(
-            """
-            SELECT name
-            FROM sqlite_master
-            WHERE type = 'table' AND name = 'cluster_label_overrides'
-            """
-        ).fetchone()
-        map_runs_table = connection.execute(
-            """
-            SELECT name
-            FROM sqlite_master
-            WHERE type = 'table' AND name = 'map_runs'
-            """
-        ).fetchone()
-        zotero_items_table = connection.execute(
-            """
-            SELECT name
-            FROM sqlite_master
-            WHERE type = 'table' AND name = 'zotero_items'
             """
         ).fetchone()
         version = connection.execute(
@@ -126,12 +113,9 @@ def test_schema_upgrades_version_one_database_idempotently(tmp_path: Path) -> No
     finally:
         connection.close()
 
-    assert report_table is not None
-    assert override_table is not None
-    assert map_runs_table is not None
-    assert zotero_items_table is not None
+    assert report_table is None
     assert version is not None
-    assert version["value"] == "6"
+    assert version["value"] == "1"
 
 
 def test_cluster_label_override_repository_methods(tmp_path: Path) -> None:

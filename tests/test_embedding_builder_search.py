@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -8,6 +9,7 @@ from paper_galaxy.embeddings.builder import build_embeddings
 from paper_galaxy.embeddings.search import semantic_search
 from paper_galaxy.embeddings.similarity import compare_neighbors
 from paper_galaxy.indexer import index_corpus
+from paper_galaxy.storage.sqlite import resolve_database_path
 from tests.test_indexer import copy_tiny_corpus
 
 
@@ -168,6 +170,82 @@ def test_compare_neighbors_can_use_unnormalized_vector_identity(
 
     assert comparison.dense_neighbors
     assert comparison.hybrid_neighbors
+
+
+def test_changed_document_prunes_document_chunk_vectors_and_index_metadata(
+    tmp_path: Path,
+) -> None:
+    corpus = copy_tiny_corpus(tmp_path)
+    index_corpus(corpus, project_dir=tmp_path, min_chars=40)
+    encoder = FakeEncoder()
+    build_embeddings(
+        project_dir=tmp_path,
+        model="unused",
+        object_type="both",
+        encoder=encoder,
+    )
+    database_path = resolve_database_path(tmp_path)
+    relative_path = "neural_operators/fourier_neural_operator.md"
+    with sqlite3.connect(database_path) as connection:
+        document_id = connection.execute(
+            "SELECT id FROM documents WHERE relative_path = ?",
+            (relative_path,),
+        ).fetchone()[0]
+        model_id = connection.execute("SELECT id FROM embedding_models").fetchone()[0]
+        old_chunk_ids = {
+            row[0]
+            for row in connection.execute(
+                "SELECT id FROM chunks WHERE document_id = ?", (document_id,)
+            ).fetchall()
+        }
+        connection.executemany(
+            """
+            INSERT INTO vector_indexes(
+              id, model_id, object_type, index_path, vector_count,
+              created_at, metadata_json
+            ) VALUES (?, ?, ?, ?, 1, '2026-07-11T00:00:00+00:00', '{}')
+            """,
+            [
+                ("index_document", model_id, "document", "document.index"),
+                ("index_chunk", model_id, "chunk", "chunk.index"),
+            ],
+        )
+        connection.commit()
+
+    source = corpus / relative_path
+    source.write_text(
+        source.read_text(encoding="utf-8")
+        + "\n\nA changed synthetic paragraph invalidates old dense vectors.\n",
+        encoding="utf-8",
+    )
+    index_corpus(corpus, project_dir=tmp_path, min_chars=40)
+
+    with sqlite3.connect(database_path) as connection:
+        document_vectors = connection.execute(
+            """
+            SELECT COUNT(*) FROM vectors
+            WHERE object_type = 'document' AND object_id = ?
+            """,
+            (document_id,),
+        ).fetchone()[0]
+        old_chunk_vectors = connection.execute(
+            f"""
+            SELECT COUNT(*) FROM vectors
+            WHERE object_type = 'chunk'
+              AND object_id IN ({", ".join("?" for _ in old_chunk_ids)})
+            """,
+            tuple(old_chunk_ids),
+        ).fetchone()[0]
+        remaining_vectors = connection.execute(
+            "SELECT COUNT(*) FROM vectors"
+        ).fetchone()[0]
+        vector_indexes = connection.execute(
+            "SELECT COUNT(*) FROM vector_indexes"
+        ).fetchone()[0]
+    assert document_vectors == 0
+    assert old_chunk_vectors == 0
+    assert remaining_vectors > 0
+    assert vector_indexes == 0
 
 
 def _fake_vector(text: str) -> list[float]:

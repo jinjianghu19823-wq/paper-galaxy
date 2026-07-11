@@ -39,9 +39,13 @@ from paper_galaxy.paths import project_config_path
 from paper_galaxy.pipeline import build_galaxy
 from paper_galaxy.plugins import get_plugin_registry
 from paper_galaxy.search import get_database_stats, search_index
-from paper_galaxy.storage.migrations import initialize_database
 from paper_galaxy.storage.repository import Repository
-from paper_galaxy.storage.sqlite import connect_database, resolve_database_path
+from paper_galaxy.storage.sqlite import (
+    connect_read_only,
+    connect_read_write,
+    ensure_database_ready,
+    resolve_database_path,
+)
 from paper_galaxy.validation import (
     validate_project,
     validation_exit_code,
@@ -1056,7 +1060,7 @@ def rename_cluster_command(
     except ValueError as exc:
         console.print(str(exc))
         raise typer.Exit(1) from exc
-    repository = _open_repository(project_dir.expanduser().resolve())
+    repository = _open_repository(project_dir.expanduser().resolve(), write=True)
     try:
         with repository.connection:
             repository.upsert_cluster_label_override(
@@ -1083,7 +1087,7 @@ def reset_cluster_label_command(
 ) -> None:
     """Remove a local manual label override for a cluster."""
 
-    repository = _open_repository(project_dir.expanduser().resolve())
+    repository = _open_repository(project_dir.expanduser().resolve(), write=True)
     try:
         with repository.connection:
             deleted = repository.delete_cluster_label_override(cluster_signature)
@@ -1309,7 +1313,7 @@ def delete_map_run_command(
     if not yes and not typer.confirm(f"Delete saved map run {run_id}?"):
         get_console().print("Cancelled.")
         return
-    repository = _open_repository(project_dir.expanduser().resolve())
+    repository = _open_repository(project_dir.expanduser().resolve(), write=True)
     try:
         with repository.connection:
             deleted = repository.delete_map_run(run_id)
@@ -2343,9 +2347,12 @@ def _object_list(value: object) -> list[object]:
     return value if isinstance(value, list) else []
 
 
-def _open_repository(project_dir: Path) -> Repository:
-    connection = connect_database(project_dir)
-    initialize_database(connection)
+def _open_repository(project_dir: Path, *, write: bool = False) -> Repository:
+    if write:
+        ensure_database_ready(project_dir)
+        connection = connect_read_write(project_dir)
+    else:
+        connection = connect_read_only(project_dir)
     return Repository(connection, resolve_database_path(project_dir))
 
 

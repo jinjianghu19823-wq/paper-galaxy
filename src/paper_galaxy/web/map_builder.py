@@ -19,9 +19,8 @@ from paper_galaxy.ml.neighbors import compute_neighbors
 from paper_galaxy.ml.tfidf import compute_tfidf, top_terms_for_documents
 from paper_galaxy.models import Document, MapPoint
 from paper_galaxy.records import DatabaseStats, IndexedDocument
-from paper_galaxy.storage.migrations import initialize_database
 from paper_galaxy.storage.repository import Repository
-from paper_galaxy.storage.sqlite import connect_database, resolve_database_path
+from paper_galaxy.storage.sqlite import connect_read_only, resolve_database_path
 
 
 def build_map_payload(
@@ -35,9 +34,8 @@ def build_map_payload(
     """Build JSON-serializable map data from active indexed documents."""
 
     database_path = resolve_database_path(project_dir)
-    connection = connect_database(project_dir)
+    connection = connect_read_only(project_dir)
     try:
-        initialize_database(connection)
         repository = Repository(connection, database_path)
         stats = repository.get_stats()
         limited_rows = repository.list_documents_with_text(
@@ -133,11 +131,12 @@ def _cluster_label_metadata(
     except Exception as exc:
         simple_labels = label_clusters(matrix, cluster_ids, terms)
         labels = fallback_cluster_labels(documents, cluster_ids, simple_labels)
-        warnings.append(f"Cluster label evidence fell back to simple labels: {exc}")
+        warnings.append(
+            f"Cluster label evidence fell back to simple labels ({type(exc).__name__})."
+        )
     signatures = [label.cluster_signature for label in labels]
-    connection = connect_database(project_dir)
+    connection = connect_read_only(project_dir)
     try:
-        initialize_database(connection)
         repository = Repository(connection, resolve_database_path(project_dir))
         overrides = repository.get_cluster_label_overrides(signatures)
     finally:
@@ -192,7 +191,6 @@ def _point_payload(point: MapPoint) -> dict[str, object]:
 
 def _stats_payload(stats: DatabaseStats) -> dict[str, object]:
     return {
-        "database_path": str(stats.database_path),
         "documents": stats.documents,
         "active_documents": stats.active_documents,
         "missing_documents": stats.missing_documents,

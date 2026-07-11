@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -22,9 +22,12 @@ from paper_galaxy.embeddings.sentence_transformers import (
     load_sentence_transformer,
 )
 from paper_galaxy.records import IndexedChunk, IndexedDocument
-from paper_galaxy.storage.migrations import initialize_database
 from paper_galaxy.storage.repository import Repository
-from paper_galaxy.storage.sqlite import connect_database, resolve_database_path
+from paper_galaxy.storage.sqlite import (
+    connect_read_write,
+    ensure_database_ready,
+    resolve_database_path,
+)
 
 DOCUMENT_OBJECT = "document"
 CHUNK_OBJECT = "chunk"
@@ -73,7 +76,8 @@ def build_embeddings(
     now = _utc_now()
     run_id = f"embed_run_{uuid4().hex[:16]}"
     database_path = resolve_database_path(resolved_project_dir)
-    connection = connect_database(resolved_project_dir)
+    ensure_database_ready(resolved_project_dir)
+    connection = connect_read_write(resolved_project_dir)
     documents_seen = 0
     documents_embedded = 0
     documents_unchanged = 0
@@ -82,7 +86,6 @@ def build_embeddings(
     chunks_unchanged = 0
     finished_at = now
     try:
-        initialize_database(connection)
         repository = Repository(connection, database_path)
         with repository.connection:
             repository.upsert_embedding_model(
@@ -111,43 +114,68 @@ def build_embeddings(
                 },
             )
 
-            if object_type in {DOCUMENT_OBJECT, BOTH_OBJECTS}:
-                document_payloads = _document_payloads(
-                    repository,
-                    limit=limit,
-                    max_document_chars=max_document_chars,
-                )
-                documents_seen = len(document_payloads)
-                documents_embedded, documents_unchanged = _embed_payloads(
-                    repository,
-                    selected_encoder,
-                    model_id=model_id,
-                    payloads=document_payloads,
-                    force=force,
-                    batch_size=batch_size,
-                    normalize=normalize,
-                    now=now,
-                )
+        if object_type in {DOCUMENT_OBJECT, BOTH_OBJECTS}:
+            document_payloads = _document_payloads(
+                repository,
+                limit=limit,
+                max_document_chars=max_document_chars,
+            )
+            documents_seen = len(document_payloads)
 
-            if object_type in {CHUNK_OBJECT, BOTH_OBJECTS}:
-                chunk_payloads = _chunk_payloads(
-                    repository,
-                    limit=limit,
-                    max_chunk_chars=max_chunk_chars,
-                )
-                chunks_seen = len(chunk_payloads)
-                chunks_embedded, chunks_unchanged = _embed_payloads(
-                    repository,
-                    selected_encoder,
-                    model_id=model_id,
-                    payloads=chunk_payloads,
-                    force=force,
-                    batch_size=batch_size,
-                    normalize=normalize,
-                    now=now,
-                )
+            def record_document_batch(count: int) -> None:
+                nonlocal documents_embedded
+                documents_embedded += count
 
-            finished_at = _utc_now()
+            def record_unchanged_documents(count: int) -> None:
+                nonlocal documents_unchanged
+                documents_unchanged = count
+
+            embedded_total, documents_unchanged = _embed_payloads(
+                repository,
+                selected_encoder,
+                model_id=model_id,
+                payloads=document_payloads,
+                force=force,
+                batch_size=batch_size,
+                normalize=normalize,
+                now=now,
+                on_batch_committed=record_document_batch,
+                on_unchanged_count=record_unchanged_documents,
+            )
+            documents_embedded = embedded_total
+
+        if object_type in {CHUNK_OBJECT, BOTH_OBJECTS}:
+            chunk_payloads = _chunk_payloads(
+                repository,
+                limit=limit,
+                max_chunk_chars=max_chunk_chars,
+            )
+            chunks_seen = len(chunk_payloads)
+
+            def record_chunk_batch(count: int) -> None:
+                nonlocal chunks_embedded
+                chunks_embedded += count
+
+            def record_unchanged_chunks(count: int) -> None:
+                nonlocal chunks_unchanged
+                chunks_unchanged = count
+
+            embedded_total, chunks_unchanged = _embed_payloads(
+                repository,
+                selected_encoder,
+                model_id=model_id,
+                payloads=chunk_payloads,
+                force=force,
+                batch_size=batch_size,
+                normalize=normalize,
+                now=now,
+                on_batch_committed=record_chunk_batch,
+                on_unchanged_count=record_unchanged_chunks,
+            )
+            chunks_embedded = embedded_total
+
+        finished_at = _utc_now()
+        with repository.connection:
             repository.finish_embedding_run(
                 run_id,
                 finished_at=finished_at,
@@ -159,6 +187,25 @@ def build_embeddings(
                 chunks_embedded=chunks_embedded,
                 chunks_unchanged=chunks_unchanged,
             )
+    except BaseException as exc:
+        finished_at = _utc_now()
+        status = "interrupted" if isinstance(exc, KeyboardInterrupt) else "failed"
+        with connection:
+            Repository(connection, database_path).finish_embedding_run(
+                run_id,
+                finished_at=finished_at,
+                status=status,
+                documents_seen=documents_seen,
+                documents_embedded=documents_embedded,
+                documents_unchanged=documents_unchanged,
+                chunks_seen=chunks_seen,
+                chunks_embedded=chunks_embedded,
+                chunks_unchanged=chunks_unchanged,
+                errors=1,
+                error_code=type(exc).__name__,
+                error_message=_safe_error_message(exc),
+            )
+        raise
     finally:
         connection.close()
 
@@ -235,6 +282,12 @@ def _document_payloads(
                 "title": document.title,
                 "relative_path": document.relative_path,
                 "status": document.status,
+                "source_text_sha256": text_sha256(text),
+                "source_identity_sha256": text_sha256(
+                    f"{document.title}\0{document.relative_path}\0{text}"
+                ),
+                "embedding_input_algorithm": "paper-galaxy-weighted-text-v1",
+                "max_document_chars": max_document_chars,
             },
         )
         for document, text in rows
@@ -264,6 +317,9 @@ def _chunk_payloads(
                 "title": document.title,
                 "relative_path": document.relative_path,
                 "chunk_index": chunk.chunk_index,
+                "source_text_sha256": text_sha256(chunk.text),
+                "embedding_input_algorithm": "paper-galaxy-chunk-text-v1",
+                "max_chunk_chars": max_chunk_chars,
             },
         )
         for document, chunk in rows
@@ -280,6 +336,8 @@ def _embed_payloads(
     batch_size: int,
     normalize: bool,
     now: str,
+    on_batch_committed: Callable[[int], None] | None = None,
+    on_unchanged_count: Callable[[int], None] | None = None,
 ) -> tuple[int, int]:
     to_embed: list[tuple[_EmbeddingPayload, str]] = []
     unchanged = 0
@@ -295,6 +353,9 @@ def _embed_payloads(
             continue
         to_embed.append((payload, current_hash))
 
+    if on_unchanged_count is not None:
+        on_unchanged_count(unchanged)
+
     embedded = 0
     for batch in _batches(to_embed, max(1, batch_size)):
         batch_texts = [payload.text for payload, _ in batch]
@@ -308,31 +369,38 @@ def _embed_payloads(
                 "Embedding encoder returned "
                 f"{len(batch_vectors)} vectors for {len(batch)} texts."
             )
-        for (payload, current_hash), values in zip(batch, batch_vectors, strict=True):
-            repository.upsert_vector(
-                VectorRecord(
-                    id=stable_vector_id(
-                        model_id,
-                        payload.object_type,
-                        payload.object_id,
-                    ),
-                    model_id=model_id,
-                    object_type=payload.object_type,
-                    object_id=payload.object_id,
-                    text_sha256=current_hash,
-                    dimension=encoder.dimension,
-                    dtype=FLOAT32_DTYPE,
-                    vector=encode_vector(
-                        values,
-                        expected_dimension=encoder.dimension,
-                        normalize=normalize,
-                    ),
-                    metadata=payload.metadata,
-                    created_at=now,
-                    updated_at=now,
-                )
+        records = [
+            VectorRecord(
+                id=stable_vector_id(
+                    model_id,
+                    payload.object_type,
+                    payload.object_id,
+                ),
+                model_id=model_id,
+                object_type=payload.object_type,
+                object_id=payload.object_id,
+                text_sha256=current_hash,
+                dimension=encoder.dimension,
+                dtype=FLOAT32_DTYPE,
+                vector=encode_vector(
+                    values,
+                    expected_dimension=encoder.dimension,
+                    normalize=normalize,
+                ),
+                metadata=payload.metadata,
+                created_at=now,
+                updated_at=now,
             )
-            embedded += 1
+            for (payload, current_hash), values in zip(
+                batch, batch_vectors, strict=True
+            )
+        ]
+        with repository.connection:
+            for record in records:
+                repository.upsert_vector(record)
+        embedded += len(records)
+        if on_batch_committed is not None:
+            on_batch_committed(len(records))
     return embedded, unchanged
 
 
@@ -351,3 +419,8 @@ def _effective_limit(limit: int | None) -> int:
 
 def _utc_now() -> str:
     return datetime.now(UTC).isoformat(timespec="seconds")
+
+
+def _safe_error_message(error: BaseException, *, limit: int = 500) -> str:
+    text = " ".join(str(error).split()) or type(error).__name__
+    return text[:limit]

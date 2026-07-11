@@ -18,9 +18,8 @@ from paper_galaxy.embeddings.sentence_transformers import (
 )
 from paper_galaxy.ml.tfidf import compute_tfidf
 from paper_galaxy.records import IndexedDocument
-from paper_galaxy.storage.migrations import initialize_database
 from paper_galaxy.storage.repository import Repository
-from paper_galaxy.storage.sqlite import connect_database, resolve_database_path
+from paper_galaxy.storage.sqlite import connect_read_only, resolve_database_path
 
 
 def compare_neighbors(
@@ -48,9 +47,8 @@ def compare_neighbors(
         distance=EMBEDDING_DISTANCE,
         config={"normalize": normalize},
     )
-    connection = connect_database(project_dir)
+    connection = connect_read_only(project_dir)
     try:
-        initialize_database(connection)
         repository = Repository(connection, resolve_database_path(project_dir))
         target = repository.get_document_by_id_or_relative_path(document_id_or_path)
         if target is None:

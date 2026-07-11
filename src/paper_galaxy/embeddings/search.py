@@ -16,9 +16,8 @@ from paper_galaxy.embeddings.sentence_transformers import (
     load_sentence_transformer,
 )
 from paper_galaxy.records import IndexedChunk, IndexedDocument
-from paper_galaxy.storage.migrations import initialize_database
 from paper_galaxy.storage.repository import Repository
-from paper_galaxy.storage.sqlite import connect_database, resolve_database_path
+from paper_galaxy.storage.sqlite import connect_read_only, resolve_database_path
 
 
 class NoVectorsFoundError(RuntimeError):
@@ -57,9 +56,8 @@ def semantic_search(
         batch_size=1,
         normalize=normalize,
     )[0]
-    connection = connect_database(project_dir)
+    connection = connect_read_only(project_dir)
     try:
-        initialize_database(connection)
         repository = Repository(connection, resolve_database_path(project_dir))
         vectors = repository.list_vectors(model_id, object_type)
         if not vectors:
@@ -102,10 +100,18 @@ def semantic_search(
 def vector_stats(project_dir: Path) -> dict[str, object]:
     """Return JSON-serializable vector statistics for a local project."""
 
-    connection = connect_database(project_dir)
+    database_path = resolve_database_path(project_dir)
+    if not database_path.is_file():
+        return {
+            "database_path": str(database_path),
+            "models": [],
+            "vector_counts": [],
+            "last_run": None,
+            "vector_indexes": [],
+        }
+    connection = connect_read_only(project_dir)
     try:
-        initialize_database(connection)
-        repository = Repository(connection, resolve_database_path(project_dir))
+        repository = Repository(connection, database_path)
         return repository.vector_stats()
     finally:
         connection.close()

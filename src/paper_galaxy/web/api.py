@@ -2,17 +2,18 @@
 
 from __future__ import annotations
 
-import shlex
+import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from paper_galaxy import __version__
 from paper_galaxy.embeddings.search import vector_stats as embedding_vector_stats
-from paper_galaxy.errors import MissingDependencyError
+from paper_galaxy.errors import DatabaseError, MissingDependencyError
 from paper_galaxy.explain.labels import validate_manual_label
 from paper_galaxy.explain.pairs import explain_pair, pair_explanation_payload
-from paper_galaxy.maps import persisted_map_payload
+from paper_galaxy.maps import persisted_map_payload, safe_persisted_map_payload
+from paper_galaxy.paths import project_config_path
 from paper_galaxy.records import (
     DatabaseStats,
     IndexedChunk,
@@ -20,9 +21,13 @@ from paper_galaxy.records import (
     SearchResult,
 )
 from paper_galaxy.search import get_database_stats, search_index
-from paper_galaxy.storage.migrations import initialize_database
+from paper_galaxy.storage.json import StoredJSONError
 from paper_galaxy.storage.repository import Repository
-from paper_galaxy.storage.sqlite import connect_database, resolve_database_path
+from paper_galaxy.storage.sqlite import (
+    connect_read_only,
+    connect_read_write,
+    resolve_database_path,
+)
 from paper_galaxy.web.map_builder import build_map_payload
 from paper_galaxy.zotero.filters import ZoteroFilterError, normalize_reading_status
 from paper_galaxy.zotero.reading import build_zotero_reading_map_payload
@@ -47,6 +52,38 @@ def register_api_routes(app: Any, config: WebAppConfig) -> None:
     """Register JSON API routes on a FastAPI app instance."""
 
     from fastapi.responses import JSONResponse
+
+    async def database_error_handler(_request: Any, exc: DatabaseError) -> Any:
+        return JSONResponse(
+            status_code=_database_error_status(exc),
+            content={
+                "database_exists": exc.code != "database_missing",
+                "error": {"code": exc.code, "message": exc.safe_message},
+                "warnings": [exc.safe_message],
+            },
+        )
+
+    app.add_exception_handler(DatabaseError, database_error_handler)
+
+    async def stored_data_error_handler(_request: Any, exc: Exception) -> Any:
+        code = exc.code if isinstance(exc, StoredJSONError) else "database_read_failed"
+        return JSONResponse(
+            status_code=500,
+            content={
+                "database_exists": True,
+                "error": {
+                    "code": code,
+                    "message": (
+                        "Stored project data is invalid. Run "
+                        "`paper-galaxy validate-project` for local details."
+                    ),
+                },
+                "warnings": ["The project database could not be read safely."],
+            },
+        )
+
+    app.add_exception_handler(sqlite3.Error, stored_data_error_handler)
+    app.add_exception_handler(StoredJSONError, stored_data_error_handler)
 
     def normalize_zotero_status_query(raw: str) -> tuple[str, list[str], Any | None]:
         try:
@@ -75,18 +112,16 @@ def register_api_routes(app: Any, config: WebAppConfig) -> None:
             "app": "Paper Galaxy",
             "version": __version__,
             "status": "ok",
-            "project_dir": str(config.project_dir),
             "database_exists": database_path.exists(),
-            "database_path": str(database_path),
+            "project_configured": project_config_path(config.project_dir).exists(),
         }
 
     @app.get("/api/config")
     def app_config() -> dict[str, object]:
         database_path = config.database_path
         return {
-            "project_dir": str(config.project_dir),
-            "database_path": str(database_path),
             "database_exists": database_path.exists(),
+            "project_configured": project_config_path(config.project_dir).exists(),
             "map_limit": config.map_limit,
             "seed": config.seed,
             "clusters": config.clusters,
@@ -120,7 +155,9 @@ def register_api_routes(app: Any, config: WebAppConfig) -> None:
             }
         return {
             "database_exists": True,
-            "vector_stats": embedding_vector_stats(config.project_dir),
+            "vector_stats": _public_vector_stats(
+                embedding_vector_stats(config.project_dir)
+            ),
             "warnings": [],
         }
 
@@ -133,9 +170,9 @@ def register_api_routes(app: Any, config: WebAppConfig) -> None:
                 "zotero": _empty_zotero_status(),
                 **missing,
             }
-        repository = _repository(config.project_dir)
+        repository = _read_repository(config.project_dir)
         try:
-            stats_payload = repository.zotero_stats()
+            stats_payload = _public_zotero_stats(repository.zotero_stats())
         finally:
             repository.connection.close()
         return {
@@ -164,7 +201,7 @@ def register_api_routes(app: Any, config: WebAppConfig) -> None:
         )
         if error is not None:
             return error
-        repository = _repository(config.project_dir)
+        repository = _read_repository(config.project_dir)
         try:
             items = repository.list_zotero_items(
                 limit=max(0, limit),
@@ -182,7 +219,7 @@ def register_api_routes(app: Any, config: WebAppConfig) -> None:
         missing = _missing_database_payload(config)
         if missing is not None:
             return JSONResponse(status_code=404, content=missing)
-        repository = _repository(config.project_dir)
+        repository = _read_repository(config.project_dir)
         try:
             item = repository.get_zotero_item_detail(zotero_item_id)
         finally:
@@ -225,9 +262,11 @@ def register_api_routes(app: Any, config: WebAppConfig) -> None:
             try:
                 return {
                     "database_exists": True,
-                    **persisted_map_payload(
-                        project_dir=config.project_dir,
-                        run_id=run_id,
+                    **_public_saved_map_payload(
+                        persisted_map_payload(
+                            project_dir=config.project_dir,
+                            run_id=run_id,
+                        )
                     ),
                 }
             except ValueError as exc:
@@ -246,7 +285,7 @@ def register_api_routes(app: Any, config: WebAppConfig) -> None:
         )
         if error is not None:
             return error
-        repository = _repository(config.project_dir)
+        repository = _read_repository(config.project_dir)
         try:
             payload = build_zotero_reading_map_payload(
                 repository=repository,
@@ -283,6 +322,7 @@ def register_api_routes(app: Any, config: WebAppConfig) -> None:
             )
         finally:
             repository.connection.close()
+        payload = _public_zotero_reading_payload(payload)
         payload_warnings = payload.get("warnings", [])
         if not isinstance(payload_warnings, list):
             payload_warnings = []
@@ -339,7 +379,7 @@ def register_api_routes(app: Any, config: WebAppConfig) -> None:
                 **missing,
             }
         selected_statuses = None if status == "all" else {status}
-        repository = _repository(config.project_dir)
+        repository = _read_repository(config.project_dir)
         try:
             rows = repository.list_documents(
                 statuses=selected_statuses,
@@ -361,7 +401,7 @@ def register_api_routes(app: Any, config: WebAppConfig) -> None:
         missing = _missing_database_payload(config)
         if missing is not None:
             return JSONResponse(status_code=404, content=missing)
-        repository = _repository(config.project_dir)
+        repository = _read_repository(config.project_dir)
         try:
             document = repository.get_document(document_id)
             if document is None:
@@ -384,7 +424,7 @@ def register_api_routes(app: Any, config: WebAppConfig) -> None:
             repository.connection.close()
         return {
             "database_exists": True,
-            "metadata": _document_payload(document, include_path=True),
+            "metadata": _document_payload(document),
             "chunk_count": chunk_count,
             "chunks": [_chunk_payload(chunk) for chunk in chunks],
             "text_preview": _preview(text or ""),
@@ -414,9 +454,11 @@ def register_api_routes(app: Any, config: WebAppConfig) -> None:
             try:
                 return {
                     "database_exists": True,
-                    **persisted_map_payload(
-                        project_dir=config.project_dir,
-                        run_id=run_id,
+                    **_public_saved_map_payload(
+                        persisted_map_payload(
+                            project_dir=config.project_dir,
+                            run_id=run_id,
+                        )
                     ),
                 }
             except ValueError as exc:
@@ -467,9 +509,9 @@ def register_api_routes(app: Any, config: WebAppConfig) -> None:
         missing = _missing_database_payload(config)
         if missing is not None:
             return {"database_exists": False, "map_runs": [], **missing}
-        repository = _repository(config.project_dir)
+        repository = _read_repository(config.project_dir)
         try:
-            runs = repository.list_map_runs()
+            runs = [_public_map_run(run) for run in repository.list_map_runs()]
         finally:
             repository.connection.close()
         return {"database_exists": True, "map_runs": runs, "warnings": []}
@@ -482,7 +524,12 @@ def register_api_routes(app: Any, config: WebAppConfig) -> None:
         try:
             return {
                 "database_exists": True,
-                **persisted_map_payload(project_dir=config.project_dir, run_id=run_id),
+                **_public_saved_map_payload(
+                    persisted_map_payload(
+                        project_dir=config.project_dir,
+                        run_id=run_id,
+                    )
+                ),
             }
         except ValueError as exc:
             return JSONResponse(
@@ -501,7 +548,7 @@ def register_api_routes(app: Any, config: WebAppConfig) -> None:
         missing = _missing_database_payload(config)
         if missing is not None:
             return {"database_exists": False, "deleted": False, **missing}
-        repository = _repository(config.project_dir)
+        repository = _write_repository(config.project_dir)
         try:
             with repository.connection:
                 deleted = repository.delete_map_run(run_id)
@@ -577,7 +624,7 @@ def register_api_routes(app: Any, config: WebAppConfig) -> None:
                     }
                 },
             )
-        repository = _repository(config.project_dir)
+        repository = _write_repository(config.project_dir)
         try:
             with repository.connection:
                 override = repository.upsert_cluster_label_override(
@@ -597,7 +644,7 @@ def register_api_routes(app: Any, config: WebAppConfig) -> None:
         missing = _missing_database_payload(config)
         if missing is not None:
             return JSONResponse(status_code=404, content=missing)
-        repository = _repository(config.project_dir)
+        repository = _write_repository(config.project_dir)
         try:
             with repository.connection:
                 deleted = repository.delete_cluster_label_override(cluster_signature)
@@ -631,7 +678,7 @@ def register_api_routes(app: Any, config: WebAppConfig) -> None:
                     }
                 },
             )
-        repository = _repository(config.project_dir)
+        repository = _read_repository(config.project_dir)
         try:
             explanation = explain_pair(
                 repository,
@@ -660,9 +707,13 @@ def register_api_routes(app: Any, config: WebAppConfig) -> None:
         }
 
 
-def _repository(project_dir: Path) -> Repository:
-    connection = connect_database(project_dir)
-    initialize_database(connection)
+def _read_repository(project_dir: Path) -> Repository:
+    connection = connect_read_only(project_dir)
+    return Repository(connection, resolve_database_path(project_dir))
+
+
+def _write_repository(project_dir: Path) -> Repository:
+    connection = connect_read_write(project_dir)
     return Repository(connection, resolve_database_path(project_dir))
 
 
@@ -674,12 +725,9 @@ def _missing_database_payload(config: WebAppConfig) -> dict[str, object] | None:
         "warnings": ["No Paper Galaxy database found."],
         "error": {
             "code": "database_missing",
-            "message": "No Paper Galaxy database found",
-            "database_path": str(database_path),
-            "project_dir": str(config.project_dir),
+            "message": "No Paper Galaxy database found.",
             "command": (
-                "paper-galaxy index /path/to/corpus "
-                f"--project-dir {shlex.quote(str(config.project_dir))}"
+                "paper-galaxy index /path/to/corpus --project-dir /path/to/project"
             ),
         },
     }
@@ -698,10 +746,8 @@ def _empty_zotero_status() -> dict[str, object]:
     }
 
 
-def _document_payload(
-    document: IndexedDocument, *, include_path: bool = False
-) -> dict[str, object]:
-    payload: dict[str, object] = {
+def _document_payload(document: IndexedDocument) -> dict[str, object]:
+    return {
         "document_id": document.id,
         "id": document.id,
         "title": document.title,
@@ -711,9 +757,146 @@ def _document_payload(
         "status": document.status,
         "updated_at": document.updated_at,
     }
-    if include_path:
-        payload["local_path"] = document.path
-    return payload
+
+
+def _public_vector_stats(payload: dict[str, object]) -> dict[str, object]:
+    public = {key: value for key, value in payload.items() if key != "database_path"}
+    models = public.get("models")
+    if isinstance(models, list):
+        public["models"] = [
+            {
+                key: (_safe_model_name(value) if key == "name" else value)
+                for key, value in row.items()
+                if key != "config"
+            }
+            for row in models
+            if isinstance(row, dict)
+        ]
+    counts = public.get("vector_counts")
+    if isinstance(counts, list):
+        public["vector_counts"] = [
+            {
+                key: (_safe_model_name(value) if key == "model_name" else value)
+                for key, value in row.items()
+            }
+            for row in counts
+            if isinstance(row, dict)
+        ]
+    last_run = public.get("last_run")
+    if isinstance(last_run, dict):
+        public["last_run"] = {
+            key: (_safe_model_name(value) if key == "model_name" else value)
+            for key, value in last_run.items()
+            if key != "config"
+        }
+    indexes = public.get("vector_indexes")
+    if isinstance(indexes, list):
+        public["vector_indexes"] = [
+            {
+                key: value
+                for key, value in row.items()
+                if key not in {"index_path", "metadata"}
+            }
+            for row in indexes
+            if isinstance(row, dict)
+        ]
+    return public
+
+
+def _public_zotero_stats(payload: dict[str, object]) -> dict[str, object]:
+    public = {
+        key: value
+        for key, value in payload.items()
+        if key not in {"last_import_run", "warnings"}
+    }
+    run = payload.get("last_import_run")
+    warning_count = 0
+    if isinstance(run, dict):
+        warnings = run.get("warnings")
+        warning_count = len(warnings) if isinstance(warnings, list) else 0
+        allowed = {
+            "id",
+            "source_id",
+            "started_at",
+            "finished_at",
+            "status",
+            "items_seen",
+            "items_imported",
+            "items_updated",
+            "items_unchanged",
+            "attachments_seen",
+            "attachments_resolved",
+            "pdfs_extracted",
+            "notes_imported",
+            "skipped",
+        }
+        public_run = {key: value for key, value in run.items() if key in allowed}
+        public_run["warning_count"] = warning_count
+        public["last_import_run"] = public_run
+    else:
+        public["last_import_run"] = None
+    public["warnings"] = (
+        [f"The last Zotero import reported {warning_count} warning(s)."]
+        if warning_count
+        else []
+    )
+    return public
+
+
+def _public_zotero_reading_payload(payload: dict[str, object]) -> dict[str, object]:
+    public = dict(payload)
+    stats = public.get("stats")
+    if isinstance(stats, dict):
+        public["stats"] = _public_zotero_stats(stats)
+    warnings = public.get("warnings")
+    warning_count = len(warnings) if isinstance(warnings, list) else 0
+    public["warnings"] = (
+        [f"The reading map reported {warning_count} warning(s)."]
+        if warning_count
+        else []
+    )
+    return public
+
+
+def _public_map_run(run: dict[str, object]) -> dict[str, object]:
+    allowed = {
+        "id",
+        "name",
+        "created_at",
+        "status",
+        "similarity_mode",
+        "model_id",
+        "seed",
+        "requested_clusters",
+        "requested_neighbors",
+        "requested_limit",
+        "document_count",
+        "cluster_count",
+        "document_set_signature",
+    }
+    public = {key: value for key, value in run.items() if key in allowed}
+    warnings = run.get("warnings")
+    public["warning_count"] = len(warnings) if isinstance(warnings, list) else 0
+    return public
+
+
+def _public_saved_map_payload(payload: dict[str, object]) -> dict[str, object]:
+    return safe_persisted_map_payload(payload)
+
+
+def _safe_model_name(value: object) -> str:
+    parts = str(value).replace("\\", "/").rstrip("/").split("/")
+    return parts[-1] if parts and parts[-1] else "local-model"
+
+
+def _database_error_status(error: DatabaseError) -> int:
+    if error.code == "database_missing":
+        return 404
+    if error.code in {"future_schema", "database_needs_migration"}:
+        return 409
+    if error.code == "database_locked":
+        return 423
+    return 500
 
 
 def _chunk_payload(chunk: IndexedChunk) -> dict[str, object]:

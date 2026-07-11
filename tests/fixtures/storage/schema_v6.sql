@@ -3,12 +3,6 @@ CREATE TABLE IF NOT EXISTS schema_meta (
   value TEXT NOT NULL
 );
 
-CREATE TABLE IF NOT EXISTS schema_migrations (
-  version INTEGER PRIMARY KEY,
-  name TEXT NOT NULL UNIQUE,
-  applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-
 CREATE TABLE IF NOT EXISTS corpora (
   id TEXT PRIMARY KEY,
   root_path TEXT NOT NULL,
@@ -30,8 +24,6 @@ CREATE TABLE IF NOT EXISTS scan_runs (
   skipped_files INTEGER NOT NULL DEFAULT 0,
   chunks_written INTEGER NOT NULL DEFAULT 0,
   status TEXT NOT NULL,
-  error_code TEXT,
-  error_message TEXT,
   FOREIGN KEY(corpus_id) REFERENCES corpora(id)
 );
 
@@ -140,8 +132,6 @@ CREATE TABLE IF NOT EXISTS embedding_runs (
   chunks_unchanged INTEGER NOT NULL DEFAULT 0,
   errors INTEGER NOT NULL DEFAULT 0,
   config_json TEXT NOT NULL DEFAULT '{}',
-  error_code TEXT,
-  error_message TEXT,
   FOREIGN KEY(model_id) REFERENCES embedding_models(id)
 );
 
@@ -246,8 +236,6 @@ CREATE TABLE IF NOT EXISTS zotero_import_runs (
   skipped INTEGER NOT NULL DEFAULT 0,
   warnings_json TEXT NOT NULL DEFAULT '[]',
   config_json TEXT NOT NULL DEFAULT '{}',
-  error_code TEXT,
-  error_message TEXT,
   FOREIGN KEY(source_id) REFERENCES zotero_sources(id)
 );
 
@@ -269,7 +257,6 @@ CREATE TABLE IF NOT EXISTS zotero_items (
   extra TEXT,
   reading_status TEXT NOT NULL DEFAULT 'unknown',
   data_json TEXT NOT NULL DEFAULT '{}',
-  child_manifest_json TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
   UNIQUE(source_id, zotero_key),

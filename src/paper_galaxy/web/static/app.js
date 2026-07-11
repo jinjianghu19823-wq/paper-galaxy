@@ -328,7 +328,7 @@ async function selectDocument(documentId) {
 
 function updateHealth(health) {
   const status = health.database_exists ? t("health.connected") : t("health.noDatabase");
-  els.projectStatus.textContent = `${status} - ${health.project_dir}`;
+  els.projectStatus.textContent = status;
 }
 
 function updateStats(stats) {
@@ -568,9 +568,6 @@ function renderInspector() {
     }),
     "meta-row"
   );
-  if (metadata.local_path) {
-    appendText(els.inspector, "div", metadata.local_path, "meta-row");
-  }
   renderPinControl(metadata.document_id);
   renderClusterInspector(point);
   renderZoteroInspector(metadata.document_id);
@@ -920,11 +917,7 @@ function renderPinControl(documentId) {
 function graphLayoutKey(payload) {
   const config = state.config || {};
   const runId = payload.map_run && payload.map_run.id ? payload.map_run.id : "live";
-  const identity =
-    config.database_path ||
-    (state.health && state.health.database_path) ||
-    (state.health && state.health.project_dir) ||
-    "unknown";
+  const identity = "local-project";
   const points = payload.points || [];
   const seed = config.seed === null || config.seed === undefined ? "default" : config.seed;
   const limit = config.map_limit === null || config.map_limit === undefined ? "default" : config.map_limit;

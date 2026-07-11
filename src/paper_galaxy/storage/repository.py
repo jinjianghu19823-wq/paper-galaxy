@@ -20,6 +20,7 @@ from paper_galaxy.records import (
     IndexedDocument,
     SearchResult,
 )
+from paper_galaxy.storage.json import load_json_list, load_json_object
 
 
 class Repository:
@@ -65,6 +66,8 @@ class Repository:
         skipped_files: int,
         chunks_written: int,
         status: str = "completed",
+        error_code: str | None = None,
+        error_message: str | None = None,
     ) -> None:
         self.connection.execute(
             """
@@ -77,7 +80,9 @@ class Repository:
                 documents_missing = ?,
                 skipped_files = ?,
                 chunks_written = ?,
-                status = ?
+                status = ?,
+                error_code = ?,
+                error_message = ?
             WHERE id = ?
             """,
             (
@@ -90,6 +95,8 @@ class Repository:
                 skipped_files,
                 chunks_written,
                 status,
+                error_code,
+                error_message,
                 scan_run_id,
             ),
         )
@@ -326,6 +333,8 @@ class Repository:
         chunks_embedded: int,
         chunks_unchanged: int,
         errors: int = 0,
+        error_code: str | None = None,
+        error_message: str | None = None,
     ) -> None:
         self.connection.execute(
             """
@@ -338,7 +347,9 @@ class Repository:
                 chunks_seen = ?,
                 chunks_embedded = ?,
                 chunks_unchanged = ?,
-                errors = ?
+                errors = ?,
+                error_code = ?,
+                error_message = ?
             WHERE id = ?
             """,
             (
@@ -351,6 +362,8 @@ class Repository:
                 chunks_embedded,
                 chunks_unchanged,
                 errors,
+                error_code,
+                error_message,
                 run_id,
             ),
         )
@@ -462,7 +475,7 @@ class Repository:
                     "provider": str(row["provider"]),
                     "dimension": int(row["dimension"]),
                     "distance": str(row["distance"]),
-                    "config": json.loads(str(row["config_json"])),
+                    "config": load_json_object(row["config_json"]),
                     "created_at": str(row["created_at"]),
                 }
                 for row in model_rows
@@ -489,7 +502,7 @@ class Repository:
                     "index_path": str(row["index_path"]),
                     "vector_count": int(row["vector_count"]),
                     "created_at": str(row["created_at"]),
-                    "metadata": json.loads(str(row["metadata_json"])),
+                    "metadata": load_json_object(row["metadata_json"]),
                 }
                 for row in index_rows
             ],
@@ -804,7 +817,13 @@ class Repository:
               library_id = excluded.library_id,
               library_type = excluded.library_type,
               name = excluded.name,
-              last_version = excluded.last_version,
+              last_version = CASE
+                WHEN zotero_sources.last_version IS NULL THEN excluded.last_version
+                WHEN excluded.last_version IS NULL THEN zotero_sources.last_version
+                WHEN excluded.last_version > zotero_sources.last_version
+                  THEN excluded.last_version
+                ELSE zotero_sources.last_version
+              END,
               updated_at = excluded.updated_at
             """,
             (
@@ -857,6 +876,8 @@ class Repository:
         notes_imported: int,
         skipped: int,
         warnings: Iterable[str],
+        error_code: str | None = None,
+        error_message: str | None = None,
     ) -> None:
         """Finish a Zotero import run summary."""
 
@@ -874,7 +895,9 @@ class Repository:
                 pdfs_extracted = ?,
                 notes_imported = ?,
                 skipped = ?,
-                warnings_json = ?
+                warnings_json = ?,
+                error_code = ?,
+                error_message = ?
             WHERE id = ?
             """,
             (
@@ -890,14 +913,28 @@ class Repository:
                 notes_imported,
                 skipped,
                 json.dumps([str(warning) for warning in warnings], sort_keys=True),
+                error_code,
+                error_message,
                 run_id,
             ),
         )
 
-    def upsert_zotero_collection(self, collection: Mapping[str, Any]) -> None:
-        """Insert or update normalized Zotero collection metadata."""
+    def update_zotero_import_run_config(
+        self,
+        run_id: str,
+        config: Mapping[str, Any],
+    ) -> None:
+        """Persist the resolved import profile before applying item writes."""
 
         self.connection.execute(
+            "UPDATE zotero_import_runs SET config_json = ? WHERE id = ?",
+            (json.dumps(dict(config), sort_keys=True), run_id),
+        )
+
+    def upsert_zotero_collection(self, collection: Mapping[str, Any]) -> bool:
+        """Insert/update a collection unless its versioned payload regresses."""
+
+        cursor = self.connection.execute(
             """
             INSERT INTO zotero_collections(
               id, source_id, zotero_key, parent_key, name, path, version, data_json
@@ -910,6 +947,24 @@ class Repository:
               path = excluded.path,
               version = excluded.version,
               data_json = excluded.data_json
+            WHERE (
+                    zotero_collections.version IS NULL
+                AND excluded.version IS NOT NULL
+              )
+               OR (
+                    zotero_collections.version IS NOT NULL
+                AND excluded.version > zotero_collections.version
+              )
+               OR (
+                    (
+                         excluded.version = zotero_collections.version
+                      OR (
+                           excluded.version IS NULL
+                       AND zotero_collections.version IS NULL
+                      )
+                    )
+                AND excluded.data_json = zotero_collections.data_json
+              )
             """,
             (
                 str(collection["id"]),
@@ -922,11 +977,12 @@ class Repository:
                 json.dumps(dict(collection.get("data", {})), sort_keys=True),
             ),
         )
+        return cursor.rowcount > 0
 
-    def upsert_zotero_item(self, item: Mapping[str, Any]) -> None:
-        """Insert or update normalized Zotero item metadata."""
+    def upsert_zotero_item(self, item: Mapping[str, Any]) -> bool:
+        """Insert/update one item unless its incoming version is older."""
 
-        self.connection.execute(
+        cursor = self.connection.execute(
             """
             INSERT INTO zotero_items(
               id, source_id, zotero_key, version, item_type, title, year, date,
@@ -952,6 +1008,22 @@ class Repository:
               reading_status = excluded.reading_status,
               data_json = excluded.data_json,
               updated_at = excluded.updated_at
+            WHERE zotero_items.version IS NULL
+              AND excluded.version IS NOT NULL
+               OR (
+                    zotero_items.version IS NOT NULL
+                AND excluded.version > zotero_items.version
+              )
+               OR (
+                    (
+                         excluded.version = zotero_items.version
+                      OR (
+                           excluded.version IS NULL
+                       AND zotero_items.version IS NULL
+                      )
+                    )
+                AND excluded.data_json = zotero_items.data_json
+              )
             """,
             (
                 str(item["id"]),
@@ -974,6 +1046,49 @@ class Repository:
                 str(item["created_at"]),
                 str(item["updated_at"]),
             ),
+        )
+        return cursor.rowcount > 0
+
+    def get_zotero_item_sync_state(
+        self, source_id: str, zotero_key: str
+    ) -> dict[str, object] | None:
+        """Return private version state used to prevent regressive sync writes."""
+
+        row = self.connection.execute(
+            """
+            SELECT version, data_json, child_manifest_json
+            FROM zotero_items
+            WHERE source_id = ? AND zotero_key = ?
+            """,
+            (source_id, zotero_key),
+        ).fetchone()
+        if row is None:
+            return None
+        return {
+            "version": _optional_int(row["version"]),
+            "data": load_json_object(row["data_json"]),
+            "child_manifest": (
+                None
+                if row["child_manifest_json"] is None
+                else load_json_list(row["child_manifest_json"])
+            ),
+        }
+
+    def update_zotero_child_manifest(
+        self,
+        zotero_item_id: str,
+        manifest: Iterable[Mapping[str, Any]],
+    ) -> None:
+        """Replace the private child-version manifest after derived writes succeed."""
+
+        payload = [dict(entry) for entry in manifest]
+        self.connection.execute(
+            """
+            UPDATE zotero_items
+            SET child_manifest_json = ?
+            WHERE id = ?
+            """,
+            (json.dumps(payload, sort_keys=True), zotero_item_id),
         )
 
     def get_zotero_item_by_source_key(
@@ -1066,10 +1181,10 @@ class Repository:
             [(zotero_item_id, collection_id) for collection_id in collection_ids],
         )
 
-    def upsert_zotero_attachment(self, attachment: Mapping[str, Any]) -> None:
-        """Insert or update a Zotero attachment record."""
+    def upsert_zotero_attachment(self, attachment: Mapping[str, Any]) -> bool:
+        """Insert/update an attachment unless its versioned payload regresses."""
 
-        self.connection.execute(
+        cursor = self.connection.execute(
             """
             INSERT INTO zotero_attachments(
               id, source_id, parent_zotero_item_id, zotero_key, title, filename,
@@ -1090,6 +1205,24 @@ class Repository:
               version = excluded.version,
               data_json = excluded.data_json,
               updated_at = excluded.updated_at
+            WHERE (
+                    zotero_attachments.version IS NULL
+                AND excluded.version IS NOT NULL
+              )
+               OR (
+                    zotero_attachments.version IS NOT NULL
+                AND excluded.version > zotero_attachments.version
+              )
+               OR (
+                    (
+                         excluded.version = zotero_attachments.version
+                      OR (
+                           excluded.version IS NULL
+                       AND zotero_attachments.version IS NULL
+                      )
+                    )
+                AND excluded.data_json = zotero_attachments.data_json
+              )
             """,
             (
                 str(attachment["id"]),
@@ -1109,6 +1242,7 @@ class Repository:
                 str(attachment["updated_at"]),
             ),
         )
+        return cursor.rowcount > 0
 
     def upsert_zotero_document_link(
         self,
@@ -1365,7 +1499,6 @@ class Repository:
             "abstract_note": _optional_str(row["abstract_note"]),
             "extra": _optional_str(row["extra"]),
             "reading_status": str(row["reading_status"]),
-            "data": _json_object(row["data_json"]),
             "created_at": str(row["created_at"]),
             "updated_at": str(row["updated_at"]),
             "zotero_uri": _zotero_select_uri(str(row["zotero_key"])),
@@ -1501,8 +1634,6 @@ class Repository:
                 "filename": _optional_str(row["filename"]),
                 "content_type": _optional_str(row["content_type"]),
                 "link_mode": _optional_str(row["link_mode"]),
-                "zotero_path": _optional_str(row["zotero_path"]),
-                "resolved_path": _optional_str(row["resolved_path"]),
                 "path_status": str(row["path_status"]),
             }
             for row in rows
@@ -1619,6 +1750,7 @@ class Repository:
         mtime_ns: int,
         now: str,
     ) -> None:
+        self._delete_vectors_for_document(document_id)
         self.connection.execute(
             """
             UPDATE documents
@@ -1637,6 +1769,7 @@ class Repository:
     def upsert_document(
         self, document: IndexedDocument, text: str, chunks: list[IndexedChunk]
     ) -> None:
+        self._delete_vectors_for_document(document.id)
         self.connection.execute(
             """
             INSERT INTO documents(
@@ -1713,6 +1846,33 @@ class Repository:
             (document.id, document.title, document.relative_path, text),
         )
 
+    def _delete_vectors_for_document(self, document_id: str) -> None:
+        document_vectors = self.connection.execute(
+            """
+            DELETE FROM vectors
+            WHERE object_type = 'document' AND object_id = ?
+            """,
+            (document_id,),
+        ).rowcount
+        chunk_vectors = self.connection.execute(
+            """
+            DELETE FROM vectors
+            WHERE object_type = 'chunk'
+              AND object_id IN (
+                SELECT id FROM chunks WHERE document_id = ?
+              )
+            """,
+            (document_id,),
+        ).rowcount
+        if document_vectors:
+            self.connection.execute(
+                "DELETE FROM vector_indexes WHERE object_type = 'document'"
+            )
+        if chunk_vectors:
+            self.connection.execute(
+                "DELETE FROM vector_indexes WHERE object_type = 'chunk'"
+            )
+
     def record_skipped_file(
         self,
         *,
@@ -1783,10 +1943,7 @@ class Repository:
         ).fetchone()
         if row is None:
             return None
-        try:
-            metadata = json.loads(str(row["metadata_json"]))
-        except json.JSONDecodeError:
-            return None
+        metadata = load_json_object(row["metadata_json"])
         fingerprint = metadata.get("extraction_fingerprint")
         return str(fingerprint) if fingerprint else None
 
@@ -1821,6 +1978,7 @@ class Repository:
             if str(row["id"]) not in seen_document_ids
         ]
         for document_id in missing_ids:
+            self._delete_vectors_for_document(document_id)
             self.connection.execute(
                 """
                 UPDATE documents
@@ -2000,20 +2158,18 @@ def _document_from_prefix(row: sqlite3.Row, prefix: str) -> IndexedDocument:
 
 
 def _embedding_model_from_row(row: sqlite3.Row) -> EmbeddingModelRecord:
-    config = json.loads(str(row["config_json"]))
     return EmbeddingModelRecord(
         id=str(row["id"]),
         name=str(row["name"]),
         provider=str(row["provider"]),
         dimension=int(row["dimension"]),
         distance=str(row["distance"]),
-        config=config if isinstance(config, dict) else {},
+        config=load_json_object(row["config_json"]),
         created_at=str(row["created_at"]),
     )
 
 
 def _vector_from_row(row: sqlite3.Row) -> VectorRecord:
-    metadata = json.loads(str(row["metadata_json"]))
     return VectorRecord(
         id=str(row["id"]),
         model_id=str(row["model_id"]),
@@ -2023,7 +2179,7 @@ def _vector_from_row(row: sqlite3.Row) -> VectorRecord:
         dimension=int(row["dimension"]),
         dtype=str(row["dtype"]),
         vector=bytes(row["vector"]),
-        metadata=metadata if isinstance(metadata, dict) else {},
+        metadata=load_json_object(row["metadata_json"]),
         created_at=str(row["created_at"]),
         updated_at=str(row["updated_at"]),
     )
@@ -2032,7 +2188,6 @@ def _vector_from_row(row: sqlite3.Row) -> VectorRecord:
 def _embedding_run_payload(row: sqlite3.Row | None) -> dict[str, object] | None:
     if row is None:
         return None
-    config = json.loads(str(row["config_json"]))
     return {
         "id": str(row["id"]),
         "model_id": str(row["model_id"]),
@@ -2047,28 +2202,25 @@ def _embedding_run_payload(row: sqlite3.Row | None) -> dict[str, object] | None:
         "chunks_embedded": int(row["chunks_embedded"]),
         "chunks_unchanged": int(row["chunks_unchanged"]),
         "errors": int(row["errors"]),
-        "config": config if isinstance(config, dict) else {},
+        "config": load_json_object(row["config_json"]),
     }
 
 
 def _cluster_label_override_payload(row: sqlite3.Row | None) -> dict[str, object]:
     if row is None:
         return {}
-    metadata = json.loads(str(row["metadata_json"]))
     return {
         "id": str(row["id"]),
         "cluster_signature": str(row["cluster_signature"]),
         "label": str(row["label"]),
         "source": str(row["source"]),
-        "metadata": metadata if isinstance(metadata, dict) else {},
+        "metadata": load_json_object(row["metadata_json"]),
         "created_at": str(row["created_at"]),
         "updated_at": str(row["updated_at"]),
     }
 
 
 def _map_run_payload(row: sqlite3.Row) -> dict[str, object]:
-    warnings = json.loads(str(row["warnings_json"]))
-    metadata = json.loads(str(row["metadata_json"]))
     return {
         "id": str(row["id"]),
         "name": str(row["name"]),
@@ -2087,8 +2239,8 @@ def _map_run_payload(row: sqlite3.Row) -> dict[str, object]:
         "document_count": int(row["document_count"]),
         "cluster_count": int(row["cluster_count"]),
         "document_set_signature": str(row["document_set_signature"]),
-        "warnings": warnings if isinstance(warnings, list) else [],
-        "metadata": metadata if isinstance(metadata, dict) else {},
+        "warnings": load_json_list(row["warnings_json"]),
+        "metadata": load_json_object(row["metadata_json"]),
     }
 
 
@@ -2100,8 +2252,8 @@ def _map_run_point_payload(row: sqlite3.Row) -> dict[str, object]:
         "cluster_id": int(row["cluster_id"]),
         "cluster_label": str(row["cluster_label"]),
         "cluster_signature": str(row["cluster_signature"]),
-        "top_terms": _json_list(json.loads(str(row["top_terms_json"]))),
-        "nearest_neighbors": _json_list(json.loads(str(row["nearest_neighbors_json"]))),
+        "top_terms": load_json_list(row["top_terms_json"]),
+        "nearest_neighbors": load_json_list(row["nearest_neighbors_json"]),
     }
 
 
@@ -2113,10 +2265,10 @@ def _map_run_cluster_payload(row: sqlite3.Row) -> dict[str, object]:
         "generated_label": str(row["generated_label"]),
         "source": str(row["source"]),
         "size": int(row["size"]),
-        "document_ids": _json_list(json.loads(str(row["document_ids_json"]))),
-        "top_terms": _json_list(json.loads(str(row["top_terms_json"]))),
-        "representatives": _json_list(json.loads(str(row["representatives_json"]))),
-        "warnings": _json_list(json.loads(str(row["warnings_json"]))),
+        "document_ids": load_json_list(row["document_ids_json"]),
+        "top_terms": load_json_list(row["top_terms_json"]),
+        "representatives": load_json_list(row["representatives_json"]),
+        "warnings": load_json_list(row["warnings_json"]),
     }
 
 
@@ -2179,10 +2331,8 @@ def _optional_int(value: object) -> int | None:
 
 
 def _extraction_report_from_row(row: sqlite3.Row) -> ExtractionReport:
-    warnings_raw = json.loads(str(row["warnings_json"]))
-    metadata_raw = json.loads(str(row["metadata_json"]))
-    warnings = tuple(str(warning) for warning in warnings_raw)
-    metadata = metadata_raw if isinstance(metadata_raw, dict) else {}
+    warnings = tuple(str(warning) for warning in load_json_list(row["warnings_json"]))
+    metadata = load_json_object(row["metadata_json"])
     return ExtractionReport(
         id=str(row["id"]),
         scan_run_id=str(row["scan_run_id"]),
@@ -2212,11 +2362,11 @@ def _cluster_label_override_id(cluster_signature: str) -> str:
 
 
 def _json_list(value: object) -> list[object]:
-    return value if isinstance(value, list) else []
+    return load_json_list(value)
 
 
 def _json_object(value: object) -> dict[str, object]:
-    return value if isinstance(value, dict) else {}
+    return load_json_object(value)
 
 
 def _utc_now() -> str:

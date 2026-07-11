@@ -11,9 +11,9 @@ from typing import Any
 
 from paper_galaxy import __version__
 from paper_galaxy.paths import project_config_path
-from paper_galaxy.storage.migrations import SCHEMA_VERSION, initialize_database
+from paper_galaxy.storage.migrations import SCHEMA_VERSION
 from paper_galaxy.storage.repository import Repository
-from paper_galaxy.storage.sqlite import DEFAULT_DATABASE_PATH, connect_database
+from paper_galaxy.storage.sqlite import DEFAULT_DATABASE_PATH, connect_read_only
 
 
 def export_project(
@@ -179,9 +179,8 @@ def import_project(
 
 
 def _database_summary(project_dir: Path) -> tuple[dict[str, int], list[str]]:
-    connection = connect_database(project_dir)
+    connection = connect_read_only(project_dir)
     try:
-        initialize_database(connection)
         repository = Repository(
             connection, _resolved_database_path_without_creating(project_dir)
         )

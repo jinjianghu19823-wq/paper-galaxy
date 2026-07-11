@@ -22,9 +22,12 @@ from paper_galaxy.ml.neighbors import compute_neighbors
 from paper_galaxy.ml.tfidf import compute_tfidf, top_terms_for_documents
 from paper_galaxy.models import Document, MapPoint
 from paper_galaxy.records import IndexedDocument
-from paper_galaxy.storage.migrations import initialize_database
 from paper_galaxy.storage.repository import Repository
-from paper_galaxy.storage.sqlite import connect_database, resolve_database_path
+from paper_galaxy.storage.sqlite import (
+    connect_read_write,
+    ensure_database_ready,
+    resolve_database_path,
+)
 from paper_galaxy.zotero.filters import VALID_READING_STATUSES
 from paper_galaxy.zotero.models import ZoteroItem
 
@@ -162,9 +165,9 @@ def build_and_store_zotero_reading_map(
     """Build and persist a Zotero reading graph map run."""
 
     resolved_project_dir = project_dir.expanduser().resolve()
-    connection = connect_database(resolved_project_dir)
+    ensure_database_ready(resolved_project_dir)
+    connection = connect_read_write(resolved_project_dir)
     try:
-        initialize_database(connection)
         repository = Repository(connection, resolve_database_path(resolved_project_dir))
         payload = build_zotero_reading_map_payload(
             repository=repository,

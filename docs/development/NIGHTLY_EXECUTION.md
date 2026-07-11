@@ -4,17 +4,31 @@ Milestone: **Paper Galaxy Local Research Workstation & Evidence-First Insight En
 
 ## Current checkpoint
 
-- Branch: `codex/safe-reproducible-release`
-- Base/head at start: `1aba6d566d94c879720ccc6760355d9afe4249d6` / `46e908bee410b7caf156c629c033fb9aef3f3f68`
-- Active phase: P0 hardening for Draft PR #1
-- Next checkpoint commit: `Prevent unsafe demo publication and restore exact ranking`
-- Safety boundary: synthetic fixtures and pytest temporary directories only; no real project or Zotero data is opened, migrated, restored, or deleted.
+- Branch: `codex/local-research-workstation`
+- Committed head: `28aaba39c5faa3cd51cc9d195a4c359aa4173a24`
+- Dependency: Draft PR #1 (`codex/safe-reproducible-release`) remains open and
+  green at the same P0 head. The workstation branch was created from that head;
+  its stacked Draft PR will use PR #1's branch as the base and begin with
+  `Depends on #1`.
+- Active phase: Stage 2 SQLite lifecycle implementation and its full release
+  gate are green in the working tree; checkpoint commit, push, and stacked Draft
+  PR are still pending.
+- Next checkpoint commit: `Add transactional migrations and safe SQLite connections`
+- Safety boundary: only synthetic fixtures and pytest temporary directories
+  were bootstrapped or migrated. No real Paper Galaxy project, user database,
+  source corpus, Zotero profile, or Zotero database was opened for migration,
+  modified, restored, or deleted.
 
 ## Checkpoint sequence
 
-1. Harden demo publication, exact ranking, and public numeric determinism on PR #1.
-2. Create `codex/local-research-workstation` from the green PR #1 head and open a stacked Draft PR.
-3. Add transactional SQLite migrations and explicit connection modes.
+1. **Completed and pushed:** harden demo publication, exact ranking, and public
+   numeric determinism on PR #1.
+2. **Branch created; PR pending the first commit:** create
+   `codex/local-research-workstation` from the green PR #1 head and open a
+   stacked Draft PR.
+3. **Implementation and release gate complete; commit pending:** add transactional
+   SQLite migrations, explicit connection modes, strict stored JSON,
+   consistency validation, and short audited write transactions.
 4. Make backup/restore consistent, portable, attack-resistant, and atomic.
 5. Preserve indexing/vector/run consistency.
 6. Add sources, durable jobs, and one-command local launch.
@@ -39,6 +53,29 @@ Record exact results here at each green checkpoint. The final gate is:
 - The committed synthetic fixture was explicitly refreshed once for canonical
   cluster IDs and eight-decimal public numbers. A subsequent default build
   left the tracked-source status unchanged.
+- Stage 2 migration/connection/transaction/privacy development suites passed at
+  successive 98, 104, 121, and 144-test checkpoints. The independent final
+  P0/P1 audit reported no remaining Stage 2 blockers and reproduced 124 focused
+  passes.
+- `python -m pytest -q`: 314 passed with one pre-existing Starlette/httpx
+  deprecation warning.
+- `make release-check`: passed with the same 314 tests, Ruff, formatting (114
+  files), Mypy (72 source files), isolated sdist/wheel build, default demo
+  publisher/check, and strict public readiness.
+- The real static scripts that exist in this revision passed `node --check`:
+  `src/paper_galaxy/web/static/app.js`, `graph.js`, `site/assets/demo.js`, and
+  `site/assets/graph-demo.js`. The requested `site/app.js`, `site/graph.js`, and
+  `site/i18n.js` paths do not exist in this repository, so they correctly return
+  Node `MODULE_NOT_FOUND` rather than being reported as passes.
+- `python scripts/check_demo_site.py --dist site_dist --serve` could not bind an
+  ephemeral loopback port in this sandbox (`PermissionError: [Errno 1]`); the
+  escalation request was rejected by the platform usage limit. The non-serving
+  static check and strict readiness check both passed. An earlier P0 run in an
+  environment with loopback permission had passed the serving smoke check.
+- `python -m pytest --cov=paper_galaxy --cov-report=term-missing` could not run
+  because the active environment lacks `pytest-cov`. `pytest-cov>=5.0` is now
+  declared in the `dev` extra; install the refreshed dev environment before the
+  final milestone coverage run.
 
 ```text
 python -m pytest
@@ -64,4 +101,11 @@ git status --porcelain
 
 ## Unfinished work
 
-Everything after the active P0 checkpoint remains unfinished until implemented and verified. Do not treat planned routes, schemas, jobs, insights, UI states, E2E tests, or benchmark commands as delivered before their checkpoint is green and committed.
+Stage 2 still needs its checkpoint commit, push, and stacked Draft PR.
+Backup/restore hardening, remaining vector lifecycle pruning and scalable
+top-k, launch, sources/jobs, true incremental Zotero sync, structured evidence,
+citations, immutable analysis snapshots, evidence-first insights, the workspace
+UI/security checkpoint, E2E coverage, benchmarks, and final bilingual/public
+demo work remain unfinished. Do not treat planned routes, schemas, jobs,
+insights, UI states, E2E tests, or benchmark commands as delivered before their
+checkpoint is green and committed.

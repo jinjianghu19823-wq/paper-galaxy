@@ -16,9 +16,8 @@ from typing import Any
 from paper_galaxy import __version__
 from paper_galaxy.explain.pairs import explain_pair, pair_explanation_payload
 from paper_galaxy.indexer import index_corpus
-from paper_galaxy.storage.migrations import initialize_database
 from paper_galaxy.storage.repository import Repository
-from paper_galaxy.storage.sqlite import connect_database, resolve_database_path
+from paper_galaxy.storage.sqlite import connect_read_only, resolve_database_path
 from paper_galaxy.web.map_builder import build_map_payload
 
 if __package__:
@@ -524,9 +523,8 @@ def _pair_explanations(
     if not pairs:
         return []
 
-    connection = connect_database(project_dir)
+    connection = connect_read_only(project_dir)
     try:
-        initialize_database(connection)
         repository = Repository(connection, resolve_database_path(project_dir))
         explanations = []
         for source_id, target_id in pairs:

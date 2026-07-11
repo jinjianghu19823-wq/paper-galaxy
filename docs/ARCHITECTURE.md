@@ -48,8 +48,11 @@ source for nearest-neighbor search and proximity explanations.
 - `chunking`: deterministic paragraph/window text chunking.
 - `records`: persistent dataclasses for documents, chunks, extraction reports,
   scan summaries, search results, and database stats.
-- `storage.sqlite`: database path resolution and SQLite connection setup.
-- `storage.migrations`: idempotent schema initialization.
+- `storage.sqlite`: database path resolution plus explicit read-only,
+  read-write, migration/bootstrap, and external read-only connection modes.
+- `storage.migrations`: transactional current-schema bootstrap, ordered forward
+  migrations, migration history, and pre-migration SQLite snapshots.
+- `storage.json`: strict decoding for typed JSON stored in SQLite.
 - `storage.repository`: explicit parameterized SQL operations.
 - `indexer`: Phase 2 incremental indexing orchestration.
 - `search`: local FTS search and database stats wrappers.
@@ -68,7 +71,8 @@ source for nearest-neighbor search and proximity explanations.
 - `zotero`: read-only local Zotero connector, normalization, attachment path
   resolution, importer, SQLite diagnostics, and reading graph builder.
 - `web.server`: lazy FastAPI/Uvicorn app creation and local server startup.
-- `web.api`: read-only local JSON API routes.
+- `web.api`: local JSON routes with read-only GET repositories and explicit
+  writer repositories for mutation endpoints.
 - `web.map_builder`: ephemeral map generation from active indexed documents.
 - `web.static`: static HTML/CSS/vanilla JavaScript browser UI, including the
   Phase 3.1 dependency-free force graph renderer.
@@ -157,6 +161,119 @@ them.
 Phase 2 prepares for Phase 3 by making project state persistent and incremental.
 The static Phase 1 `scan` command remains file-based and independent.
 
+### SQLite lifecycle and connection boundaries
+
+Schema version 7 replaces implicit `CREATE IF NOT EXISTS` initialization with
+an explicit, forward-only lifecycle:
+
+- A new database is bootstrapped directly at the current schema in one explicit
+  transaction. Bootstrap records the current migration registry in
+  `schema_migrations` and commits before returning.
+- The oldest supported historical schema is v6. Its fixture is reconstructed
+  from repository history and upgraded only through the registered v6 -> v7
+  migration. v7 adds migration history and structured `error_code` /
+  `error_message` fields to scan, embedding, and Zotero import runs, plus a
+  private child-version manifest for monotonic Zotero-derived documents.
+- Migration takes a unique, mode-`0600` snapshot with SQLite's online backup
+  API before changing schema, then verifies the snapshot with `quick_check` and
+  `foreign_key_check`. It never replaces an existing backup or the live
+  database/WAL sidecars.
+- The migration sequence, every schema version update, and its history record
+  share one `BEGIN IMMEDIATE` transaction. Any failure rolls the entire schema
+  change back. Successful migration commits itself rather than relying on a
+  later caller commit.
+- Databases older than v6 without a supported registry path are rejected.
+  Databases from a newer Paper Galaxy version are also rejected and are never
+  silently downgraded or relabelled.
+- A version number alone is not trusted. Bootstrap, migration, and operational
+  connections verify required tables/columns, ordered primary keys, critical
+  unique identities, foreign-key targets/actions, indexes, the FTS5 virtual
+  table and `MATCH`, and migration-history identity.
+
+Connection intent is explicit:
+
+- `connect_read_only` opens an existing, current-schema project database with a
+  SQLite URI in `mode=ro`, enables `query_only`, foreign-key enforcement, and a
+  bounded busy timeout, and never creates a project directory, database, table,
+  or schema metadata.
+- `connect_read_write` opens an existing, current-schema project database for
+  short transactions. Writers enable foreign keys, a bounded busy timeout,
+  rollback-journal `DELETE` mode, and `synchronous=FULL`. This favors durable
+  local research state and lets ordinary read-only opens avoid creating
+  WAL/SHM files. The one-writer design and short commits bound lock intervals.
+  Consistent backups still use SQLite's backup API rather than copying live
+  database files.
+- `connect_migration` is the only connection that may create a database or
+  change schema. A new database file is claimed with mode `0600` before
+  transactional bootstrap.
+- `connect_external_read_only` opens an existing external SQLite database for
+  Zotero diagnostics without creating Paper Galaxy schema or writing Zotero.
+
+Read-only connections reject symbolic or incomplete WAL/SHM sidecars. They also
+inspect the database header and refuse a clean legacy WAL-mode database whose
+sidecars are absent, because opening it would create files. A Paper Galaxy
+writer maintenance pass safely normalizes a project database to DELETE/FULL;
+external Zotero databases are never normalized and instead ask the user to open
+Zotero Desktop. When a valid active WAL and existing SHM are present, SQLite may
+update SHM coordination bytes while reading; `query_only` still prevents data
+or schema writes and no new directory entry is created.
+
+Stored JSON is decoded by shape: nullable list/object fields have documented
+empty defaults, while malformed JSON, scalar JSON where a container is
+required, duplicate object keys, non-finite numbers, or a nested type mismatch
+raises a structured
+`StoredJSONError`. Repository and validation paths no longer hide persisted
+corruption by silently replacing it with an empty value. Ordinary Web API
+projections also exclude private raw Zotero payloads, stored local paths, and
+internal configuration fields.
+
+Project validation now runs through the read-only connection and reports:
+
+- SQLite `quick_check` and `foreign_key_check` results;
+- schema tables/columns, PK/UNIQUE/FK/index/FTS identity, and migration history;
+- FTS/document/chunk/text presence and content consistency;
+- orphan model/document/chunk vectors, dimensions, BLOB sizes, invalid JSON,
+  stale provenance, and legacy vectors whose freshness cannot be proven; and
+- invalid or lagging Zotero cursors/record versions and filter-profile
+  inconsistencies, including child/collection/attachment versions and child
+  manifest shape.
+
+A check that cannot run is reported as `not_run` or `check_errors`; it is not
+presented as a successful zero count.
+
+### Short write transactions and run auditing
+
+Indexing performs discovery, file metadata reads, hashing, extraction, and
+chunk preparation outside SQLite write transactions. Each unchanged touch,
+file result, extraction diagnostic, or document/chunk replacement is committed
+in a short atomic unit. A single extraction failure is recorded for that file
+and does not poison the whole corpus run; an orchestration or sidecar-output
+failure marks the run `failed` (or `interrupted` for interruption) with a safe,
+bounded error code/message instead of leaving it permanently `running`.
+
+Embedding inference and vector encoding also happen outside the write
+transaction. Validated vector records are committed in bounded batches, and
+the audit row records only successfully committed progress if a later batch
+fails. Replacing or deactivating a document removes its document/chunk vectors
+and invalidates affected vector-index metadata; an identical Zotero sync keeps
+unchanged chunks and vectors intact. Zotero network fetching, normalization,
+and PDF extraction do not occupy
+one long writer transaction: the run is registered before fetching, item
+changes commit in short units, and the source cursor advances only in the final
+successful transaction. Fetch, normalization, item, or process-interruption
+failures are audited; a post-import reading-map failure is a retryable warning
+and does not rewrite the completed sync as failed. Regressive, divergent, or
+partial parent/collection/attachment/note/annotation responses fail and roll
+back before cursor advance. Migrated v6 child state is deliberately unknown;
+an explicit `--force` full-child reconciliation establishes its first manifest.
+Omitted children are not treated as deletions until the later incremental
+Zotero checkpoint adds explicit tombstone reconciliation.
+
+Saved-map API and export payloads share a domain-layer deep whitelist for run,
+point, neighbor, term, representative, and cluster fields. Legacy nested raw
+JSON, absolute paths, internal metadata, and raw warnings cannot cross those
+ordinary boundaries.
+
 ## Phase 3 Local Web App
 
 Phase 3 adds `paper-galaxy serve`, which starts a local FastAPI app with
@@ -170,7 +287,7 @@ The local app architecture is:
 paper-galaxy serve
   -> FastAPI local backend on 127.0.0.1 by default
   -> static HTML/CSS/vanilla JS frontend
-  -> SQLite repository read APIs
+  -> explicit SQLite read/write repository APIs
   -> ephemeral map builder using TF-IDF helpers
 ```
 
@@ -180,15 +297,15 @@ external images.
 
 API endpoints:
 
-- `GET /api/health`: app status, project directory, database path, and database
-  existence.
+- `GET /api/health`: app status and non-sensitive project/database availability
+  flags.
 - `GET /api/config`: read-only runtime app configuration.
 - `GET /api/stats`: Phase 2 database counts.
 - `GET /api/vector-stats`: Phase 5 embedding model and vector counts.
 - `GET /api/search`: local SQLite FTS search.
 - `GET /api/documents`: document metadata lists.
-- `GET /api/documents/{document_id}`: metadata, local path, chunk previews, and
-  text preview.
+- `GET /api/documents/{document_id}`: safe metadata, corpus-relative identity,
+  chunk previews, and text preview.
 - `GET /api/map`: active document map points, cluster labels, nearest neighbors,
   cluster explanation metadata, stats, and warnings.
 - `GET /api/map?run_id=...`: saved map run payload with persisted points and
@@ -211,6 +328,12 @@ API endpoints:
 - `GET /api/zotero/reading-map`: live Zotero reading map payload from imported
   local records.
 
+All Web GET paths use read-only connections and cannot bootstrap or migrate a
+database. Missing, locked, corrupt, migration-required, and future-schema
+states are returned as structured safe errors. Normal health/config and data
+responses do not expose absolute project, database, source, attachment, or
+model paths; detailed local paths remain available to explicit CLI diagnostics.
+
 Map generation reads active indexed records and extracted text from SQLite. It
 does not re-extract source files. It reuses the Phase 1 TF-IDF, layout,
 clustering, label, top-term, and neighbor helpers. Nearest neighbors are
@@ -231,8 +354,9 @@ settings. SVG elements are created on data load and updated in place on each
 tick.
 
 Manual layout is frontend-only state. Dragged or pinned node positions and
-graph display settings are stored in browser `localStorage`, keyed by local
-database identity and map settings. Graph movement does not mutate SQLite,
+graph display settings are stored in browser `localStorage`, keyed by a
+non-sensitive local project namespace and map settings. Graph movement does not
+mutate SQLite,
 create map runs, or change the indexed corpus.
 
 Missing and unindexed documents are excluded from the default map. Search can
