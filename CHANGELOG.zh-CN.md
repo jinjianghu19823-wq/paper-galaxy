@@ -6,6 +6,13 @@
 
 ## Unreleased
 
+- 用 schema v7 事务化 bootstrap/migration、显式只读/读写/migration connection、
+  future-schema 拒绝、严格 schema/JSON 校验、短写事务审计和 SQLite backup API
+  migration snapshot，替换隐式 SQLite 初始化。
+- 强化项目备份/恢复：使用 active-WAL-safe SQLite 快照、严格流式 ZIP/checksum/资源
+  上限校验、可移植自定义数据库与向量索引映射、仅替换已认领输出的原子归档发布、
+  可跨进程中断恢复的持久事务和项目级 maintenance lock；待恢复事务会阻断普通连接，
+  有界解压和严格认领的 staging 清理限制资源与隐私暴露；checksum 校验不再允许关闭。
 - 用先 staging、后校验、再发布的流程替换 demo 输出目录的破坏性覆盖。只有空目录或
   带受支持 Paper Galaxy 构建 marker 的输出可被替换；symlink、危险路径和未认领
   目录会被拒绝，并支持失败回滚与中断恢复。

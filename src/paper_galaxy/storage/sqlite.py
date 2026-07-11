@@ -17,6 +17,10 @@ from paper_galaxy.errors import (
     FutureSchemaError,
     UnsupportedSchemaError,
 )
+from paper_galaxy.storage.locking import (
+    ProjectLockSet,
+    acquire_shared_project_locks,
+)
 from paper_galaxy.storage.migrations import (
     CURRENT_SCHEMA_VERSION,
     OLDEST_SUPPORTED_SCHEMA_VERSION,
@@ -26,6 +30,30 @@ from paper_galaxy.storage.migrations import (
 )
 
 DEFAULT_DATABASE_PATH = ".paper-galaxy/paper_galaxy.sqlite3"
+
+
+class _ProjectConnection(sqlite3.Connection):
+    """SQLite connection that owns project advisory locks until close."""
+
+    _paper_galaxy_project_locks: ProjectLockSet | None = None
+
+    def attach_project_locks(self, locks: ProjectLockSet) -> None:
+        self._paper_galaxy_project_locks = locks
+
+    def close(self) -> None:
+        locks = self._paper_galaxy_project_locks
+        try:
+            super().close()
+        finally:
+            self._paper_galaxy_project_locks = None
+            if locks is not None:
+                locks.close()
+
+    def __del__(self) -> None:
+        try:
+            self.close()
+        except BaseException:
+            pass
 
 
 def resolve_database_path(project_dir: Path | str) -> Path:
@@ -67,7 +95,12 @@ def _connect_project_read_only(
     database_path = resolve_database_path(project_dir)
     _require_existing_database(database_path)
     _guard_read_only_sidecars(database_path)
-    connection = _connect_uri(database_path, mode="ro")
+    locks = acquire_shared_project_locks(
+        project_dir,
+        database_path,
+        create_marker=False,
+    )
+    connection = _connect_uri(database_path, mode="ro", project_locks=locks)
     try:
         connection.execute("PRAGMA query_only = ON")
         connection.execute("PRAGMA foreign_keys = ON")
@@ -122,7 +155,12 @@ def connect_read_write(project_dir: Path | str) -> sqlite3.Connection:
 
     database_path = resolve_database_path(project_dir)
     _require_existing_database(database_path)
-    connection = _connect_uri(database_path, mode="rw")
+    locks = acquire_shared_project_locks(
+        project_dir,
+        database_path,
+        create_marker=True,
+    )
+    connection = _connect_uri(database_path, mode="rw", project_locks=locks)
     try:
         connection.execute("PRAGMA foreign_keys = ON")
         connection.execute("PRAGMA busy_timeout = 5000")
@@ -144,8 +182,13 @@ def connect_migration(project_dir: Path | str) -> sqlite3.Connection:
     """Open the sole connection type allowed to create/bootstrap a database."""
 
     database_path = resolve_database_path(project_dir)
-    database_path.parent.mkdir(parents=True, exist_ok=True)
+    locks = acquire_shared_project_locks(
+        project_dir,
+        database_path,
+        create_marker=True,
+    )
     try:
+        database_path.parent.mkdir(parents=True, exist_ok=True)
         descriptor = os.open(
             database_path,
             os.O_CREAT | os.O_EXCL | os.O_RDWR,
@@ -153,12 +196,17 @@ def connect_migration(project_dir: Path | str) -> sqlite3.Connection:
         )
     except FileExistsError:
         pass
+    except BaseException:
+        locks.close()
+        raise
     else:
         os.close(descriptor)
     try:
-        connection = sqlite3.connect(database_path)
+        connection = sqlite3.connect(database_path, factory=_ProjectConnection)
     except sqlite3.OperationalError as exc:
+        locks.close()
         raise _translate_sqlite_error(database_path, exc) from exc
+    connection.attach_project_locks(locks)
     connection.row_factory = sqlite3.Row
     try:
         connection.execute("PRAGMA foreign_keys = ON")
@@ -203,12 +251,25 @@ def ensure_database_ready(
     return database_path
 
 
-def _connect_uri(database_path: Path, *, mode: str) -> sqlite3.Connection:
+def _connect_uri(
+    database_path: Path,
+    *,
+    mode: str,
+    project_locks: ProjectLockSet | None = None,
+) -> _ProjectConnection:
     uri = f"{database_path.as_uri()}?mode={mode}"
     try:
-        connection = sqlite3.connect(uri, uri=True)
+        connection = sqlite3.connect(
+            uri,
+            uri=True,
+            factory=_ProjectConnection,
+        )
     except sqlite3.OperationalError as exc:
+        if project_locks is not None:
+            project_locks.close()
         raise _translate_sqlite_error(database_path, exc) from exc
+    if project_locks is not None:
+        connection.attach_project_locks(project_locks)
     connection.row_factory = sqlite3.Row
     return connection
 

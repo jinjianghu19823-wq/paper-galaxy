@@ -250,7 +250,13 @@ paper-galaxy serve --project-dir .
 
 `paper-galaxy build-map-run` 会把当前 TF-IDF 地图的确定性快照保存进 SQLite。`map-runs`、`show-map-run`、`export-map-run` 和 `delete-map-run` 用于列出、检查、导出和删除这些快照。
 
-`paper-galaxy export-project` 会写出 zip 备份包，包含 manifest、校验和、项目元数据，以及用户用 `--yes` 确认后包含的本地 SQLite 数据库。默认不包含源文档。`paper-galaxy import-project` 会验证备份包，并在没有 `--force` 时拒绝覆盖已有 `.paper-galaxy/` 目录。
+`paper-galaxy export-project` 在 `--yes` 确认后通过 SQLite online backup API 建立
+活动数据库快照，在 staging 中验证带 checksum 的可移植 v2 bundle，再原子发布。源文档
+永远不进入备份；向量索引需显式传入 `--include-vector-indexes`。`import-project` 在任何
+目标写入前强制检查 ZIP 拓扑与资源上限、全部 checksum、SQLite 完整性、外键、schema
+兼容性和项目相对恢复映射。已有 `.paper-galaxy` 必须显式 `--force`；强制恢复失败会
+回滚原文件。`--dry-run` 可只验证并查看计划。完整 threat model 见
+[备份与恢复](docs/BACKUP_AND_RESTORE.zh-CN.md)。
 
 `paper-galaxy plugins` 会列出内置的本地抽取插件边界。Phase 7 只有静态内置边界，没有远程插件加载。
 

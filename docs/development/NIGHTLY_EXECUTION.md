@@ -5,15 +5,17 @@ Milestone: **Paper Galaxy Local Research Workstation & Evidence-First Insight En
 ## Current checkpoint
 
 - Branch: `codex/local-research-workstation`
-- Committed head: `28aaba39c5faa3cd51cc9d195a4c359aa4173a24`
+- Committed head: `ddc5d3e` (`Add transactional migrations and safe SQLite connections`)
 - Dependency: Draft PR #1 (`codex/safe-reproducible-release`) remains open and
-  green at the same P0 head. The workstation branch was created from that head;
-  its stacked Draft PR will use PR #1's branch as the base and begin with
+  green. The workstation branch was created from its head and Stage 2 is pushed.
+  Creating the stacked Draft PR is temporarily blocked by the GitHub connector
+  usage limit; when retried it must target PR #1's branch and begin with
   `Depends on #1`.
-- Active phase: Stage 2 SQLite lifecycle implementation and its full release
-  gate are green in the working tree; checkpoint commit, push, and stacked Draft
-  PR are still pending.
-- Next checkpoint commit: `Add transactional migrations and safe SQLite connections`
+- Active phase: Stage 3 consistent, portable, attack-resistant backup/restore.
+  Implementation, documentation, 125 focused backup/lock tests, the 410-test
+  full suite, the independent security audit, and the complete release gate are
+  green. The checkpoint commit/push remains.
+- Next checkpoint commit: `Make backups consistent, portable and atomic`
 - Safety boundary: only synthetic fixtures and pytest temporary directories
   were bootstrapped or migrated. No real Paper Galaxy project, user database,
   source corpus, Zotero profile, or Zotero database was opened for migration,
@@ -23,13 +25,14 @@ Milestone: **Paper Galaxy Local Research Workstation & Evidence-First Insight En
 
 1. **Completed and pushed:** harden demo publication, exact ranking, and public
    numeric determinism on PR #1.
-2. **Branch created; PR pending the first commit:** create
+2. **Branch and Stage 2 push complete; stacked PR temporarily blocked:** create
    `codex/local-research-workstation` from the green PR #1 head and open a
-   stacked Draft PR.
-3. **Implementation and release gate complete; commit pending:** add transactional
-   SQLite migrations, explicit connection modes, strict stored JSON,
-   consistency validation, and short audited write transactions.
-4. Make backup/restore consistent, portable, attack-resistant, and atomic.
+   stacked Draft PR when the connector limit resets.
+3. **Completed and pushed:** add transactional SQLite migrations, explicit
+   connection modes, strict stored JSON, consistency validation, and short
+   audited write transactions.
+4. **Implementation/audit/release gate green; commit pending:** make
+   backup/restore consistent, portable, attack-resistant, and atomic.
 5. Preserve indexing/vector/run consistency.
 6. Add sources, durable jobs, and one-command local launch.
 7. Implement incremental read-only Zotero sync.
@@ -76,6 +79,25 @@ Record exact results here at each green checkpoint. The final gate is:
   because the active environment lacks `pytest-cov`. `pytest-cov>=5.0` is now
   declared in the `dev` extra; install the refreshed dev environment before the
   final milestone coverage run.
+- Stage 2 was committed as `ddc5d3e` and pushed to
+  `origin/codex/local-research-workstation`.
+- Stage 3 red characterization: the new archive/atomicity suites produced 25
+  expected failures and one pass against the old backup implementation. They
+  reproduced active-WAL loss, direct output truncation, half-written forced
+  restore, custom database-path loss, vector basename collision, checksum and
+  path attacks, and missing ZIP resource limits.
+- Stage 3 final audit fixed absent-target initialization races, pending-journal
+  access, control-path collisions, undeclared DB overwrite, durable parent
+  fsync, bounded ZIP/config/path/free-space handling, and strictly owned orphan
+  staging cleanup. The auditor reports no remaining Stage 3 P0/P1; vector file
+  semantic provenance is explicitly deferred to Stage 4.
+- Stage 3 current green: 125 focused snapshot/archive/atomicity/path-safety,
+  project-lock, and connection tests pass. `python -m pytest -q` passes all 410
+  tests with the existing Starlette/httpx deprecation warning. Ruff, Ruff
+  formatting, Mypy (77 source files), and `git diff --check` pass.
+- Final post-audit `make release-check` passes: 410 tests, sdist and wheel,
+  deterministic demo build, static demo validation, and strict public-readiness
+  validation are all green.
 
 ```text
 python -m pytest
@@ -101,9 +123,10 @@ git status --porcelain
 
 ## Unfinished work
 
-Stage 2 still needs its checkpoint commit, push, and stacked Draft PR.
-Backup/restore hardening, remaining vector lifecycle pruning and scalable
-top-k, launch, sources/jobs, true incremental Zotero sync, structured evidence,
+The stacked Draft PR still needs creation after the connector usage limit
+resets. Stage 3 still needs its checkpoint commit and push. Remaining vector
+lifecycle pruning and
+scalable top-k, launch, sources/jobs, true incremental Zotero sync, structured evidence,
 citations, immutable analysis snapshots, evidence-first insights, the workspace
 UI/security checkpoint, E2E coverage, benchmarks, and final bilingual/public
 demo work remain unfinished. Do not treat planned routes, schemas, jobs,

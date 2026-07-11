@@ -21,6 +21,7 @@ from paper_galaxy.embeddings.search import (
 from paper_galaxy.embeddings.sentence_transformers import ModelDownloadDisabledError
 from paper_galaxy.embeddings.similarity import compare_neighbors
 from paper_galaxy.errors import (
+    DatabaseError,
     DatabaseNotFoundError,
     FTSUnavailableError,
     MissingDependencyError,
@@ -1383,14 +1384,14 @@ def export_project_command(
 
     try:
         result = export_project(
-            project_dir=project_dir.expanduser().resolve(),
+            project_dir=project_dir.expanduser(),
             output_path=out,
             include_db=include_db,
             include_vector_indexes=include_vector_indexes,
             include_source_files=include_source_files,
             yes=yes,
         )
-    except (PermissionError, ValueError) as exc:
+    except (OSError, DatabaseError, PermissionError, ValueError) as exc:
         get_console().print(str(exc))
         raise typer.Exit(1) from exc
     get_console().print(f"Wrote project backup to {result['output_path']}.")
@@ -1411,25 +1412,17 @@ def import_project_command(
         bool,
         typer.Option("--dry-run", help="Inspect planned writes without importing."),
     ] = False,
-    validate_checksums: Annotated[
-        bool,
-        typer.Option(
-            "--validate-checksums/--no-validate-checksums",
-            help="Validate bundle checksums before import.",
-        ),
-    ] = True,
 ) -> None:
     """Import a local project backup into a target project directory."""
 
     try:
         result = import_project(
             backup_path=backup,
-            project_dir=project_dir.expanduser().resolve(),
+            project_dir=project_dir.expanduser(),
             force=force,
             dry_run=dry_run,
-            validate_checksums=validate_checksums,
         )
-    except (FileNotFoundError, FileExistsError, ValueError) as exc:
+    except (DatabaseError, OSError, ValueError) as exc:
         get_console().print(str(exc))
         raise typer.Exit(1) from exc
     action = "Would write" if dry_run else "Imported"

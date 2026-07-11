@@ -23,7 +23,13 @@ files -> extraction -> cleaning -> records -> vectors -> graph -> map -> cluster
 - `paper_galaxy.embeddings`：可选本地 dense embeddings。
 - `paper_galaxy.labels`：本地主题簇标签和解释。
 - `paper_galaxy.web`：FastAPI 本地后端和静态 vanilla JS 前端。
-- `paper_galaxy.backup`：本地备份导出/导入。
+- `backup.snapshot`：SQLite online snapshot 与完整性/schema 校验。
+- `backup.archive`：严格流式 ZIP 拓扑、资源上限、manifest 与 checksum 校验。
+- `backup.publish`：同文件系统原子发布与失败回滚。
+- `backup.staging`：私有已认领 staging 与保守 orphan 清理。
+- `backup.bundle`：可移植 v2 备份编排及严格 v1 检查。
+- `storage.locking`：跨进程 shared operation / exclusive maintenance lock，
+  包含 legacy project 认领和旧数据库 handle drain。
 - `paper_galaxy.plugins`：静态内置抽取边界。
 - `paper_galaxy.zotero`：只读 Zotero 本地 API 连接、规范化、附件路径解析、导入器、SQLite 诊断和阅读图谱构建。
 
@@ -62,6 +68,36 @@ Schema v7 不再在每次连接时隐式执行整份 `CREATE IF NOT EXISTS`，�
 SQLite 中的 JSON 现在按预期形状严格解码：可空 list/object 字段有明确空默认值；损坏 JSON、重复 key、NaN/Infinity、要求容器时得到 scalar、或嵌套类型不匹配都会抛出结构化 `StoredJSONError`，不再被静默吞掉并替换为空值。普通 Web API 还会过滤 Zotero raw payload、本地路径和内部配置。
 
 项目验证通过诊断专用只读连接运行，检查 SQLite `quick_check`、`foreign_key_check`、表/列/PK/UNIQUE/FK/索引/FTS 能力、migration history、FTS 与 documents/chunks/text 的一致性、孤立或过期向量、dimension/BLOB/metadata/provenance，以及 Zotero cursor、parent/collection/attachment version、child manifest 和 filter profile 一致性。无法执行的检查会明确标记为 `not_run` 或 `check_errors`，不会伪装成计数为零的成功状态。
+
+### 备份归档与恢复边界
+
+备份不直接复制项目文件，而是分成三个信任边界：
+
+1. `backup.snapshot` 通过 `sqlite3.Connection.backup()` 把包含 active WAL 已提交
+   pages 的一致视图写入 mode-`0600` staging 文件。快照会规范成 rollback-journal，
+   并通过 `quick_check`、`foreign_key_check`、声明版本与 schema capability registry。
+2. `backup.archive` 把所有 ZIP 当作不可信输入，拒绝重复/不可移植名称、special 或
+   symlink entry、checksum 缺失/额外/重复、异常压缩方式、entry 数量、展开大小、
+   压缩比，以及 manifest、payload、schema 不一致。摘要和解压都采用有界流式读取；
+   path/component、project config、archive size 与 free-space 预算同时限制内存、CPU
+   和磁盘消耗。
+3. `backup.publish` 把导出 staging 放在输出旁，把恢复 staging 放在目标文件系统。
+   导出只对完整校验后的文件执行一次 `os.replace`；新项目以完整目录 rename 发布；
+   强制恢复先把旧文件移入仅属主可访问的 rollback transaction，最后发布配置，失败
+   时恢复原 inode。持久 prepared/committed journal 记录 original/new digest，因此
+   进程中断后也能恢复，而不只处理同一进程内的 exception。
+
+备份在读取所有输入期间持有 shared project lock；恢复从 interrupted transaction
+recovery、preflight、校验到发布一直持有 exclusive maintenance marker。marker 建立前
+的旧连接通过 legacy DB file lock drain，新连接统一使用稳定的 build-owned marker。
+prepared sibling transaction 本身也会阻断普通 connection，直到恢复完成。Dry run 不创建
+marker。私有 staging root 带版本化 operation/target/PID ownership metadata；后续同类
+操作只保守清理由失效 PID 留下的已认领 orphan。
+
+v2 manifest 明确记录项目相对数据库与向量索引目标。项目内部自定义数据库路径可原位
+round-trip；绝对或逃逸路径会映射到内部默认位置，项目外向量索引会被省略。恢复目标
+绝不直接取自未经检查的浏览器输入或 ZIP filename。旧 v1 配置和数据库仍可读取，但其
+basename-only 向量索引因无法证明逻辑路径而不会自动恢复。
 
 ### 短写事务与运行审计
 

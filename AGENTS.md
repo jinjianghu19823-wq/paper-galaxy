@@ -113,6 +113,11 @@ runtime features unless explicitly asked.
 - Build cleanup targets may remove only explicit build outputs and caches. They
   must never remove local projects, databases, Zotero data, backups, vector
   indexes, or user-generated exports.
+- Back up active SQLite databases only through SQLite's online backup API.
+  Backup export must stage and validate before atomic publication; restore must
+  enforce complete checksums, archive limits, project-relative destinations,
+  SQLite integrity/schema checks, and failure rollback before replacing state.
+  Do not add a checksum bypass or restore archived absolute paths.
 - Default demo builds write generated data only inside the requested output
   directory. Source fixture refreshes must be explicit and must not run in CI,
   Pages, release checks, or default builds.

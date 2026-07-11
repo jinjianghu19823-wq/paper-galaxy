@@ -428,12 +428,16 @@ saved snapshots. The web app includes a small selector for "Live map" versus
 saved runs. Saved run coordinates are initial graph positions only; browser
 dragging and pinning still stay in localStorage and are not written to SQLite.
 
-`paper-galaxy export-project` writes a zip backup containing a manifest,
-checksums, project metadata when present, and the local SQLite database when
-confirmed with `--yes`. Source documents are not included by default.
-`paper-galaxy import-project` validates the bundle and refuses to overwrite an
-existing `.paper-galaxy/` directory unless `--force` is passed. Use `--dry-run`
-to inspect planned writes.
+`paper-galaxy export-project` snapshots active SQLite with the online backup
+API, validates a checksummed portable v2 bundle in staging, and atomically
+publishes it after `--yes` confirmation. Source documents are never included;
+vector-index files require `--include-vector-indexes`. `import-project` always
+checks ZIP topology, resource limits, every checksum, SQLite integrity, foreign
+keys, schema compatibility, and project-relative restore mappings before any
+target write. It refuses an existing `.paper-galaxy` unless `--force` is
+explicit; a failed forced restore rolls original files back. Use `--dry-run` to
+validate and inspect planned writes. See
+[Backup and Restore](docs/BACKUP_AND_RESTORE.md) for the threat model.
 
 `paper-galaxy plugins` lists built-in local extractor plugin boundaries. Phase
 7 exposes only static built-ins; there is no remote plugin loading.

@@ -4,6 +4,17 @@
 
 ## Unreleased
 
+- Replaced implicit SQLite initialization with schema v7 transactional
+  bootstrap/migrations, explicit read-only/read-write/migration connections,
+  future-schema refusal, strict schema/JSON validation, short audited write
+  transactions, and migration snapshots made with SQLite's backup API.
+- Hardened project backup/restore with active-WAL-safe SQLite snapshots,
+  strict streaming ZIP/checksum/resource validation, portable custom database
+  and vector-index mappings, owned-output atomic archive publication, durable
+  crash-recoverable forced restore, and cross-process project maintenance
+  locks. Pending recovery gates normal connections; bounded extraction and
+  strictly owned staging cleanup limit resource and privacy exposure. Checksum
+  validation can no longer be disabled.
 - Replaced destructive demo output replacement with a staged, validated
   publisher. Only empty directories or outputs carrying a supported Paper
   Galaxy build marker can be replaced; symlinked, dangerous, and unowned

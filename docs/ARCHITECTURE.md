@@ -66,7 +66,14 @@ source for nearest-neighbor search and proximity explanations.
 - `maps.runs`: persisted saved map run creation, lookup, and JSON export.
 - `validation`: project health checks for config, schema, FTS, counts, dangling
   rows, optional dependencies, and map run consistency.
-- `backup.bundle`: local zip backup export/import with manifests and checksums.
+- `backup.snapshot`: online SQLite snapshots plus integrity/schema validation.
+- `backup.archive`: strict streaming ZIP topology, limits, manifest, and
+  checksum validation.
+- `backup.publish`: same-filesystem atomic publication and rollback.
+- `backup.staging`: private owned staging and conservative orphan cleanup.
+- `backup.bundle`: portable v2 backup orchestration with strict v1 inspection.
+- `storage.locking`: cross-process shared operation and exclusive maintenance
+  locks, including legacy-project claim and database-handle drain.
 - `plugins`: static built-in local plugin metadata.
 - `zotero`: read-only local Zotero connector, normalization, attachment path
   resolution, importer, SQLite diagnostics, and reading graph builder.
@@ -240,6 +247,48 @@ Project validation now runs through the read-only connection and reports:
 
 A check that cannot run is reported as `not_run` or `check_errors`; it is not
 presented as a successful zero count.
+
+### Backup archive and restore boundary
+
+Backup is split across three trust boundaries rather than copying project
+files directly:
+
+1. `backup.snapshot` uses `sqlite3.Connection.backup()` to copy the committed
+   database view, including active WAL pages, into a mode-`0600` staging file.
+   The snapshot is normalized to rollback-journal mode and must pass
+   `quick_check`, `foreign_key_check`, declared schema version, and the same
+   capability registry used by operational connections.
+2. `backup.archive` treats every ZIP as untrusted. It rejects duplicate or
+   non-portable names, special/symlink entries, missing or extra checksum
+   members, checksum duplicates, unsupported compression, excessive entry,
+   expanded-size or ratio limits, and manifest/payload/schema disagreement.
+   Digests and extraction are streamed with bounded chunks; path/component,
+   project-config, archive-size, and free-space budgets bound memory, CPU, and
+   disk consumption.
+3. `backup.publish` keeps export staging beside the output and restore staging
+   on the target filesystem. Export publishes one validated file with
+   `os.replace`. A new restore publishes one complete directory; a forced
+   restore moves overwritten files into an owner-only rollback transaction,
+   publishes the configuration last, and restores original inodes on failure.
+   A durable prepared/committed journal with original/new digests also supports
+   recovery after process interruption rather than only in-process exceptions.
+
+Backup holds a shared project lock across all inputs. Restore holds the
+exclusive maintenance marker across interrupted-transaction recovery,
+preflight, validation, and publication. Existing pre-marker connections are
+drained through a legacy database-file lock; new connections consistently use
+the stable build-owned marker. A sibling prepared transaction is itself an
+operational connection gate until recovery. Dry-run never creates that marker.
+Private staging roots carry versioned operation/target/PID ownership metadata;
+later matching invocations conservatively remove dead owned orphans only.
+
+The v2 manifest records explicit project-relative database and vector-index
+destinations. Custom internal database paths round-trip. Absolute or escaping
+database paths are mapped to the internal default, and project-external vector
+indexes are omitted. The restore path never comes from an unchecked browser or
+ZIP filename. Legacy v1 database/config backups remain readable, but their
+basename-only vector indexes are not restored because their logical paths
+cannot be proven.
 
 ### Short write transactions and run auditing
 
