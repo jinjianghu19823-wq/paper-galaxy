@@ -6,3 +6,4 @@ include CITATION.cff
 recursive-include docs *.md
 recursive-include site *
 recursive-include scripts *.py
+recursive-include tests/fixtures *.sql

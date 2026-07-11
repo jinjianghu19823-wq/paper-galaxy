@@ -6,9 +6,8 @@ from pathlib import Path
 
 from paper_galaxy.errors import DatabaseNotFoundError
 from paper_galaxy.records import DatabaseStats, SearchResult
-from paper_galaxy.storage.migrations import initialize_database
 from paper_galaxy.storage.repository import Repository
-from paper_galaxy.storage.sqlite import connect_database, resolve_database_path
+from paper_galaxy.storage.sqlite import connect_read_only, resolve_database_path
 
 
 def search_index(
@@ -23,7 +22,7 @@ def search_index(
     database_path = resolve_database_path(project_dir)
     if not database_path.exists():
         raise DatabaseNotFoundError(database_path)
-    connection = connect_database(project_dir)
+    connection = connect_read_only(project_dir)
     try:
         repository = Repository(connection, database_path)
         return repository.search_documents(
@@ -41,9 +40,8 @@ def get_database_stats(*, project_dir: Path) -> DatabaseStats:
     database_path = resolve_database_path(project_dir)
     if not database_path.exists():
         raise DatabaseNotFoundError(database_path)
-    connection = connect_database(project_dir)
+    connection = connect_read_only(project_dir)
     try:
-        initialize_database(connection)
         repository = Repository(connection, database_path)
         return repository.get_stats()
     finally:

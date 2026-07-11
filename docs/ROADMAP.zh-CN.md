@@ -72,6 +72,23 @@ Paper Galaxy 应该增量成长。每个阶段都必须让仓库保持可运行�
 
 完成定义：用户可以构建 package、验证本地项目、持久化和检查地图快照、导出/导入项目状态、列出内置抽取器边界，并运行之前 Phase 0-6 的检查。
 
+## 本地研究工作站与证据优先洞见引擎（进行中）
+
+目标：把本地 package 发展成可信的研究工作站，并让后续洞见始终可点回证据、明确
+限定于个人文库。
+
+已交付 checkpoint：schema v9 source registry、持久单 writer jobs、安全项目初始化与
+`paper-galaxy launch`；schema v10 进一步交付按 profile 隔离的 Zotero cursor、统一
+version fence 的 `/items` + `/deleted` 增量同步、无 N+1 的 child-only refresh 和删除
+tombstone。Corpus 与 Zotero root 在每次使用前重新校验，不会被修改，也不允许包含项目状态。
+
+剩余 checkpoint：结构化 evidence locator、本地引用解析、不可变 analysis snapshot、
+证据优先洞见与阅读计划、可扩展工作区 UI、E2E、benchmark
+工具和扩展后的合成公开 demo。
+
+本里程碑仍不包括云账号/同步、遥测、远程 LLM 或 embedding、默认模型下载、Zotero
+写回、React/Node 生产工具链或原生桌面安装器。
+
 ## 公开发布准备（已实现）
 
 目标：让仓库足够安全、完整，可以公开发布。
@@ -115,4 +132,5 @@ Paper Galaxy 应该增量成长。每个阶段都必须让仓库保持可运行�
 
 ## Phase 8+：未来工作
 
-未来阶段可以在明确要求时改进抽取、地图稳定性、导入/导出格式或桌面打包。Phase 8+ 仍在当前实现边界之外。
+后续阶段可以在明确要求时继续改进抽取、地图稳定性、跨平台安装和可选本地模型，但
+云账号、遥测、远程模型和 Zotero write-back 仍不在当前边界内。

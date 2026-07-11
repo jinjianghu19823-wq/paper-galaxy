@@ -9,7 +9,7 @@
 ```bash
 python -m venv .venv
 source .venv/bin/activate
-python -m pip install -e ".[dev,ml,pdf,app]"
+python -m pip install ".[full]"
 paper-galaxy doctor
 ```
 
@@ -65,6 +65,21 @@ paper-galaxy init . --force
 paper-galaxy index examples/tiny_corpus --project-dir . --min-chars 40
 paper-galaxy serve --project-dir .
 ```
+
+新工作站也可以使用等价的一条命令：
+
+```bash
+paper-galaxy launch --project-dir ~/PaperGalaxy --corpus ~/Papers --open
+```
+
+## Launch 提示已有 worker
+
+同一个项目只允许一个后台 writer。请关闭另一个 Paper Galaxy 窗口或进程后重试；不要
+删除 worker lock，也不要手工编辑 jobs 表。下一个取得排他 lease 的 worker 会安全地
+标记真正中断的任务，并保留已完成 artifact。Restore 也必须在工作站停止后执行。
+
+如果 launch 拒绝 source/project 路径关系，请把项目放到 corpus 或 Zotero data
+directory 之外。Paper Galaxy 会有意拒绝在只读 source tree 内创建数据库。
 
 ## Zotero local API 不可用
 
@@ -148,3 +163,23 @@ paper-galaxy validate-project --project-dir .
 ```
 
 验证报告包含计数、schema 状态、warning 和 error，不包含完整抽取文本。
+
+## 语义搜索提示没有 current vectors
+
+当前版本不会把 legacy、orphan、inactive、source 已变化、格式损坏或模型 fingerprint
+不匹配的向量当作有效结果。先用只读方式检查：
+
+```bash
+paper-galaxy prune-stale-vectors --project-dir .
+paper-galaxy validate-project --project-dir .
+```
+
+用预期的本地模型路径重新运行 `paper-galaxy embed` 可重建当前向量。审核报告后，若要
+仅删除无效的 SQLite vector/index metadata，必须明确执行：
+
+```bash
+paper-galaxy prune-stale-vectors --project-dir . --apply --yes
+```
+
+该命令不会删除论文、项目数据库、备份或用户文件。如果模型目录在加载期间发生变化，
+请先让目录稳定再重试；Paper Galaxy 不会只凭模型路径绑定向量身份。

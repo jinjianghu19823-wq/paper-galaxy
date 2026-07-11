@@ -94,6 +94,42 @@ hosted backend.
 
 ## Install From Source
 
+For a local workstation install, clone the repository and install the `full`
+extra in an isolated environment. It combines the local web app, TF-IDF/map
+dependencies, and PDF extraction support:
+
+```bash
+git clone https://github.com/jinjianghu19823-wq/paper-galaxy.git
+cd paper-galaxy
+python -m venv .venv
+source .venv/bin/activate  # Windows PowerShell: .venv\Scripts\Activate.ps1
+python -m pip install ".[full]"
+paper-galaxy doctor
+```
+
+`pipx install ".[full]"` and `uv tool install ".[full]"` are also supported
+when run from the repository checkout. They keep the command in a dedicated
+environment without requiring manual activation. See
+[docs/INSTALL.md](docs/INSTALL.md) for the complete installation choices.
+
+Create or reopen a local project, register a source folder without copying it,
+and start the workstation with one command:
+
+```bash
+paper-galaxy launch \
+  --project-dir ~/PaperGalaxy \
+  --corpus ~/Papers \
+  --no-open
+```
+
+The server remains on loopback (`127.0.0.1`) by default. `--no-open` suppresses
+automatic browser opening; use `--open` for an interactive desktop session.
+Repeated launches reuse the project and source registration. Paper Galaxy does
+not modify the source folder or automatically download OCR or embedding
+models.
+
+For contributor development, install the development tools as well:
+
 ```bash
 git clone https://github.com/jinjianghu19823-wq/paper-galaxy.git
 cd paper-galaxy
@@ -172,6 +208,15 @@ Useful Zotero import options:
 - `--pdf-policy metadata` imports metadata quickly without extracting PDFs.
 - `--pdf-policy skip-missing` skips items whose expected local PDFs cannot be
   read.
+- Default imports resume incrementally from this exact filter profile's saved
+  cursor. Use `--full` only when an explicit full reconciliation is required;
+  failed, cancelled, version-drifting, or limited imports never advance it.
+- Content-affecting options form one source-global materialization fingerprint:
+  attachment/PDF/note/metadata inclusion, PDF policy, reading-status tag sets,
+  minimum text length, and chunk size/overlap. Changing that fingerprint is
+  refused unless `--full` is explicit. A default background job reuses the
+  latest compatible completed-run configuration instead of drifting back to
+  defaults.
 
 If a PDF is missing or unsupported, the Zotero item can still appear as a
 metadata-only document with title, creators, abstract, tags, collections, notes,
@@ -222,6 +267,7 @@ want a one-file offline HTML export instead of a SQLite-backed local web app.
 ```bash
 paper-galaxy --help
 paper-galaxy doctor
+paper-galaxy launch --project-dir ~/PaperGalaxy --corpus ~/Papers --no-open
 paper-galaxy init
 paper-galaxy init /path/to/project
 paper-galaxy scan examples/tiny_corpus --out galaxy.html --force
@@ -234,6 +280,7 @@ paper-galaxy embed --project-dir . --model /path/to/local/sentence-transformer-m
 paper-galaxy semantic-search "operator learning for PDEs" --project-dir . --model /path/to/local/sentence-transformer-model
 paper-galaxy compare-neighbors neural_operators/fourier_neural_operator.md --project-dir . --model /path/to/local/sentence-transformer-model
 paper-galaxy vector-stats --project-dir .
+paper-galaxy prune-stale-vectors --project-dir .
 paper-galaxy clusters --project-dir .
 paper-galaxy explain-pair neural_operators/fourier_neural_operator.md neural_operators/deep_operator_network.txt --project-dir .
 paper-galaxy rename-cluster CLUSTER_SIGNATURE "Neural Operators" --project-dir .
@@ -292,6 +339,16 @@ ambiguous matches fail with a clear error. Reading status filters accept
 as a deprecated alias for `unknown`. `--pdf-policy metadata` keeps imports fast
 and metadata-only, while `--pdf-policy skip-missing` skips items whose expected
 local PDF cannot be read.
+
+Profile membership is versioned separately from shared item data. If an item
+changes, its latest metadata is re-evaluated against every compatible active
+profile without advancing peer cursors. It remains visible while any profile
+still includes it; otherwise its document becomes non-active. Removing a
+registered source applies the same union rule. Confirmed parent deletion also
+retires cached children, attachments, and profile memberships; collection-only
+renames or deletions rebuild affected parent documents. A different local API
+origin or Zotero data directory is rejected before remote access or project
+writes once the project's locator identity has been established.
 
 Privacy boundary: the connector uses the Zotero local API, does not write to
 Zotero, performs no upload, and does not copy or move PDFs by default. Imported
@@ -357,20 +414,36 @@ Database files live under `.paper-galaxy/` and are gitignored.
 
 `paper-galaxy embed` is the Phase 5 local semantic layer. It reads active
 indexed documents and chunks, constructs transparent embedding text, stores
-normalized float32 vectors in SQLite, and skips unchanged vectors using the
-exact embedded text hash unless `--force` is set. Document vectors use the title
-three times, the corpus-relative path once, and the first `--max-document-chars`
-characters of extracted text. Chunk vectors use chunk text capped by
-`--max-chunk-chars`.
+normalized float32 vectors in SQLite, and skips unchanged vectors only when
+the embedding input, source revision, exact model-content fingerprint,
+dimension, and algorithm version all still match. A source that changes during
+local inference fails the pre-write compare-and-swap and is counted rather than
+receiving a stale vector. A document source revision hashes its title,
+corpus-relative path, and full extracted text through a namespaced canonical
+JSON array, so field-boundary characters cannot collide and a forced
+re-extraction cannot reuse a vector merely because the source-file bytes stayed
+unchanged. Document
+vectors use the title three times, the
+corpus-relative path once, and the first `--max-document-chars` characters of
+extracted text. Chunk vectors use chunk text capped by `--max-chunk-chars`.
 
 `paper-galaxy semantic-search` embeds the query locally with the same model and
-searches stored document or chunk vectors. It does not build vectors or download
-models implicitly. `paper-galaxy compare-neighbors` shows three rankings for a
+searches only active, provenance-matching document or chunk vectors. It uses a
+bounded-memory NumPy top-k and batched metadata query rather than loading every
+vector result through N+1 queries. It does not build vectors or download models
+implicitly. `paper-galaxy compare-neighbors` shows three rankings for a
 document: TF-IDF cosine neighbors, dense embedding neighbors, and a configurable
 hybrid score. If vectors were built with `--no-normalize`, pass `--no-normalize`
 to `semantic-search` and `compare-neighbors` so they use the matching local
-model identity. `paper-galaxy vector-stats` reports registered models, vector
-counts, and the last embedding run.
+model identity. Neighbor comparison retries an optimistic SQLite snapshot if
+indexing commits between its document, TF-IDF, and dense-vector reads; it never
+combines old TF-IDF text with new dense metadata. `paper-galaxy vector-stats`
+reports registered models, vector
+counts, and the last embedding run. `paper-galaxy prune-stale-vectors` is a
+read-only report by default; deleting only stale SQLite vector/index-metadata
+rows requires `--apply --yes`. It never deletes a source corpus, database,
+backup, or user file. The maintained implementation is exact blockwise NumPy;
+the optional install no longer advertises an unused FAISS path.
 
 Phase 6 adds local explainability commands. `paper-galaxy clusters` lists
 generated cluster labels, stable cluster signatures, representative documents,
@@ -388,6 +461,12 @@ python -m pip install -e ".[dev,ml,pdf,app]"
 ```
 
 Typical local app usage is:
+
+```bash
+paper-galaxy launch --project-dir ~/PaperGalaxy --corpus ~/Papers --open
+```
+
+The equivalent fine-grained CLI workflow is:
 
 ```bash
 paper-galaxy init .
@@ -428,12 +507,16 @@ saved snapshots. The web app includes a small selector for "Live map" versus
 saved runs. Saved run coordinates are initial graph positions only; browser
 dragging and pinning still stay in localStorage and are not written to SQLite.
 
-`paper-galaxy export-project` writes a zip backup containing a manifest,
-checksums, project metadata when present, and the local SQLite database when
-confirmed with `--yes`. Source documents are not included by default.
-`paper-galaxy import-project` validates the bundle and refuses to overwrite an
-existing `.paper-galaxy/` directory unless `--force` is passed. Use `--dry-run`
-to inspect planned writes.
+`paper-galaxy export-project` snapshots active SQLite with the online backup
+API, validates a checksummed portable v2 bundle in staging, and atomically
+publishes it after `--yes` confirmation. Source documents are never included;
+vector-index files require `--include-vector-indexes`. `import-project` always
+checks ZIP topology, resource limits, every checksum, SQLite integrity, foreign
+keys, schema compatibility, and project-relative restore mappings before any
+target write. It refuses an existing `.paper-galaxy` unless `--force` is
+explicit; a failed forced restore rolls original files back. Use `--dry-run` to
+validate and inspect planned writes. See
+[Backup and Restore](docs/BACKUP_AND_RESTORE.md) for the threat model.
 
 `paper-galaxy plugins` lists built-in local extractor plugin boundaries. Phase
 7 exposes only static built-ins; there is no remote plugin loading.

@@ -29,6 +29,12 @@ def load_project_config(project_dir: Path | str) -> ProjectConfig | None:
         return None
     with config_path.open("rb") as handle:
         data = tomllib.load(handle)
+    return validate_project_config(data)
+
+
+def validate_project_config(data: dict[str, Any]) -> ProjectConfig:
+    """Validate already-decoded project configuration data."""
+
     return _validate_model(ProjectConfig, data)
 
 

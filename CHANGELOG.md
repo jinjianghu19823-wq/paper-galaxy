@@ -4,6 +4,70 @@
 
 ## Unreleased
 
+- Added schema v10 and true profile-scoped, read-only Zotero synchronization.
+  Default syncs resume from a CAS-fenced cursor owned by the exact registered
+  collection/tag/status profile; `--full` is explicit. The local API client
+  preserves `Last-Modified-Version` across safe pagination, retries bounded
+  transient reads, consumes `/items?since=` and `/deleted?since=`, batches
+  parent hydration, and rejects version drift before publishing a cursor.
+  Child-only note, annotation, and attachment updates now rebuild their parent
+  documents without per-parent child requests. Verified remote deletions are
+  tombstoned and cascade through child/attachment/profile state; deleted parents
+  leave live search/maps, while collection renames/deletions refresh affected
+  parent documents. Versioned profile-item membership now applies union
+  visibility across active profiles and source removal. A source-global
+  materialization fingerprint covers attachment/include/PDF/note/metadata,
+  reading-tag, minimum-text, and chunk settings; changes require explicit
+  `--full`, and default jobs inherit the latest compatible completed-run
+  configuration. Incomplete runs never advance a cursor, and unchanged
+  materializations skip PDF extraction and preserve chunks/vectors. Migration
+  tests use a frozen real v9 schema fixture, and the first v10 baseline
+  deliberately rematerializes instead of trusting the legacy global cursor.
+  Locator drift is rejected before remote access or writes, initial
+  source/profile/run registration is atomic, and each changed parent now
+  refreshes membership across all compatible active profiles without advancing
+  their cursors. A failed first locator remains auditable without claiming the
+  project, while a source-wide monotonic version fence rejects older snapshots
+  before each business transaction and final cursor publication. Full-sync
+  generation preparation is deferred until the complete remote response has
+  passed that shared version check and source-wide fence, so a stale full
+  response cannot invalidate the last published generation. Content-changing
+  full syncs prepare attachment/PDF/text/chunk work outside the write
+  transaction, then publish the generation, memberships, documents, vectors,
+  cursor, and run audit atomically; incomplete, cancelled, failed, or crashed
+  runs retain the previous generation. The initial registration transaction
+  also rechecks the exact source and active-profile locator, closing a
+  concurrent first-registration overwrite race.
+- Added the first local research workstation checkpoint: schema v9 registered
+  corpus/Zotero sources, a durable single-writer job queue with cooperative
+  cancellation and crash recovery, safe project initialization, and
+  `paper-galaxy launch` with loopback-only automatic port selection. The local
+  Web app now exposes bounded source/job controls protected by Host checks,
+  same-origin validation, a per-process write token, CSP, and other browser
+  hardening headers. Zotero HTTP traffic is constrained to one loopback origin,
+  without proxies or redirects. Launch and direct indexing reject projects or
+  databases inside source trees before writing, job/source enqueue is fenced in
+  one transaction, worker ownership is rechecked at commit boundaries, and
+  restore refuses an active background worker.
+- Added schema v8 vector provenance and lifecycle hardening: exact local-model
+  fingerprints, collision-safe canonical document revisions,
+  source-revision compare-and-swap writes, automatic dead-owner
+  run recovery, active/provenance-only semantic reads, bounded-memory NumPy
+  top-k with batched metadata loading, expanded vector validation, and an
+  explicit dry-run-first stale-vector prune. Replaced Windows `os.kill(pid, 0)`
+  probes in run and backup recovery with non-destructive process handles, and
+  removed the unused FAISS extra.
+- Replaced implicit SQLite initialization with schema v7 transactional
+  bootstrap/migrations, explicit read-only/read-write/migration connections,
+  future-schema refusal, strict schema/JSON validation, short audited write
+  transactions, and migration snapshots made with SQLite's backup API.
+- Hardened project backup/restore with active-WAL-safe SQLite snapshots,
+  strict streaming ZIP/checksum/resource validation, portable custom database
+  and vector-index mappings, owned-output atomic archive publication, durable
+  crash-recoverable forced restore, and cross-process project maintenance
+  locks. Pending recovery gates normal connections; bounded extraction and
+  strictly owned staging cleanup limit resource and privacy exposure. Checksum
+  validation can no longer be disabled.
 - Replaced destructive demo output replacement with a staged, validated
   publisher. Only empty directories or outputs carrying a supported Paper
   Galaxy build marker can be replaced; symlinked, dangerous, and unowned

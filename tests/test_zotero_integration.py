@@ -20,7 +20,7 @@ from paper_galaxy.web.server import create_app
 from paper_galaxy.zotero.attachments import resolve_attachment_path
 from paper_galaxy.zotero.detect import default_data_dir_guesses, detect_zotero
 from paper_galaxy.zotero.filters import ZoteroFilterError
-from paper_galaxy.zotero.importers import import_from_zotero
+from paper_galaxy.zotero.importers import ZoteroImportCancelled, import_from_zotero
 from paper_galaxy.zotero.local_api import LocalZoteroAPIClient, ZoteroAPIError
 from paper_galaxy.zotero.models import ZoteroAttachment, ZoteroDetection
 from paper_galaxy.zotero.normalize import normalize_child, normalize_item
@@ -178,7 +178,9 @@ def test_local_api_client_sends_zotero_header(monkeypatch: object) -> None:
         captured["version"] = request.headers["Zotero-api-version"]
         return FakeResponse()
 
-    monkeypatch.setattr("paper_galaxy.zotero.local_api.urlopen", fake_urlopen)
+    monkeypatch.setattr(
+        "paper_galaxy.zotero.local_api._open_local_request", fake_urlopen
+    )
     payload = LocalZoteroAPIClient("http://localhost:23119/api").root()
 
     assert payload["ok"] is True
@@ -212,7 +214,9 @@ def test_local_api_client_accepts_plain_text_root(monkeypatch: object) -> None:
         del request, timeout
         return FakeResponse()
 
-    monkeypatch.setattr("paper_galaxy.zotero.local_api.urlopen", fake_urlopen)
+    monkeypatch.setattr(
+        "paper_galaxy.zotero.local_api._open_local_request", fake_urlopen
+    )
     payload = LocalZoteroAPIClient("http://localhost:23119/api").root()
 
     assert payload["value"] == "Nothing to see here."
@@ -253,7 +257,9 @@ def test_local_api_client_follows_next_link(monkeypatch: object) -> None:
         raw, link = responses.pop(0)
         return FakeResponse(raw, link)
 
-    monkeypatch.setattr("paper_galaxy.zotero.local_api.urlopen", fake_urlopen)
+    monkeypatch.setattr(
+        "paper_galaxy.zotero.local_api._open_local_request", fake_urlopen
+    )
     items = LocalZoteroAPIClient("http://localhost:23119/api").top_items()
 
     assert [item["key"] for item in items] == ["AAAA1111", "BBBB2222"]
@@ -287,7 +293,9 @@ def test_local_api_collection_items_passes_since(monkeypatch: object) -> None:
         captured["url"] = request.full_url
         return FakeResponse()
 
-    monkeypatch.setattr("paper_galaxy.zotero.local_api.urlopen", fake_urlopen)
+    monkeypatch.setattr(
+        "paper_galaxy.zotero.local_api._open_local_request", fake_urlopen
+    )
     rows = LocalZoteroAPIClient("http://localhost:23119/api").collection_items(
         "COLLREAD",
         limit=2,
@@ -298,6 +306,52 @@ def test_local_api_collection_items_passes_since(monkeypatch: object) -> None:
     assert captured["url"].endswith(
         "/users/0/collections/COLLREAD/items?since=7&limit=2"
     )
+
+
+def test_local_api_rejects_remote_base_and_cross_origin_pagination(
+    monkeypatch: object,
+) -> None:
+    with pytest.raises(ValueError, match="loopback"):
+        LocalZoteroAPIClient("http://example.invalid/api")
+
+    calls: list[str] = []
+
+    class FakeHeaders(dict[str, str]):
+        def items(self) -> Any:
+            return super().items()
+
+    class FakeResponse:
+        headers = FakeHeaders(
+            {
+                "Link": (
+                    '<http://example.invalid/api/users/0/items/top?start=1>; rel="next"'
+                )
+            }
+        )
+
+        def __enter__(self) -> FakeResponse:
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            return None
+
+        def read(self) -> bytes:
+            return b'[{"key": "AAAA1111"}]'
+
+    def fake_urlopen(request: Any, timeout: float) -> FakeResponse:
+        del timeout
+        calls.append(request.full_url)
+        return FakeResponse()
+
+    monkeypatch.setattr(
+        "paper_galaxy.zotero.local_api._open_local_request", fake_urlopen
+    )
+    client = LocalZoteroAPIClient("http://localhost:23119/api")
+
+    with pytest.raises(ZoteroAPIError, match="configured loopback origin"):
+        client.top_items()
+
+    assert calls == ["http://localhost:23119/api/users/0/items/top?start=0"]
 
 
 def test_local_api_client_against_fake_http_server() -> None:
@@ -416,6 +470,71 @@ def test_import_collection_name_is_idempotent(tmp_path: Path) -> None:
     assert counts["zotero_document_links"] == 2
     assert "Branch net carries sensor values" in text
     assert client.children_calls == ["AAAA1111", "BBBB2222"]
+
+
+def test_zotero_import_cancels_between_items_without_advancing_cursor(
+    tmp_path: Path,
+) -> None:
+    cancel = False
+
+    def progress(current: int, total: int, message: str) -> None:
+        nonlocal cancel
+        assert total == 3
+        assert message.startswith("Syncing local Zotero item")
+        if current == 0:
+            cancel = True
+
+    with pytest.raises(ZoteroImportCancelled, match="item boundary"):
+        import_from_zotero(
+            project_dir=tmp_path,
+            client=FakeZoteroClient(),
+            build_reading_map=False,
+            min_chars=20,
+            cancel_requested=lambda: cancel,
+            progress_callback=progress,
+        )
+
+    connection = connect_database(tmp_path)
+    try:
+        run = connection.execute(
+            """
+            SELECT status FROM zotero_import_runs
+            ORDER BY started_at DESC LIMIT 1
+            """
+        ).fetchone()
+        cursor = connection.execute(
+            "SELECT last_version FROM zotero_sources LIMIT 1"
+        ).fetchone()
+        document_count = connection.execute(
+            "SELECT COUNT(*) FROM documents"
+        ).fetchone()[0]
+    finally:
+        connection.close()
+
+    assert run[0] == "interrupted"
+    assert cursor[0] is None
+    assert document_count == 1
+
+
+def test_zotero_import_rejects_project_inside_read_only_data_before_writes(
+    tmp_path: Path,
+) -> None:
+    data_dir = tmp_path / "Zotero"
+    data_dir.mkdir()
+    sentinel = data_dir / "zotero.sqlite"
+    sentinel.write_bytes(b"synthetic read-only Zotero sentinel")
+    project = data_dir / "PaperGalaxy"
+
+    with pytest.raises(ValueError, match=r"read-only Zotero data directory"):
+        import_from_zotero(
+            project_dir=project,
+            data_dir=data_dir,
+            client=FakeZoteroClient(),
+            build_reading_map=False,
+        )
+
+    assert sentinel.read_bytes() == b"synthetic read-only Zotero sentinel"
+    assert not project.exists()
 
 
 def test_import_pdf_policy_metadata_and_skip_missing(tmp_path: Path) -> None:

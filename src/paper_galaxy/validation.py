@@ -4,14 +4,38 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import math
+import os
 import sqlite3
+import struct
 from pathlib import Path
 from typing import Any
 
+from paper_galaxy.embeddings.builder import (
+    CHUNK_VECTOR_ALGORITHM_VERSION,
+    DOCUMENT_VECTOR_ALGORITHM_VERSION,
+)
+from paper_galaxy.embeddings.models import (
+    LEGACY_UNKNOWN_PROVENANCE,
+    stable_embedding_model_id,
+)
+from paper_galaxy.errors import DatabaseError, UnsupportedSchemaError
 from paper_galaxy.paths import project_config_path
-from paper_galaxy.storage.migrations import SCHEMA_VERSION, initialize_database
+from paper_galaxy.storage.json import StoredJSONError, load_json_list, load_json_object
+from paper_galaxy.storage.migrations import (
+    MIGRATIONS,
+    SCHEMA_VERSION,
+    validate_schema_capability,
+)
+from paper_galaxy.storage.provenance import (
+    document_content_revision_sha256,
+    registered_source_identity,
+)
 from paper_galaxy.storage.repository import Repository
-from paper_galaxy.storage.sqlite import resolve_database_path
+from paper_galaxy.storage.sqlite import (
+    connect_diagnostic_read_only,
+    resolve_database_path,
+)
 
 OPTIONAL_DEPENDENCIES: tuple[tuple[str, str], ...] = (
     ("pypdf", "pypdf"),
@@ -20,7 +44,6 @@ OPTIONAL_DEPENDENCIES: tuple[tuple[str, str], ...] = (
     ("sklearn", "sklearn"),
     ("umap", "umap"),
     ("sentence_transformers", "sentence_transformers"),
-    ("faiss", "faiss"),
     ("fastapi", "fastapi"),
     ("uvicorn", "uvicorn"),
     ("plotly", "plotly"),
@@ -28,6 +51,7 @@ OPTIONAL_DEPENDENCIES: tuple[tuple[str, str], ...] = (
 
 REQUIRED_TABLES = {
     "schema_meta",
+    "schema_migrations",
     "corpora",
     "scan_runs",
     "documents",
@@ -52,7 +76,164 @@ REQUIRED_TABLES = {
     "zotero_item_tags",
     "zotero_attachments",
     "zotero_document_links",
+    "zotero_sync_profiles",
+    "zotero_profile_items",
+    "zotero_sync_run_details",
+    "zotero_child_items",
+    "zotero_tombstones",
+    "registered_sources",
+    "jobs",
     "documents_fts",
+}
+
+REQUIRED_COLUMNS: dict[str, set[str]] = {
+    "schema_meta": {"key", "value"},
+    "schema_migrations": {"version", "name", "applied_at"},
+    "scan_runs": {
+        "id",
+        "corpus_id",
+        "started_at",
+        "status",
+        "error_code",
+        "error_message",
+        "owner_pid",
+    },
+    "documents": {
+        "id",
+        "relative_path",
+        "sha256",
+        "content_revision_sha256",
+        "status",
+    },
+    "document_texts": {"document_id", "text"},
+    "chunks": {"id", "document_id", "chunk_index", "text", "text_sha256"},
+    "embedding_models": {
+        "id",
+        "dimension",
+        "config_json",
+        "model_fingerprint",
+        "fingerprint_algorithm",
+    },
+    "embedding_runs": {
+        "id",
+        "status",
+        "error_code",
+        "error_message",
+        "sources_changed",
+        "owner_pid",
+    },
+    "vectors": {
+        "id",
+        "model_id",
+        "object_type",
+        "object_id",
+        "text_sha256",
+        "source_content_sha256",
+        "model_fingerprint",
+        "algorithm_version",
+        "dimension",
+        "dtype",
+        "vector",
+        "metadata_json",
+    },
+    "vector_indexes": {
+        "id",
+        "model_id",
+        "object_type",
+        "model_fingerprint",
+        "algorithm_version",
+        "vector_set_sha256",
+    },
+    "zotero_sources": {"id", "last_version"},
+    "zotero_import_runs": {
+        "id",
+        "source_id",
+        "status",
+        "config_json",
+        "error_code",
+        "error_message",
+        "owner_pid",
+    },
+    "zotero_items": {
+        "id",
+        "source_id",
+        "version",
+        "reading_status",
+        "data_json",
+        "child_manifest_json",
+        "deleted_at",
+        "deleted_version",
+    },
+    "zotero_sync_profiles": {
+        "id",
+        "source_id",
+        "profile_signature",
+        "materialization_signature",
+        "last_version",
+        "requires_full_sync",
+        "revision",
+        "last_run_id",
+    },
+    "zotero_profile_items": {
+        "profile_id",
+        "zotero_item_id",
+        "is_member",
+        "observed_version",
+        "first_matched_at",
+        "updated_at",
+    },
+    "zotero_sync_run_details": {
+        "run_id",
+        "profile_id",
+        "previous_version",
+        "response_version",
+        "committed_version",
+        "changed_parents",
+        "changed_children",
+        "deleted_records",
+    },
+    "zotero_child_items": {
+        "source_id",
+        "zotero_key",
+        "parent_key",
+        "item_type",
+        "version",
+        "data_json",
+        "deleted_at",
+        "deleted_version",
+    },
+    "zotero_tombstones": {
+        "source_id",
+        "object_type",
+        "zotero_key",
+        "library_version",
+        "deleted_at",
+    },
+    "registered_sources": {
+        "id",
+        "kind",
+        "root_path",
+        "zotero_source_id",
+        "profile_signature",
+        "config_json",
+        "removed_at",
+    },
+    "jobs": {
+        "id",
+        "queue_sequence",
+        "kind",
+        "source_id",
+        "request_key",
+        "status",
+        "params_json",
+        "result_summary_json",
+        "cancel_requested",
+        "owner_pid",
+        "owner_instance_id",
+        "heartbeat_at",
+        "started_at",
+        "finished_at",
+    },
 }
 
 
@@ -70,8 +251,16 @@ def validate_project(project_dir: Path, *, check_stale: bool = True) -> dict[str
         "database_exists": database_path.exists(),
         "schema_version": None,
         "expected_schema_version": SCHEMA_VERSION,
+        "check_errors": 0,
         "counts": {},
         "tables": {},
+        "integrity": _empty_integrity(),
+        "schema_capability": {"ok": False, "missing_columns": []},
+        "migration_history": {"ok": False, "missing": [], "mismatched": []},
+        "fts": _empty_fts_status(),
+        "vector_consistency": _empty_vector_consistency(),
+        "zotero_consistency": _empty_zotero_consistency(),
+        "source_job_consistency": _empty_source_job_consistency(),
         "optional_dependencies": _optional_dependency_status(),
         "issues": issues,
     }
@@ -92,21 +281,47 @@ def validate_project(project_dir: Path, *, check_stale: bool = True) -> dict[str
         _finalize_status(report)
         return report
 
-    connection = sqlite3.connect(database_path)
-    connection.row_factory = sqlite3.Row
-    connection.execute("PRAGMA foreign_keys = ON")
     try:
-        try:
-            initialize_database(connection)
-        except Exception as exc:
+        connection = connect_diagnostic_read_only(resolved_project_dir)
+    except DatabaseError as exc:
+        if hasattr(exc, "found_version"):
+            report["schema_version"] = str(exc.found_version)
+        report["integrity"] = _not_run_integrity(exc.safe_message)
+        _issue(issues, "error", exc.code, exc.safe_message)
+        _finalize_status(report)
+        return report
+    except sqlite3.Error as exc:
+        message = str(exc)
+        report["integrity"] = {
+            "quick_check": {"ok": False, "messages": [message]},
+            "foreign_key_check": {
+                "ok": None,
+                "status": "not_run",
+                "violation_count": 0,
+                "violations": [],
+            },
+        }
+        _issue(issues, "error", "quick_check_failed", message)
+        _finalize_status(report)
+        return report
+    try:
+        report["integrity"] = _integrity_status(connection)
+        if not report["integrity"]["quick_check"]["ok"]:
             _issue(
                 issues,
                 "error",
-                "schema_initialize_failed",
-                f"Could not initialize schema: {exc}",
+                "quick_check_failed",
+                "SQLite quick_check reported database corruption.",
             )
             _finalize_status(report)
             return report
+        if not report["integrity"]["foreign_key_check"]["ok"]:
+            _issue(
+                issues,
+                "error",
+                "foreign_key_check_failed",
+                "SQLite foreign_key_check reported invalid references.",
+            )
         repository = Repository(connection, database_path)
         report["schema_version"] = _schema_version(connection)
         if report["schema_version"] != SCHEMA_VERSION:
@@ -125,9 +340,43 @@ def validate_project(project_dir: Path, *, check_stale: bool = True) -> dict[str
                     "missing_table",
                     f"Required table is missing: {table_name}.",
                 )
-        report["counts"] = _counts(repository)
-        report["zotero"] = repository.zotero_stats()
-        report["dangling_rows"] = repository.dangling_row_counts()
+        report["schema_capability"] = _schema_capability(connection)
+        if not report["schema_capability"]["ok"]:
+            _issue(
+                issues,
+                "error",
+                "schema_capability_missing",
+                "The database is missing columns required by this build.",
+            )
+        report["migration_history"] = _migration_history_status(connection)
+        if not report["migration_history"]["ok"]:
+            _issue(
+                issues,
+                "error",
+                "migration_history_invalid",
+                "The schema migration history is incomplete or inconsistent.",
+            )
+        report["counts"] = _safe_repository_call(
+            lambda: _counts(repository),
+            {},
+            check_name="row counts",
+            report=report,
+            issues=issues,
+        )
+        report["zotero"] = _safe_repository_call(
+            repository.zotero_stats,
+            {},
+            check_name="Zotero summary",
+            report=report,
+            issues=issues,
+        )
+        report["dangling_rows"] = _safe_repository_call(
+            repository.dangling_row_counts,
+            {},
+            check_name="dangling rows",
+            report=report,
+            issues=issues,
+        )
         for code, count in report["dangling_rows"].items():
             if count:
                 _issue(
@@ -144,7 +393,76 @@ def validate_project(project_dir: Path, *, check_stale: bool = True) -> dict[str
                 "fts_unavailable",
                 "documents_fts is unavailable or unreadable.",
             )
-        report["map_runs"] = _map_run_status(connection)
+        elif any(
+            int(report["fts"].get(key, 0))
+            for key in (
+                "documents_without_fts",
+                "fts_without_documents",
+                "documents_without_chunks",
+                "documents_without_texts",
+                "content_mismatches",
+                "duplicate_document_ids",
+            )
+        ):
+            _issue(
+                issues,
+                "error",
+                "fts_inconsistent",
+                "FTS, document text, and chunk rows are inconsistent.",
+            )
+        report["vector_consistency"] = _vector_consistency(connection)
+        if any(
+            int(value)
+            for key, value in report["vector_consistency"].items()
+            if key != "unverifiable_vectors"
+        ):
+            _issue(
+                issues,
+                "error",
+                "vector_consistency_failed",
+                "Stored vectors include orphaned, stale, or malformed rows.",
+            )
+        if int(report["vector_consistency"].get("unverifiable_vectors", 0)):
+            _issue(
+                issues,
+                "warning",
+                "vector_provenance_missing",
+                "Some legacy vectors cannot be proven fresh and should be rebuilt.",
+            )
+        report["zotero_consistency"] = _zotero_consistency(connection)
+        if any(
+            int(value)
+            for key, value in report["zotero_consistency"].items()
+            if key != "unknown_child_manifests"
+        ):
+            _issue(
+                issues,
+                "error",
+                "zotero_consistency_failed",
+                "Zotero cursor or import profile state is inconsistent.",
+            )
+        if int(report["zotero_consistency"].get("unknown_child_manifests", 0)):
+            _issue(
+                issues,
+                "warning",
+                "zotero_child_manifest_unknown",
+                "Some migrated Zotero items need an explicit full reconciliation.",
+            )
+        report["source_job_consistency"] = _source_job_consistency(connection)
+        if any(int(value) for value in report["source_job_consistency"].values()):
+            _issue(
+                issues,
+                "error",
+                "source_job_consistency_failed",
+                "Registered source or durable job state is inconsistent.",
+            )
+        report["map_runs"] = _safe_repository_call(
+            lambda: _map_run_status(connection),
+            {"count": 0, "mismatches": []},
+            check_name="saved map runs",
+            report=report,
+            issues=issues,
+        )
         for mismatch in report["map_runs"]["mismatches"]:
             _issue(
                 issues,
@@ -194,6 +512,974 @@ def validation_exit_code(report: dict[str, Any], *, strict: bool = False) -> int
     return 0
 
 
+def _empty_integrity() -> dict[str, object]:
+    return {
+        "quick_check": {"ok": False, "messages": []},
+        "foreign_key_check": {
+            "ok": False,
+            "violation_count": 0,
+            "violations": [],
+        },
+    }
+
+
+def _not_run_integrity(reason: str) -> dict[str, object]:
+    return {
+        "quick_check": {"ok": None, "status": "not_run", "messages": [reason]},
+        "foreign_key_check": {
+            "ok": None,
+            "status": "not_run",
+            "violation_count": 0,
+            "violations": [],
+        },
+    }
+
+
+def _integrity_status(connection: sqlite3.Connection) -> dict[str, object]:
+    try:
+        quick_messages = [
+            str(row[0]) for row in connection.execute("PRAGMA quick_check").fetchall()
+        ]
+    except sqlite3.Error as exc:
+        quick_messages = [str(exc)]
+    quick_ok = quick_messages == ["ok"]
+    violations: list[dict[str, object]] = []
+    if quick_ok:
+        try:
+            rows = connection.execute("PRAGMA foreign_key_check").fetchall()
+            violations = [
+                {
+                    "table": str(row[0]),
+                    "rowid": row[1],
+                    "parent": str(row[2]),
+                    "foreign_key_id": int(row[3]),
+                }
+                for row in rows
+            ]
+        except sqlite3.Error as exc:
+            violations = [
+                {
+                    "table": "unknown",
+                    "rowid": None,
+                    "parent": "unknown",
+                    "foreign_key_id": -1,
+                    "error": str(exc),
+                }
+            ]
+    foreign_key_status: dict[str, object] = {
+        "ok": not violations if quick_ok else None,
+        "violation_count": len(violations),
+        "violations": violations,
+    }
+    if not quick_ok:
+        foreign_key_status["status"] = "not_run"
+    return {
+        "quick_check": {"ok": quick_ok, "messages": quick_messages},
+        "foreign_key_check": foreign_key_status,
+    }
+
+
+def _schema_capability(connection: sqlite3.Connection) -> dict[str, object]:
+    missing: list[dict[str, str]] = []
+    for table_name, required_columns in sorted(REQUIRED_COLUMNS.items()):
+        try:
+            rows = connection.execute(f'PRAGMA table_info("{table_name}")').fetchall()
+        except sqlite3.Error:
+            rows = []
+        columns = {str(row[1]) for row in rows}
+        for column in sorted(required_columns - columns):
+            missing.append({"table": table_name, "column": column})
+    structural_ok = True
+    try:
+        declared_version = _schema_version(connection)
+        if declared_version is None:
+            raise ValueError("schema version is missing")
+        validate_schema_capability(
+            connection,
+            version=int(declared_version),
+            database_path=Path(":validation:"),
+        )
+    except (UnsupportedSchemaError, ValueError):
+        structural_ok = False
+    return {
+        "ok": not missing and structural_ok,
+        "missing_columns": missing,
+        "structural_ok": structural_ok,
+    }
+
+
+def _migration_history_status(connection: sqlite3.Connection) -> dict[str, object]:
+    entries = (
+        list(MIGRATIONS.values()) if isinstance(MIGRATIONS, dict) else list(MIGRATIONS)
+    )
+    expected = {int(entry.version): str(entry.name) for entry in entries}
+    try:
+        rows = connection.execute(
+            "SELECT version, name FROM schema_migrations ORDER BY version"
+        ).fetchall()
+    except sqlite3.Error as exc:
+        return {
+            "ok": False,
+            "missing": sorted(expected),
+            "mismatched": [],
+            "error": str(exc),
+        }
+    actual = {int(row[0]): str(row[1]) for row in rows}
+    missing = sorted(set(expected) - set(actual))
+    mismatched = [
+        {"version": version, "expected": name, "found": actual.get(version)}
+        for version, name in sorted(expected.items())
+        if version in actual and actual[version] != name
+    ]
+    unexpected = sorted(set(actual) - set(expected))
+    return {
+        "ok": not missing and not mismatched and not unexpected,
+        "missing": missing,
+        "mismatched": mismatched,
+        "unexpected": unexpected,
+    }
+
+
+def _empty_fts_status() -> dict[str, object]:
+    return {
+        "available": False,
+        "row_count": 0,
+        "documents_without_fts": 0,
+        "fts_without_documents": 0,
+        "documents_without_chunks": 0,
+        "documents_without_texts": 0,
+        "content_mismatches": 0,
+        "duplicate_document_ids": 0,
+    }
+
+
+def _empty_vector_consistency() -> dict[str, int]:
+    return {
+        "unknown_object_types": 0,
+        "vectors_without_targets": 0,
+        "vectors_without_documents": 0,
+        "vectors_without_chunks": 0,
+        "vectors_without_models": 0,
+        "vectors_for_inactive_targets": 0,
+        "vectors_for_inactive_documents": 0,
+        "vectors_for_inactive_chunks": 0,
+        "document_source_hash_mismatches": 0,
+        "chunk_source_hash_mismatches": 0,
+        "source_hash_mismatches": 0,
+        "invalid_source_hashes": 0,
+        "invalid_embedding_input_hashes": 0,
+        "document_content_hash_mismatches": 0,
+        "chunk_text_hash_mismatches": 0,
+        "model_fingerprint_mismatches": 0,
+        "fingerprint_algorithm_mismatches": 0,
+        "model_identity_mismatches": 0,
+        "unknown_algorithm_versions": 0,
+        "dimension_mismatches": 0,
+        "dtype_mismatches": 0,
+        "blob_size_mismatches": 0,
+        "nonfinite_float32_vectors": 0,
+        "vector_index_provenance_mismatches": 0,
+        "check_errors": 0,
+        "invalid_vector_metadata": 0,
+        "unverifiable_vectors": 0,
+        "stale_vectors": 0,
+    }
+
+
+def _vector_consistency(connection: sqlite3.Connection) -> dict[str, int]:
+    status = _empty_vector_consistency()
+    queries: dict[str, tuple[str, tuple[object, ...]]] = {
+        "unknown_object_types": (
+            """
+            SELECT COUNT(*) FROM vectors
+            WHERE object_type NOT IN ('document', 'chunk')
+            """,
+            (),
+        ),
+        "vectors_without_documents": (
+            """
+            SELECT COUNT(*) FROM vectors v
+            LEFT JOIN documents d
+              ON v.object_type = 'document' AND d.id = v.object_id
+            WHERE v.object_type = 'document' AND d.id IS NULL
+            """,
+            (),
+        ),
+        "vectors_without_chunks": (
+            """
+            SELECT COUNT(*) FROM vectors v
+            LEFT JOIN chunks c
+              ON v.object_type = 'chunk' AND c.id = v.object_id
+            WHERE v.object_type = 'chunk' AND c.id IS NULL
+            """,
+            (),
+        ),
+        "vectors_without_models": (
+            """
+            SELECT COUNT(*) FROM vectors v
+            LEFT JOIN embedding_models m ON m.id = v.model_id
+            WHERE m.id IS NULL
+            """,
+            (),
+        ),
+        "vectors_for_inactive_documents": (
+            """
+            SELECT COUNT(*) FROM vectors v
+            JOIN documents d
+              ON v.object_type = 'document' AND d.id = v.object_id
+            WHERE v.object_type = 'document' AND d.status != 'active'
+            """,
+            (),
+        ),
+        "vectors_for_inactive_chunks": (
+            """
+            SELECT COUNT(*) FROM vectors v
+            JOIN chunks c
+              ON v.object_type = 'chunk' AND c.id = v.object_id
+            JOIN documents d ON d.id = c.document_id
+            WHERE v.object_type = 'chunk' AND d.status != 'active'
+            """,
+            (),
+        ),
+        "document_source_hash_mismatches": (
+            """
+            SELECT COUNT(*) FROM vectors v
+            JOIN documents d ON v.object_type = 'document' AND d.id = v.object_id
+            WHERE v.object_type = 'document'
+              AND v.source_content_sha256 != d.content_revision_sha256
+            """,
+            (),
+        ),
+        "chunk_source_hash_mismatches": (
+            """
+            SELECT COUNT(*) FROM vectors v
+            JOIN chunks c ON v.object_type = 'chunk' AND c.id = v.object_id
+            WHERE v.object_type = 'chunk'
+              AND v.source_content_sha256 != c.text_sha256
+            """,
+            (),
+        ),
+        "invalid_source_hashes": (
+            """
+            SELECT COUNT(*) FROM vectors
+            WHERE typeof(source_content_sha256) != 'text'
+               OR length(source_content_sha256) != 64
+               OR source_content_sha256 GLOB '*[^0-9a-f]*'
+            """,
+            (),
+        ),
+        "invalid_embedding_input_hashes": (
+            """
+            SELECT COUNT(*) FROM vectors
+            WHERE typeof(text_sha256) != 'text'
+               OR length(text_sha256) != 64
+               OR text_sha256 GLOB '*[^0-9a-f]*'
+            """,
+            (),
+        ),
+        "model_fingerprint_mismatches": (
+            """
+            SELECT COUNT(*) FROM vectors v
+            JOIN embedding_models m ON m.id = v.model_id
+            WHERE v.model_fingerprint = ?
+               OR m.model_fingerprint = ?
+               OR length(v.model_fingerprint) != 64
+               OR length(m.model_fingerprint) != 64
+               OR v.model_fingerprint GLOB '*[^0-9a-f]*'
+               OR m.model_fingerprint GLOB '*[^0-9a-f]*'
+               OR v.model_fingerprint != m.model_fingerprint
+            """,
+            (LEGACY_UNKNOWN_PROVENANCE, LEGACY_UNKNOWN_PROVENANCE),
+        ),
+        "unknown_algorithm_versions": (
+            """
+            SELECT COUNT(*) FROM vectors
+            WHERE (object_type = 'document' AND algorithm_version != ?)
+               OR (object_type = 'chunk' AND algorithm_version != ?)
+            """,
+            (
+                DOCUMENT_VECTOR_ALGORITHM_VERSION,
+                CHUNK_VECTOR_ALGORITHM_VERSION,
+            ),
+        ),
+        "dimension_mismatches": (
+            """
+            SELECT COUNT(*) FROM vectors v
+            LEFT JOIN embedding_models m ON m.id = v.model_id
+            WHERE typeof(v.dimension) != 'integer'
+               OR v.dimension <= 0
+               OR (
+                 m.id IS NOT NULL
+                 AND (
+                   typeof(m.dimension) != 'integer'
+                   OR m.dimension <= 0
+                   OR v.dimension != m.dimension
+                 )
+               )
+            """,
+            (),
+        ),
+        "dtype_mismatches": (
+            """
+            SELECT COUNT(*) FROM vectors
+            WHERE dtype != 'float32'
+            """,
+            (),
+        ),
+        "blob_size_mismatches": (
+            """
+            SELECT COUNT(*) FROM vectors
+            WHERE typeof(vector) != 'blob'
+               OR typeof(dimension) != 'integer'
+               OR dimension <= 0
+               OR length(vector) != dimension * 4
+            """,
+            (),
+        ),
+        "unverifiable_vectors": (
+            """
+            SELECT COUNT(*) FROM vectors v
+            LEFT JOIN embedding_models m ON m.id = v.model_id
+            WHERE v.source_content_sha256 = ?
+               OR v.model_fingerprint = ?
+               OR v.algorithm_version = ?
+               OR (m.id IS NOT NULL AND m.model_fingerprint = ?)
+               OR (m.id IS NOT NULL AND m.fingerprint_algorithm IN (?, ''))
+            """,
+            (
+                LEGACY_UNKNOWN_PROVENANCE,
+                LEGACY_UNKNOWN_PROVENANCE,
+                LEGACY_UNKNOWN_PROVENANCE,
+                LEGACY_UNKNOWN_PROVENANCE,
+                LEGACY_UNKNOWN_PROVENANCE,
+            ),
+        ),
+        "stale_vectors": (
+            """
+            SELECT COUNT(*)
+            FROM vectors v
+            LEFT JOIN embedding_models m ON m.id = v.model_id
+            LEFT JOIN documents d
+              ON v.object_type = 'document' AND d.id = v.object_id
+            LEFT JOIN chunks c
+              ON v.object_type = 'chunk' AND c.id = v.object_id
+            WHERE (
+                v.object_type = 'document'
+                AND d.id IS NOT NULL
+                AND v.source_content_sha256 != ?
+                AND v.source_content_sha256 != d.content_revision_sha256
+              )
+               OR (
+                v.object_type = 'chunk'
+                AND c.id IS NOT NULL
+                AND v.source_content_sha256 != ?
+                AND v.source_content_sha256 != c.text_sha256
+              )
+               OR (
+                m.id IS NOT NULL
+                AND v.model_fingerprint != ?
+                AND m.model_fingerprint != ?
+                AND (
+                  length(v.model_fingerprint) != 64
+                  OR length(m.model_fingerprint) != 64
+                  OR v.model_fingerprint GLOB '*[^0-9a-f]*'
+                  OR m.model_fingerprint GLOB '*[^0-9a-f]*'
+                  OR v.model_fingerprint != m.model_fingerprint
+                )
+              )
+               OR (
+                v.algorithm_version != ?
+                AND (
+                  (v.object_type = 'document' AND v.algorithm_version != ?)
+                  OR (v.object_type = 'chunk' AND v.algorithm_version != ?)
+                )
+              )
+            """,
+            (
+                LEGACY_UNKNOWN_PROVENANCE,
+                LEGACY_UNKNOWN_PROVENANCE,
+                LEGACY_UNKNOWN_PROVENANCE,
+                LEGACY_UNKNOWN_PROVENANCE,
+                LEGACY_UNKNOWN_PROVENANCE,
+                DOCUMENT_VECTOR_ALGORITHM_VERSION,
+                CHUNK_VECTOR_ALGORITHM_VERSION,
+            ),
+        ),
+        "vector_index_provenance_mismatches": (
+            """
+            SELECT COUNT(*) FROM vector_indexes i
+            LEFT JOIN embedding_models m ON m.id = i.model_id
+            WHERE i.object_type NOT IN ('document', 'chunk')
+               OR m.id IS NULL
+               OR i.model_fingerprint = ?
+               OR m.model_fingerprint = ?
+               OR i.model_fingerprint != m.model_fingerprint
+               OR length(i.vector_set_sha256) != 64
+               OR i.vector_set_sha256 GLOB '*[^0-9a-f]*'
+               OR (i.object_type = 'document' AND i.algorithm_version != ?)
+               OR (i.object_type = 'chunk' AND i.algorithm_version != ?)
+            """,
+            (
+                LEGACY_UNKNOWN_PROVENANCE,
+                LEGACY_UNKNOWN_PROVENANCE,
+                DOCUMENT_VECTOR_ALGORITHM_VERSION,
+                CHUNK_VECTOR_ALGORITHM_VERSION,
+            ),
+        ),
+    }
+    try:
+        for key, (query, parameters) in queries.items():
+            row = connection.execute(query, parameters).fetchone()
+            status[key] = int(row[0]) if row else 0
+
+        status["vectors_without_targets"] = (
+            status["vectors_without_documents"] + status["vectors_without_chunks"]
+        )
+        status["vectors_for_inactive_targets"] = (
+            status["vectors_for_inactive_documents"]
+            + status["vectors_for_inactive_chunks"]
+        )
+        status["source_hash_mismatches"] = (
+            status["document_source_hash_mismatches"]
+            + status["chunk_source_hash_mismatches"]
+        )
+
+        metadata_cursor = connection.execute(
+            "SELECT metadata_json FROM vectors ORDER BY id"
+        )
+        for rows in iter(lambda: metadata_cursor.fetchmany(256), []):
+            for row in rows:
+                try:
+                    load_json_object(row["metadata_json"])
+                except StoredJSONError:
+                    status["invalid_vector_metadata"] += 1
+
+        identity_cursor = connection.execute(
+            """
+            SELECT
+              m.id,
+              m.name,
+              m.provider,
+              m.dimension,
+              typeof(m.dimension) AS dimension_type,
+              m.distance,
+              m.config_json,
+              m.model_fingerprint,
+              m.fingerprint_algorithm
+            FROM vectors v
+            JOIN embedding_models m ON m.id = v.model_id
+            ORDER BY v.id
+            """
+        )
+        for rows in iter(lambda: identity_cursor.fetchmany(256), []):
+            for row in rows:
+                try:
+                    config = load_json_object(row["config_json"])
+                except StoredJSONError:
+                    status["fingerprint_algorithm_mismatches"] += 1
+                    status["model_identity_mismatches"] += 1
+                    continue
+                if config.get("model_fingerprint") != str(
+                    row["model_fingerprint"]
+                ) or config.get("fingerprint_algorithm") != str(
+                    row["fingerprint_algorithm"]
+                ):
+                    status["fingerprint_algorithm_mismatches"] += 1
+                try:
+                    expected_model_id = stable_embedding_model_id(
+                        provider=str(row["provider"]),
+                        name=str(row["name"]),
+                        dimension=int(row["dimension"]),
+                        distance=str(row["distance"]),
+                        config=config,
+                        model_fingerprint=str(row["model_fingerprint"]),
+                        fingerprint_algorithm=str(row["fingerprint_algorithm"]),
+                    )
+                except (TypeError, ValueError):
+                    status["model_identity_mismatches"] += 1
+                    continue
+                if (
+                    str(row["dimension_type"]) != "integer"
+                    or json.dumps(config, sort_keys=True) != str(row["config_json"])
+                    or expected_model_id != str(row["id"])
+                ):
+                    status["model_identity_mismatches"] += 1
+
+        vector_cursor = connection.execute(
+            """
+            SELECT vector
+            FROM vectors
+            WHERE dtype = 'float32'
+              AND typeof(dimension) = 'integer'
+              AND dimension > 0
+              AND typeof(vector) = 'blob'
+              AND length(vector) = dimension * 4
+              AND length(vector) % 4 = 0
+            ORDER BY id
+            """
+        )
+        for rows in iter(lambda: vector_cursor.fetchmany(256), []):
+            for row in rows:
+                blob = bytes(row["vector"])
+                if any(
+                    not math.isfinite(value[0])
+                    for value in struct.iter_unpack("<f", blob)
+                ):
+                    status["nonfinite_float32_vectors"] += 1
+
+        chunk_cursor = connection.execute(
+            "SELECT text, text_sha256 FROM chunks ORDER BY id"
+        )
+        for rows in iter(lambda: chunk_cursor.fetchmany(256), []):
+            for row in rows:
+                current_hash = _text_sha256(str(row["text"]))
+                if current_hash != str(row["text_sha256"]):
+                    status["chunk_text_hash_mismatches"] += 1
+
+        document_cursor = connection.execute(
+            """
+            SELECT d.title, d.relative_path, d.content_revision_sha256, dt.text
+            FROM documents d
+            JOIN document_texts dt ON dt.document_id = d.id
+            ORDER BY d.id
+            """
+        )
+        for rows in iter(lambda: document_cursor.fetchmany(256), []):
+            for row in rows:
+                current_revision = document_content_revision_sha256(
+                    title=str(row["title"]),
+                    relative_path=str(row["relative_path"]),
+                    text=str(row["text"]),
+                )
+                if current_revision != str(row["content_revision_sha256"]):
+                    status["document_content_hash_mismatches"] += 1
+    except sqlite3.Error:
+        status["check_errors"] += 1
+        return status
+    return status
+
+
+def _empty_zotero_consistency() -> dict[str, int]:
+    return {
+        "check_errors": 0,
+        "invalid_cursors": 0,
+        "invalid_record_versions": 0,
+        "cursor_behind_records": 0,
+        "profile_mismatches": 0,
+        "invalid_child_manifests": 0,
+        "unknown_child_manifests": 0,
+        "invalid_profile_cursors": 0,
+        "profile_state_mismatches": 0,
+        "invalid_child_payloads": 0,
+        "deleted_parent_state_mismatches": 0,
+        "deleted_parent_active_children": 0,
+        "deleted_parent_active_attachments": 0,
+        "profile_item_source_mismatches": 0,
+        "inactive_profile_item_memberships": 0,
+        "inconsistent_source_materializations": 0,
+        "completed_profiles_missing_materialization": 0,
+    }
+
+
+def _zotero_consistency(connection: sqlite3.Connection) -> dict[str, int]:
+    status = _empty_zotero_consistency()
+    try:
+        row = connection.execute(
+            """
+            SELECT COUNT(*)
+            FROM zotero_sources
+            WHERE last_version IS NOT NULL
+              AND (typeof(last_version) != 'integer' OR last_version < 0)
+            """
+        ).fetchone()
+        status["invalid_cursors"] = int(row[0]) if row else 0
+        row = connection.execute(
+            """
+            SELECT COUNT(*)
+            FROM zotero_sync_profiles
+            WHERE (last_version IS NOT NULL AND (
+                     typeof(last_version) != 'integer' OR last_version < 0
+                  ))
+               OR typeof(revision) != 'integer'
+               OR revision < 0
+               OR (requires_full_sync = 0 AND last_version IS NULL)
+            """
+        ).fetchone()
+        status["invalid_profile_cursors"] = int(row[0]) if row else 0
+        row = connection.execute(
+            """
+            SELECT COUNT(*)
+            FROM zotero_sync_profiles zsp
+            LEFT JOIN registered_sources rs ON rs.id = zsp.id
+            WHERE rs.id IS NULL
+               OR rs.kind != 'zotero_profile'
+               OR rs.zotero_source_id IS NOT zsp.source_id
+               OR rs.profile_signature IS NOT zsp.profile_signature
+            """
+        ).fetchone()
+        status["profile_state_mismatches"] = int(row[0]) if row else 0
+        row = connection.execute(
+            """
+            SELECT COUNT(*)
+            FROM (
+              SELECT source_id
+              FROM zotero_sync_profiles
+              WHERE materialization_signature IS NOT NULL
+              GROUP BY source_id
+              HAVING COUNT(DISTINCT materialization_signature) > 1
+            )
+            """
+        ).fetchone()
+        status["inconsistent_source_materializations"] = int(row[0]) if row else 0
+        row = connection.execute(
+            """
+            SELECT COUNT(*)
+            FROM zotero_sync_profiles
+            WHERE requires_full_sync = 0 AND materialization_signature IS NULL
+            """
+        ).fetchone()
+        status["completed_profiles_missing_materialization"] = int(row[0]) if row else 0
+        row = connection.execute(
+            """
+            SELECT SUM(invalid_count)
+            FROM (
+              SELECT COUNT(*) AS invalid_count
+              FROM zotero_items
+              WHERE version IS NOT NULL
+                AND (typeof(version) != 'integer' OR version < 0)
+              UNION ALL
+              SELECT COUNT(*)
+              FROM zotero_collections
+              WHERE version IS NOT NULL
+                AND (typeof(version) != 'integer' OR version < 0)
+              UNION ALL
+              SELECT COUNT(*)
+              FROM zotero_attachments
+              WHERE version IS NOT NULL
+                AND (typeof(version) != 'integer' OR version < 0)
+            )
+            """
+        ).fetchone()
+        status["invalid_record_versions"] = int(row[0]) if row else 0
+        row = connection.execute(
+            """
+            SELECT COUNT(*)
+            FROM zotero_sources zs
+            WHERE EXISTS (
+                SELECT 1
+                FROM (
+                  SELECT source_id, version FROM zotero_items
+                  UNION ALL
+                  SELECT source_id, version FROM zotero_collections
+                  UNION ALL
+                  SELECT source_id, version FROM zotero_attachments
+                ) records
+                WHERE records.source_id = zs.id
+                  AND records.version IS NOT NULL
+                  AND (
+                    zs.last_version IS NULL
+                    OR records.version > zs.last_version
+                  )
+              )
+            """
+        ).fetchone()
+        status["cursor_behind_records"] = int(row[0]) if row else 0
+        rows = connection.execute(
+            "SELECT config_json FROM zotero_import_runs"
+        ).fetchall()
+        mismatches = 0
+        for row in rows:
+            try:
+                config = load_json_object(row["config_json"])
+            except StoredJSONError:
+                mismatches += 1
+                continue
+            filters = config.get("filters")
+            if not isinstance(filters, dict):
+                continue
+            shared_keys = set(config) & set(filters)
+            if any(config[key] != filters[key] for key in shared_keys):
+                mismatches += 1
+        status["profile_mismatches"] = mismatches
+        manifest_rows = connection.execute(
+            "SELECT child_manifest_json FROM zotero_items"
+        ).fetchall()
+        invalid_manifests = 0
+        unknown_manifests = 0
+        for row in manifest_rows:
+            if row["child_manifest_json"] is None:
+                unknown_manifests += 1
+                continue
+            try:
+                manifest = load_json_list(row["child_manifest_json"])
+            except StoredJSONError:
+                invalid_manifests += 1
+                continue
+            if not _valid_zotero_child_manifest(manifest):
+                invalid_manifests += 1
+        status["invalid_child_manifests"] = invalid_manifests
+        status["unknown_child_manifests"] = unknown_manifests
+        child_cursor = connection.execute(
+            "SELECT data_json FROM zotero_child_items ORDER BY source_id, zotero_key"
+        )
+        invalid_child_payloads = 0
+        for rows in iter(lambda: child_cursor.fetchmany(256), []):
+            for row in rows:
+                try:
+                    load_json_object(row["data_json"])
+                except StoredJSONError:
+                    invalid_child_payloads += 1
+        status["invalid_child_payloads"] = invalid_child_payloads
+        row = connection.execute(
+            """
+            SELECT COUNT(*)
+            FROM zotero_items zi
+            LEFT JOIN zotero_tombstones zt
+              ON zt.source_id = zi.source_id
+             AND zt.object_type = 'item'
+             AND zt.zotero_key = zi.zotero_key
+            LEFT JOIN zotero_document_links zdl ON zdl.zotero_item_id = zi.id
+            LEFT JOIN documents d ON d.id = zdl.document_id
+            WHERE (zi.deleted_at IS NOT NULL AND zt.zotero_key IS NULL)
+               OR (zi.deleted_at IS NULL AND zt.zotero_key IS NOT NULL)
+               OR (zi.deleted_at IS NOT NULL AND d.status = 'active')
+            """
+        ).fetchone()
+        status["deleted_parent_state_mismatches"] = int(row[0]) if row else 0
+        row = connection.execute(
+            """
+            SELECT COUNT(*)
+            FROM zotero_child_items child
+            JOIN zotero_items parent
+              ON parent.source_id = child.source_id
+             AND parent.zotero_key = child.parent_key
+            WHERE parent.deleted_at IS NOT NULL
+              AND child.deleted_at IS NULL
+            """
+        ).fetchone()
+        status["deleted_parent_active_children"] = int(row[0]) if row else 0
+        row = connection.execute(
+            """
+            SELECT COUNT(*)
+            FROM zotero_attachments attachment
+            JOIN zotero_items parent ON parent.id = attachment.parent_zotero_item_id
+            WHERE parent.deleted_at IS NOT NULL
+              AND attachment.deleted_at IS NULL
+            """
+        ).fetchone()
+        status["deleted_parent_active_attachments"] = int(row[0]) if row else 0
+        row = connection.execute(
+            """
+            SELECT COUNT(*)
+            FROM zotero_profile_items membership
+            LEFT JOIN zotero_sync_profiles profile
+              ON profile.id = membership.profile_id
+            LEFT JOIN zotero_items item
+              ON item.id = membership.zotero_item_id
+            LEFT JOIN registered_sources source
+              ON source.id = membership.profile_id
+            WHERE profile.id IS NULL
+               OR item.id IS NULL
+               OR source.id IS NULL
+               OR source.kind != 'zotero_profile'
+               OR source.zotero_source_id IS NOT profile.source_id
+               OR profile.source_id IS NOT item.source_id
+            """
+        ).fetchone()
+        status["profile_item_source_mismatches"] = int(row[0]) if row else 0
+        row = connection.execute(
+            """
+            SELECT COUNT(*)
+            FROM zotero_profile_items membership
+            JOIN zotero_sync_profiles profile ON profile.id = membership.profile_id
+            JOIN zotero_items item ON item.id = membership.zotero_item_id
+            JOIN registered_sources source ON source.id = membership.profile_id
+            WHERE membership.is_member = 1
+              AND (
+                   item.deleted_at IS NOT NULL
+                OR source.removed_at IS NOT NULL
+                OR profile.materialization_signature IS NULL
+              )
+            """
+        ).fetchone()
+        status["inactive_profile_item_memberships"] = int(row[0]) if row else 0
+    except sqlite3.Error:
+        status["check_errors"] += 1
+        return status
+    return status
+
+
+def _valid_zotero_child_manifest(entries: list[object]) -> bool:
+    seen: set[str] = set()
+    for entry in entries:
+        if not isinstance(entry, dict):
+            return False
+        key = entry.get("key")
+        kind = entry.get("kind")
+        version = entry.get("version")
+        content_hash = entry.get("content_sha256")
+        if (
+            not isinstance(key, str)
+            or not key
+            or key in seen
+            or kind not in {"attachment", "note", "annotation"}
+            or (version is not None and (not isinstance(version, int) or version < 0))
+            or not isinstance(content_hash, str)
+            or len(content_hash) != 64
+            or any(character not in "0123456789abcdef" for character in content_hash)
+        ):
+            return False
+        seen.add(key)
+    return True
+
+
+def _empty_source_job_consistency() -> dict[str, int]:
+    return {
+        "check_errors": 0,
+        "invalid_source_config_json": 0,
+        "invalid_source_identities": 0,
+        "invalid_job_params_json": 0,
+        "invalid_job_result_json": 0,
+        "jobs_missing_required_source": 0,
+        "jobs_with_unexpected_source": 0,
+        "job_source_kind_mismatches": 0,
+        "active_jobs_for_removed_sources": 0,
+        "invalid_job_state_rows": 0,
+    }
+
+
+def _source_job_consistency(connection: sqlite3.Connection) -> dict[str, int]:
+    status = _empty_source_job_consistency()
+    try:
+        source_cursor = connection.execute(
+            """
+            SELECT id, kind, root_path, zotero_source_id, profile_signature,
+                   config_json
+            FROM registered_sources
+            ORDER BY id
+            """
+        )
+        for rows in iter(lambda: source_cursor.fetchmany(256), []):
+            for row in rows:
+                try:
+                    config = load_json_object(row["config_json"])
+                except StoredJSONError:
+                    status["invalid_source_config_json"] += 1
+                    continue
+                kind = str(row["kind"])
+                locator = (
+                    os.path.normcase(os.path.normpath(str(row["root_path"])))
+                    if kind == "corpus_directory"
+                    else str(row["zotero_source_id"])
+                )
+                expected_id, expected_signature = registered_source_identity(
+                    kind=kind,
+                    locator=locator,
+                    config=config if kind == "zotero_profile" else None,
+                )
+                if (
+                    str(row["id"]) != expected_id
+                    or str(row["profile_signature"]) != expected_signature
+                ):
+                    status["invalid_source_identities"] += 1
+
+        job_cursor = connection.execute(
+            "SELECT params_json, result_summary_json FROM jobs ORDER BY queue_sequence"
+        )
+        for rows in iter(lambda: job_cursor.fetchmany(256), []):
+            for row in rows:
+                try:
+                    load_json_object(row["params_json"])
+                except StoredJSONError:
+                    status["invalid_job_params_json"] += 1
+                try:
+                    load_json_object(row["result_summary_json"])
+                except StoredJSONError:
+                    status["invalid_job_result_json"] += 1
+
+        queries = {
+            "jobs_missing_required_source": """
+                SELECT COUNT(*) FROM jobs
+                WHERE kind IN ('index_corpus', 'zotero_sync')
+                  AND source_id IS NULL
+            """,
+            "jobs_with_unexpected_source": """
+                SELECT COUNT(*) FROM jobs
+                WHERE kind IN ('rebuild_analysis', 'backup_project')
+                  AND source_id IS NOT NULL
+            """,
+            "job_source_kind_mismatches": """
+                SELECT COUNT(*)
+                FROM jobs j
+                JOIN registered_sources s ON s.id = j.source_id
+                WHERE (j.kind = 'index_corpus' AND s.kind != 'corpus_directory')
+                   OR (j.kind = 'zotero_sync' AND s.kind != 'zotero_profile')
+            """,
+            "active_jobs_for_removed_sources": """
+                SELECT COUNT(*)
+                FROM jobs j
+                JOIN registered_sources s ON s.id = j.source_id
+                WHERE j.status IN ('queued', 'running', 'cancelling')
+                  AND s.removed_at IS NOT NULL
+            """,
+            "invalid_job_state_rows": """
+                SELECT COUNT(*) FROM jobs
+                WHERE (status = 'queued' AND cancel_requested != 0)
+                   OR (status = 'running' AND cancel_requested != 0)
+                   OR (status = 'cancelled' AND cancel_requested != 1)
+                   OR (
+                     status IN ('completed', 'failed', 'interrupted', 'cancelled')
+                     AND (
+                       owner_pid IS NOT NULL
+                       OR owner_instance_id IS NOT NULL
+                       OR heartbeat_at IS NOT NULL
+                     )
+                   )
+            """,
+        }
+        for key, query in queries.items():
+            row = connection.execute(query).fetchone()
+            status[key] = int(row[0]) if row else 0
+    except sqlite3.Error:
+        status["check_errors"] += 1
+    return status
+
+
+def _text_sha256(text: str) -> str:
+    import hashlib
+
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def _safe_repository_call(
+    function: Any,
+    fallback: Any,
+    *,
+    check_name: str,
+    report: dict[str, Any],
+    issues: list[dict[str, str]],
+) -> Any:
+    try:
+        return function()
+    except StoredJSONError as exc:
+        _issue(
+            issues,
+            "error",
+            "stored_json_invalid",
+            f"Persisted JSON is invalid ({exc.code}).",
+        )
+        return fallback
+    except sqlite3.Error:
+        report["check_errors"] = int(report.get("check_errors", 0)) + 1
+        _issue(
+            issues,
+            "error",
+            "repository_check_failed",
+            f"Database validation check could not be completed: {check_name}.",
+        )
+        return fallback
+
+
 def _counts(repository: Repository) -> dict[str, int]:
     table_names = (
         "documents",
@@ -219,8 +1505,21 @@ def _counts(repository: Repository) -> dict[str, int]:
         "zotero_item_tags",
         "zotero_attachments",
         "zotero_document_links",
+        "zotero_sync_profiles",
+        "zotero_profile_items",
+        "zotero_sync_run_details",
+        "zotero_child_items",
+        "zotero_tombstones",
     )
-    return {table_name: repository.count_rows(table_name) for table_name in table_names}
+    counts = {
+        table_name: repository.count_rows(table_name) for table_name in table_names
+    }
+    for table_name in ("registered_sources", "jobs"):
+        row = repository.connection.execute(
+            f'SELECT COUNT(*) FROM "{table_name}"'
+        ).fetchone()
+        counts[table_name] = int(row[0]) if row else 0
+    return counts
 
 
 def _table_status(connection: sqlite3.Connection) -> dict[str, bool]:
@@ -246,12 +1545,103 @@ def _schema_version(connection: sqlite3.Connection) -> str | None:
 
 def _fts_status(connection: sqlite3.Connection) -> dict[str, Any]:
     try:
+        definition = connection.execute(
+            """
+            SELECT sql
+            FROM sqlite_schema
+            WHERE type = 'table' AND name = 'documents_fts'
+            """
+        ).fetchone()
+        declaration = str(definition["sql"] or "") if definition else ""
+        if "create virtual table" not in declaration.lower() or (
+            "using fts5" not in declaration.lower()
+        ):
+            return {
+                **_empty_fts_status(),
+                "error": "documents_fts is not an FTS5 virtual table",
+            }
+        connection.execute(
+            """
+            SELECT COUNT(*)
+            FROM documents_fts
+            WHERE documents_fts MATCH ?
+            """,
+            ("paper_galaxy_validation_probe",),
+        ).fetchone()
         row = connection.execute(
             "SELECT COUNT(*) AS count FROM documents_fts"
         ).fetchone()
-        return {"available": True, "row_count": int(row["count"]) if row else 0}
+        return {
+            "available": True,
+            "row_count": int(row["count"]) if row else 0,
+            "documents_without_fts": _scalar_query(
+                connection,
+                """
+                SELECT COUNT(*)
+                FROM documents d
+                LEFT JOIN documents_fts f ON f.document_id = d.id
+                WHERE f.document_id IS NULL
+                """,
+            ),
+            "fts_without_documents": _scalar_query(
+                connection,
+                """
+                SELECT COUNT(*)
+                FROM documents_fts f
+                LEFT JOIN documents d ON d.id = f.document_id
+                WHERE d.id IS NULL
+                """,
+            ),
+            "documents_without_chunks": _scalar_query(
+                connection,
+                """
+                SELECT COUNT(*)
+                FROM documents d
+                LEFT JOIN chunks c ON c.document_id = d.id
+                WHERE c.id IS NULL
+                """,
+            ),
+            "documents_without_texts": _scalar_query(
+                connection,
+                """
+                SELECT COUNT(*)
+                FROM documents d
+                LEFT JOIN document_texts dt ON dt.document_id = d.id
+                WHERE dt.document_id IS NULL
+                """,
+            ),
+            "content_mismatches": _scalar_query(
+                connection,
+                """
+                SELECT COUNT(*)
+                FROM documents d
+                JOIN document_texts dt ON dt.document_id = d.id
+                JOIN documents_fts f ON f.document_id = d.id
+                WHERE f.text != dt.text
+                   OR f.title != d.title
+                   OR f.relative_path != d.relative_path
+                """,
+            ),
+            "duplicate_document_ids": _scalar_query(
+                connection,
+                """
+                SELECT COUNT(*)
+                FROM (
+                  SELECT document_id
+                  FROM documents_fts
+                  GROUP BY document_id
+                  HAVING COUNT(*) > 1
+                )
+                """,
+            ),
+        }
     except sqlite3.Error as exc:
-        return {"available": False, "error": str(exc), "row_count": 0}
+        return {**_empty_fts_status(), "error": str(exc)}
+
+
+def _scalar_query(connection: sqlite3.Connection, query: str) -> int:
+    row = connection.execute(query).fetchone()
+    return int(row[0]) if row else 0
 
 
 def _map_run_status(connection: sqlite3.Connection) -> dict[str, Any]:

@@ -31,5 +31,9 @@ def test_validate_indexed_project_and_json_report(tmp_path: Path) -> None:
     assert report["database_exists"] is True
     assert report["counts"]["documents"] == 8
     assert report["tables"]["map_runs"] is True
+    assert report["tables"]["registered_sources"] is True
+    assert report["tables"]["jobs"] is True
+    assert report["counts"]["registered_sources"] == 0
+    assert report["counts"]["jobs"] == 0
     assert payload["counts"]["chunks"] >= 8
     assert "text_preview" not in output.read_text(encoding="utf-8")

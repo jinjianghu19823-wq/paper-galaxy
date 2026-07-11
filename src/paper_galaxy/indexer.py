@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import stat as stat_module
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
@@ -18,11 +21,23 @@ from paper_galaxy.records import (
     IndexedDocument,
     IndexRunSummary,
 )
-from paper_galaxy.storage.migrations import initialize_database
 from paper_galaxy.storage.repository import Repository
-from paper_galaxy.storage.sqlite import connect_database, resolve_database_path
+from paper_galaxy.storage.sqlite import (
+    connect_read_write,
+    ensure_database_ready,
+    resolve_database_path,
+)
 
 EXTRACTOR_VERSION = "4"
+CHUNKING_VERSION = "paper-galaxy-character-overlap-v1"
+
+
+class IndexingCancelled(RuntimeError):
+    """Raised between files when a durable indexing job is cancelled."""
+
+
+class IndexingSourceChanged(RuntimeError):
+    """Raised when a corpus root or discovered path changes during indexing."""
 
 
 def index_corpus(
@@ -39,22 +54,32 @@ def index_corpus(
     chunk_size: int = 2000,
     chunk_overlap: int = 200,
     verbose: bool = False,
+    cancel_requested: Callable[[], bool] | None = None,
+    commit_guard: Callable[[], None] | None = None,
+    progress_callback: Callable[[int, int, str], None] | None = None,
 ) -> IndexRunSummary:
     """Index a local corpus into the project's SQLite database."""
 
     del verbose
-    corpus_path = corpus_dir.expanduser().resolve()
+    lexical_corpus = corpus_dir.expanduser().absolute()
     resolved_project_dir = project_dir.expanduser().resolve()
     database_path = resolve_database_path(resolved_project_dir)
-    connection = connect_database(resolved_project_dir)
+    corpus_path, corpus_identity = _preflight_index_paths(
+        lexical_corpus,
+        resolved_project_dir,
+        database_path,
+    )
+    ensure_database_ready(resolved_project_dir)
+    _validate_corpus_root(corpus_path, corpus_identity)
+    connection = connect_read_write(resolved_project_dir)
     try:
-        initialize_database(connection)
         repository = Repository(connection, database_path)
         return _index_with_repository(
             repository,
             corpus_path=corpus_path,
             project_dir=resolved_project_dir,
             database_path=database_path,
+            corpus_identity=corpus_identity,
             min_chars=min_chars,
             include_pdf=include_pdf,
             include_images=include_images,
@@ -64,6 +89,9 @@ def index_corpus(
             force_reextract=force_reextract,
             chunk_size=chunk_size,
             chunk_overlap=chunk_overlap,
+            cancel_requested=cancel_requested,
+            commit_guard=commit_guard,
+            progress_callback=progress_callback,
         )
     finally:
         connection.close()
@@ -118,6 +146,7 @@ def _index_with_repository(
     corpus_path: Path,
     project_dir: Path,
     database_path: Path,
+    corpus_identity: os.stat_result,
     min_chars: int,
     include_pdf: bool,
     include_images: bool,
@@ -127,18 +156,21 @@ def _index_with_repository(
     force_reextract: bool,
     chunk_size: int,
     chunk_overlap: int,
+    cancel_requested: Callable[[], bool] | None,
+    commit_guard: Callable[[], None] | None,
+    progress_callback: Callable[[int, int, str], None] | None,
 ) -> IndexRunSummary:
     now = _utc_now()
     corpus_id = stable_corpus_id(corpus_path)
     scan_run_id = f"scan_{uuid4().hex[:16]}"
-    discovered_files = discover_files(
-        corpus_path, include_pdf=include_pdf, include_images=include_images
-    )
     extraction_fingerprint = _extraction_fingerprint(
         include_pdf=include_pdf,
         include_images=include_images,
         ocr=ocr,
         ocr_language=ocr_language,
+        min_chars=min_chars,
+        chunk_size=chunk_size,
+        chunk_overlap=chunk_overlap,
     )
     seen_document_ids: set[str] = set()
     report_payloads: list[dict[str, object]] = []
@@ -146,6 +178,7 @@ def _index_with_repository(
     documents_inserted = 0
     documents_updated = 0
     documents_unchanged = 0
+    documents_missing = 0
     skipped_files = 0
     chunks_written = 0
     extracted_count = 0
@@ -154,60 +187,168 @@ def _index_with_repository(
     scanned_pdf_candidates = 0
     image_files_seen = 0
     low_text_count = 0
+    discovered_files: list[Path] = []
 
+    _index_batch_boundary(
+        cancel_requested,
+        corpus_path=corpus_path,
+        corpus_identity=corpus_identity,
+    )
     with repository.connection:
         repository.upsert_corpus(corpus_id, str(corpus_path), now)
         repository.create_scan_run(scan_run_id, corpus_id, str(corpus_path), now)
 
-        for path in discovered_files:
+    try:
+        _raise_if_index_cancelled(cancel_requested)
+        discovered_files = discover_files(
+            corpus_path, include_pdf=include_pdf, include_images=include_images
+        )
+        _validate_corpus_root(corpus_path, corpus_identity)
+        total_files = len(discovered_files)
+        _raise_if_index_cancelled(cancel_requested)
+        for file_index, path in enumerate(discovered_files):
+            _index_batch_boundary(
+                cancel_requested,
+                corpus_path=corpus_path,
+                corpus_identity=corpus_identity,
+                path=path,
+            )
+            if progress_callback is not None:
+                progress_callback(
+                    file_index,
+                    total_files,
+                    f"Indexing local document {file_index + 1} of {total_files}.",
+                )
             rel_path = relative_path(path, corpus_path)
             document_id = stable_document_id(corpus_id, rel_path)
             file_type = path.suffix.lower().lstrip(".")
             if path.suffix.lower() in IMAGE_EXTENSIONS:
                 image_files_seen += 1
             existing = repository.get_document_by_relative_path(corpus_id, rel_path)
-            stat = path.stat()
-            digest = file_sha256(path)
-            latest_fingerprint = repository.latest_extraction_fingerprint(
-                corpus_id, rel_path
-            )
-            if (
-                existing is not None
-                and existing.sha256 == digest
-                and existing.status in {"active", "missing"}
-                and latest_fingerprint == extraction_fingerprint
-                and not force_reextract
-            ):
-                repository.touch_document(existing.id, now)
+            stat = None
+            digest = None
+            file_error: Exception | None = None
+            try:
+                path_identity = path.lstat()
+                stat = path.stat()
+                digest = file_sha256(path)
+                if not os.path.samestat(path_identity, path.lstat()):
+                    raise IndexingSourceChanged(
+                        "A corpus file changed identity while it was hashed."
+                    )
+            except Exception as exc:
+                file_error = exc
+
+            if file_error is None:
+                assert stat is not None and digest is not None
+                latest_fingerprint = repository.latest_extraction_fingerprint(
+                    corpus_id, rel_path
+                )
+                if (
+                    existing is not None
+                    and existing.sha256 == digest
+                    and existing.status in {"active", "missing"}
+                    and latest_fingerprint == extraction_fingerprint
+                    and not force_reextract
+                ):
+                    report = _build_extraction_report(
+                        scan_run_id=scan_run_id,
+                        document_id=existing.id,
+                        corpus_id=corpus_id,
+                        relative_path=rel_path,
+                        file_type=file_type,
+                        method="unchanged",
+                        status="extracted",
+                        char_count=existing.char_count,
+                        warnings=(),
+                        metadata={
+                            "unchanged": True,
+                            "extraction_fingerprint": extraction_fingerprint,
+                        },
+                        created_at=now,
+                    )
+                    _index_commit_boundary(
+                        commit_guard,
+                        corpus_path=corpus_path,
+                        corpus_identity=corpus_identity,
+                        path=path,
+                    )
+                    with repository.connection:
+                        repository.touch_document(existing.id, now)
+                        repository.record_extraction_report(report)
+                    report_payloads.append(_report_payload(report))
+                    seen_document_ids.add(existing.id)
+                    documents_unchanged += 1
+                    continue
+                try:
+                    extracted, skip_reason = extract_file(
+                        path,
+                        include_pdf=include_pdf,
+                        include_images=include_images,
+                        ocr=ocr,
+                        ocr_language=ocr_language,
+                    )
+                except Exception as exc:
+                    file_error = exc
+
+            if file_error is not None:
+                error_text = _safe_error_message(file_error)
                 report = _build_extraction_report(
                     scan_run_id=scan_run_id,
-                    document_id=existing.id,
+                    document_id=existing.id if existing is not None else None,
                     corpus_id=corpus_id,
                     relative_path=rel_path,
                     file_type=file_type,
-                    method="unchanged",
-                    status="extracted",
-                    char_count=existing.char_count,
-                    warnings=(),
+                    method="failed",
+                    status="failed",
+                    char_count=0,
+                    warnings=(error_text,),
                     metadata={
-                        "unchanged": True,
+                        "error_code": type(file_error).__name__,
                         "extraction_fingerprint": extraction_fingerprint,
                     },
                     created_at=now,
                 )
-                repository.record_extraction_report(report)
+                _index_commit_boundary(
+                    commit_guard,
+                    corpus_path=corpus_path,
+                    corpus_identity=corpus_identity,
+                    path=path,
+                )
+                with repository.connection:
+                    repository.record_extraction_report(report)
+                    repository.record_skipped_file(
+                        scan_run_id=scan_run_id,
+                        corpus_id=corpus_id,
+                        relative_path=rel_path,
+                        reason=error_text,
+                        created_at=now,
+                    )
+                    if existing is not None:
+                        repository.mark_document_unindexed(
+                            existing.id,
+                            path=str(path.resolve()),
+                            sha256=digest or existing.sha256,
+                            size_bytes=(
+                                stat.st_size
+                                if stat is not None
+                                else existing.size_bytes
+                            ),
+                            mtime_ns=(
+                                stat.st_mtime_ns
+                                if stat is not None
+                                else existing.mtime_ns
+                            ),
+                            now=now,
+                        )
                 report_payloads.append(_report_payload(report))
-                seen_document_ids.add(existing.id)
-                documents_unchanged += 1
+                if existing is not None:
+                    seen_document_ids.add(existing.id)
+                warning_count += 1
+                skipped_files += 1
                 continue
 
-            extracted, skip_reason = extract_file(
-                path,
-                include_pdf=include_pdf,
-                include_images=include_images,
-                ocr=ocr,
-                ocr_language=ocr_language,
-            )
+            assert stat is not None and digest is not None
             if skip_reason is not None or extracted is None:
                 status = _skip_status(path, skip_reason or "unknown")
                 report = _build_extraction_report(
@@ -226,25 +367,33 @@ def _index_with_repository(
                     },
                     created_at=now,
                 )
-                repository.record_extraction_report(report)
+                _index_commit_boundary(
+                    commit_guard,
+                    corpus_path=corpus_path,
+                    corpus_identity=corpus_identity,
+                    path=path,
+                )
+                with repository.connection:
+                    repository.record_extraction_report(report)
+                    repository.record_skipped_file(
+                        scan_run_id=scan_run_id,
+                        corpus_id=corpus_id,
+                        relative_path=rel_path,
+                        reason=skip_reason or "unknown",
+                        created_at=now,
+                    )
+                    if existing is not None:
+                        repository.mark_document_unindexed(
+                            existing.id,
+                            path=str(path.resolve()),
+                            sha256=digest,
+                            size_bytes=stat.st_size,
+                            mtime_ns=stat.st_mtime_ns,
+                            now=now,
+                        )
                 report_payloads.append(_report_payload(report))
                 warning_count += 1
-                repository.record_skipped_file(
-                    scan_run_id=scan_run_id,
-                    corpus_id=corpus_id,
-                    relative_path=rel_path,
-                    reason=skip_reason or "unknown",
-                    created_at=now,
-                )
                 if existing is not None:
-                    repository.mark_document_unindexed(
-                        existing.id,
-                        path=str(path.resolve()),
-                        sha256=digest,
-                        size_bytes=stat.st_size,
-                        mtime_ns=stat.st_mtime_ns,
-                        now=now,
-                    )
                     seen_document_ids.add(existing.id)
                 skipped_files += 1
                 continue
@@ -268,28 +417,36 @@ def _index_with_repository(
                     extra_metadata={"skipped_reason": reason},
                     extra_warnings=(reason,),
                 )
-                repository.record_extraction_report(report)
+                _index_commit_boundary(
+                    commit_guard,
+                    corpus_path=corpus_path,
+                    corpus_identity=corpus_identity,
+                    path=path,
+                )
+                with repository.connection:
+                    repository.record_extraction_report(report)
+                    repository.record_skipped_file(
+                        scan_run_id=scan_run_id,
+                        corpus_id=corpus_id,
+                        relative_path=rel_path,
+                        reason=reason,
+                        created_at=now,
+                    )
+                    if existing is not None:
+                        repository.mark_document_unindexed(
+                            existing.id,
+                            path=str(path.resolve()),
+                            sha256=digest,
+                            size_bytes=stat.st_size,
+                            mtime_ns=stat.st_mtime_ns,
+                            now=now,
+                        )
                 report_payloads.append(_report_payload(report))
                 low_text_count += 1
                 warning_count += len(report.warnings)
                 if _is_scanned_pdf_candidate(extracted):
                     scanned_pdf_candidates += 1
-                repository.record_skipped_file(
-                    scan_run_id=scan_run_id,
-                    corpus_id=corpus_id,
-                    relative_path=rel_path,
-                    reason=reason,
-                    created_at=now,
-                )
                 if existing is not None:
-                    repository.mark_document_unindexed(
-                        existing.id,
-                        path=str(path.resolve()),
-                        sha256=digest,
-                        size_bytes=stat.st_size,
-                        mtime_ns=stat.st_mtime_ns,
-                        now=now,
-                    )
                     seen_document_ids.add(existing.id)
                 skipped_files += 1
                 continue
@@ -327,7 +484,6 @@ def _index_with_repository(
                     )
                 )
             ]
-            repository.upsert_document(document, extracted.text, chunks)
             report = _report_for_content(
                 extracted,
                 scan_run_id=scan_run_id,
@@ -339,7 +495,15 @@ def _index_with_repository(
                 extraction_fingerprint=extraction_fingerprint,
                 created_at=now,
             )
-            repository.record_extraction_report(report)
+            _index_commit_boundary(
+                commit_guard,
+                corpus_path=corpus_path,
+                corpus_identity=corpus_identity,
+                path=path,
+            )
+            with repository.connection:
+                repository.upsert_document(document, extracted.text, chunks)
+                repository.record_extraction_report(report)
             report_payloads.append(_report_payload(report))
             seen_document_ids.add(document_id)
             chunks_written += len(chunks)
@@ -354,10 +518,16 @@ def _index_with_repository(
             else:
                 documents_updated += 1
 
-        finished_at = _utc_now()
-        documents_missing = repository.mark_missing_documents(
-            corpus_id, seen_document_ids, finished_at
+        _index_batch_boundary(
+            cancel_requested,
+            corpus_path=corpus_path,
+            corpus_identity=corpus_identity,
         )
+        finished_at = _utc_now()
+        with repository.connection:
+            documents_missing = repository.mark_missing_documents(
+                corpus_id, seen_document_ids, finished_at
+            )
         summary = IndexRunSummary(
             scan_run_id=scan_run_id,
             corpus_id=corpus_id,
@@ -383,26 +553,170 @@ def _index_with_repository(
                 else None
             ),
         )
-        repository.finish_scan_run(
-            scan_run_id,
-            finished_at=finished_at,
-            files_found=summary.files_found,
-            documents_inserted=documents_inserted,
-            documents_updated=documents_updated,
-            documents_unchanged=documents_unchanged,
-            documents_missing=documents_missing,
-            skipped_files=skipped_files,
-            chunks_written=chunks_written,
+        if extraction_report_json is not None:
+            _write_extraction_report_json(
+                extraction_report_json.expanduser().resolve(),
+                scan_run_id=scan_run_id,
+                corpus_path=corpus_path,
+                summary=summary,
+                files=report_payloads,
+            )
+        with repository.connection:
+            repository.finish_scan_run(
+                scan_run_id,
+                finished_at=finished_at,
+                files_found=len(discovered_files),
+                documents_inserted=documents_inserted,
+                documents_updated=documents_updated,
+                documents_unchanged=documents_unchanged,
+                documents_missing=documents_missing,
+                skipped_files=skipped_files,
+                chunks_written=chunks_written,
+            )
+    except BaseException as exc:
+        finished_at = _utc_now()
+        status = (
+            "interrupted"
+            if isinstance(exc, (KeyboardInterrupt, IndexingCancelled))
+            else "failed"
         )
-    if extraction_report_json is not None:
-        _write_extraction_report_json(
-            extraction_report_json.expanduser().resolve(),
-            scan_run_id=scan_run_id,
-            corpus_path=corpus_path,
-            summary=summary,
-            files=report_payloads,
-        )
+        with repository.connection:
+            repository.finish_scan_run(
+                scan_run_id,
+                finished_at=finished_at,
+                files_found=len(discovered_files),
+                documents_inserted=documents_inserted,
+                documents_updated=documents_updated,
+                documents_unchanged=documents_unchanged,
+                documents_missing=documents_missing,
+                skipped_files=skipped_files,
+                chunks_written=chunks_written,
+                status=status,
+                error_code=type(exc).__name__,
+                error_message=_safe_error_message(exc),
+            )
+        raise
     return summary
+
+
+def _preflight_index_paths(
+    corpus_path: Path,
+    project_dir: Path,
+    database_path: Path,
+) -> tuple[Path, os.stat_result]:
+    """Validate source/project separation before any database is created."""
+
+    if corpus_path.is_symlink():
+        raise ValueError("Corpus source root must not be a symbolic link.")
+    try:
+        identity = corpus_path.lstat()
+        resolved_corpus = corpus_path.resolve(strict=True)
+    except OSError as exc:
+        raise ValueError("Corpus source must be an existing local directory.") from exc
+    if not stat_module.S_ISDIR(identity.st_mode):
+        raise ValueError("Corpus source must be an existing local directory.")
+    if corpus_path != resolved_corpus:
+        raise ValueError("Corpus source path must not contain symbolic links.")
+    metadata = project_dir / ".paper-galaxy"
+    mutable_roots = (
+        project_dir,
+        metadata,
+        metadata / "backups",
+        database_path,
+    )
+    source_is_metadata = resolved_corpus == metadata or resolved_corpus.is_relative_to(
+        metadata
+    )
+    if source_is_metadata or any(
+        root == resolved_corpus or root.is_relative_to(resolved_corpus)
+        for root in mutable_roots
+    ):
+        raise ValueError(
+            "Paper Galaxy project metadata or database cannot be stored inside "
+            "the indexed corpus. Choose a separate project directory."
+        )
+    return resolved_corpus, identity
+
+
+def _validate_corpus_root(
+    corpus_path: Path,
+    expected_identity: os.stat_result,
+) -> None:
+    try:
+        current = corpus_path.lstat()
+        resolved = corpus_path.resolve(strict=True)
+    except OSError as exc:
+        raise IndexingSourceChanged(
+            "The registered corpus root disappeared during indexing."
+        ) from exc
+    if (
+        corpus_path.is_symlink()
+        or not stat_module.S_ISDIR(current.st_mode)
+        or corpus_path != resolved
+        or not os.path.samestat(expected_identity, current)
+    ):
+        raise IndexingSourceChanged(
+            "The registered corpus root changed during indexing; no further "
+            "documents were committed."
+        )
+
+
+def _validate_discovered_path(path: Path, corpus_path: Path) -> None:
+    try:
+        metadata = path.lstat()
+        resolved = path.resolve(strict=True)
+    except OSError as exc:
+        raise IndexingSourceChanged(
+            "A discovered corpus file disappeared during indexing."
+        ) from exc
+    if (
+        path.is_symlink()
+        or not stat_module.S_ISREG(metadata.st_mode)
+        or path != resolved
+        or not resolved.is_relative_to(corpus_path)
+    ):
+        raise IndexingSourceChanged(
+            "A discovered corpus path changed or escaped its registered root."
+        )
+
+
+def _index_batch_boundary(
+    cancel_requested: Callable[[], bool] | None,
+    *,
+    corpus_path: Path,
+    corpus_identity: os.stat_result,
+    path: Path | None = None,
+) -> None:
+    _raise_if_index_cancelled(cancel_requested)
+    _validate_corpus_root(corpus_path, corpus_identity)
+    if path is not None:
+        _validate_discovered_path(path, corpus_path)
+
+
+def _index_commit_boundary(
+    commit_guard: Callable[[], None] | None,
+    *,
+    corpus_path: Path,
+    corpus_identity: os.stat_result,
+    path: Path | None = None,
+) -> None:
+    if commit_guard is not None:
+        commit_guard()
+    _validate_corpus_root(corpus_path, corpus_identity)
+    if path is not None:
+        _validate_discovered_path(path, corpus_path)
+
+
+def _raise_if_index_cancelled(
+    cancel_requested: Callable[[], bool] | None,
+) -> None:
+    if cancel_requested is not None and cancel_requested():
+        raise IndexingCancelled("Indexing cancelled at a document boundary.")
+
+
+def _safe_error_message(error: BaseException, *, limit: int = 500) -> str:
+    text = " ".join(str(error).split()) or type(error).__name__
+    return text[:limit]
 
 
 def _utc_now() -> str:
@@ -410,7 +724,14 @@ def _utc_now() -> str:
 
 
 def _extraction_fingerprint(
-    *, include_pdf: bool, include_images: bool, ocr: bool, ocr_language: str
+    *,
+    include_pdf: bool,
+    include_images: bool,
+    ocr: bool,
+    ocr_language: str,
+    min_chars: int,
+    chunk_size: int,
+    chunk_overlap: int,
 ) -> str:
     payload = {
         "extractor_version": EXTRACTOR_VERSION,
@@ -418,6 +739,10 @@ def _extraction_fingerprint(
         "include_images": include_images,
         "ocr": ocr,
         "ocr_language": ocr_language,
+        "min_chars": min_chars,
+        "chunking_version": CHUNKING_VERSION,
+        "chunk_size": chunk_size,
+        "chunk_overlap": chunk_overlap,
     }
     digest = hashlib.sha256(
         json.dumps(payload, sort_keys=True).encode("utf-8")

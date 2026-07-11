@@ -11,16 +11,21 @@ from rich.table import Table
 
 from paper_galaxy import __version__
 from paper_galaxy.backup import export_project, import_project
-from paper_galaxy.embeddings.builder import build_embeddings
+from paper_galaxy.embeddings.builder import MAX_EMBEDDING_BATCH_SIZE, build_embeddings
+from paper_galaxy.embeddings.maintenance import prune_stale_vectors
 from paper_galaxy.embeddings.models import NeighborResult
 from paper_galaxy.embeddings.search import (
     NoVectorsFoundError,
     semantic_search,
     vector_stats,
 )
-from paper_galaxy.embeddings.sentence_transformers import ModelDownloadDisabledError
+from paper_galaxy.embeddings.sentence_transformers import (
+    ModelDownloadDisabledError,
+    ModelFingerprintError,
+)
 from paper_galaxy.embeddings.similarity import compare_neighbors
 from paper_galaxy.errors import (
+    DatabaseError,
     DatabaseNotFoundError,
     FTSUnavailableError,
     MissingDependencyError,
@@ -39,9 +44,14 @@ from paper_galaxy.paths import project_config_path
 from paper_galaxy.pipeline import build_galaxy
 from paper_galaxy.plugins import get_plugin_registry
 from paper_galaxy.search import get_database_stats, search_index
-from paper_galaxy.storage.migrations import initialize_database
+from paper_galaxy.services.worker_lease import JobWorkerLeaseError
 from paper_galaxy.storage.repository import Repository
-from paper_galaxy.storage.sqlite import connect_database, resolve_database_path
+from paper_galaxy.storage.sqlite import (
+    connect_read_only,
+    connect_read_write,
+    ensure_database_ready,
+    resolve_database_path,
+)
 from paper_galaxy.validation import (
     validate_project,
     validation_exit_code,
@@ -86,7 +96,6 @@ OPTIONAL_MODULES: tuple[tuple[str, str], ...] = (
     ("sklearn", "sklearn"),
     ("umap", "umap"),
     ("sentence_transformers", "sentence_transformers"),
-    ("faiss", "faiss"),
     ("fastapi", "fastapi"),
     ("uvicorn", "uvicorn"),
     ("plotly", "plotly"),
@@ -148,7 +157,7 @@ def init_project(
         typer.Option(
             "--force",
             "-f",
-            help="Overwrite an existing .paper-galaxy/project.toml.",
+            help="Deprecated compatibility flag; existing config is preserved.",
         ),
     ] = False,
 ) -> None:
@@ -158,16 +167,22 @@ def init_project(
     target_dir = project_dir.expanduser().resolve()
     config_path = project_config_path(target_dir)
 
-    if config_path.exists() and not force:
+    if config_path.exists():
         console.print(
-            f"Project metadata already exists at {config_path}. "
-            "Use --force to overwrite."
+            f"Project metadata already exists at {config_path}; existing bytes "
+            "were preserved."
         )
         return
 
-    config_path.parent.mkdir(parents=True, exist_ok=True)
-    config_path.write_text(_default_project_toml(target_dir), encoding="utf-8")
-    console.print(f"Created project metadata at {config_path}.")
+    del force
+    try:
+        from paper_galaxy.projects import open_or_initialize_project
+
+        opened = open_or_initialize_project(target_dir, initialize_database=False)
+    except (DatabaseError, OSError, ValueError) as exc:
+        console.print(f"Project initialization failed safely: {exc}")
+        raise typer.Exit(1) from None
+    console.print(f"Created project metadata at {opened.config_path}.")
 
 
 def _module_is_importable(module_name: str) -> bool:
@@ -411,6 +426,15 @@ def index_command(
     except FTSUnavailableError as exc:
         console.print(str(exc))
         raise typer.Exit(1) from exc
+    try:
+        from paper_galaxy.services.sources import register_corpus_source
+
+        register_corpus_source(resolved_project_dir, corpus_path)
+    except ValueError as exc:
+        console.print(
+            "Index completed, but the corpus was not added to the source registry: "
+            f"{exc}"
+        )
 
     table = Table(title="Paper Galaxy Index Summary")
     table.add_column("Metric", style="bold")
@@ -680,8 +704,8 @@ def embed_command(
     if object_type not in {"document", "chunk", "both"}:
         console.print("--object-type must be document, chunk, or both.")
         raise typer.Exit(1)
-    if batch_size <= 0:
-        console.print("--batch-size must be positive.")
+    if not 1 <= batch_size <= MAX_EMBEDDING_BATCH_SIZE:
+        console.print(f"--batch-size must be between 1 and {MAX_EMBEDDING_BATCH_SIZE}.")
         raise typer.Exit(1)
     try:
         summary = build_embeddings(
@@ -696,7 +720,7 @@ def embed_command(
             max_chunk_chars=max_chunk_chars,
             normalize=normalize,
         )
-    except ModelDownloadDisabledError as exc:
+    except (ModelDownloadDisabledError, ModelFingerprintError, ValueError) as exc:
         console.print(str(exc), markup=False)
         raise typer.Exit(1) from exc
     except MissingDependencyError as exc:
@@ -717,6 +741,7 @@ def embed_command(
     table.add_row("Chunks seen", str(summary.chunks_seen))
     table.add_row("Chunks embedded", str(summary.chunks_embedded))
     table.add_row("Chunks unchanged", str(summary.chunks_unchanged))
+    table.add_row("Sources changed during inference", str(summary.sources_changed))
     table.add_row("Errors", str(summary.errors))
     console.print(table)
 
@@ -797,7 +822,7 @@ def semantic_search_command(
             include_missing=include_missing,
             normalize=normalize,
         )
-    except ModelDownloadDisabledError as exc:
+    except (ModelDownloadDisabledError, ModelFingerprintError, ValueError) as exc:
         console.print(str(exc), markup=False)
         raise typer.Exit(1) from exc
     except MissingDependencyError as exc:
@@ -893,7 +918,7 @@ def compare_neighbors_command(
             tfidf_weight=tfidf_weight,
             normalize=normalize,
         )
-    except ModelDownloadDisabledError as exc:
+    except (ModelDownloadDisabledError, ModelFingerprintError) as exc:
         console.print(str(exc), markup=False)
         raise typer.Exit(1) from exc
     except MissingDependencyError as exc:
@@ -963,6 +988,61 @@ def vector_stats_command(
                 str(row["last_vector_at"]),
             )
     get_console().print(counts_table)
+
+
+@app.command("prune-stale-vectors")
+def prune_stale_vectors_command(
+    project_dir: Annotated[
+        Path,
+        typer.Option(
+            "--project-dir", help="Project directory containing .paper-galaxy."
+        ),
+    ] = Path("."),
+    dry_run: Annotated[
+        bool,
+        typer.Option(
+            "--dry-run/--apply",
+            help="Report stale vectors, or explicitly apply the bounded prune.",
+        ),
+    ] = True,
+    yes: Annotated[
+        bool,
+        typer.Option(
+            "--yes",
+            "-y",
+            help="Required confirmation when --apply is selected.",
+        ),
+    ] = False,
+) -> None:
+    """Report or prune only vector rows that cannot be proven current."""
+
+    try:
+        report = prune_stale_vectors(
+            project_dir.expanduser().resolve(),
+            dry_run=dry_run,
+            yes=yes,
+        )
+    except (DatabaseError, ValueError) as exc:
+        get_console().print(str(exc), markup=False)
+        raise typer.Exit(1) from exc
+
+    table = Table(title="Paper Galaxy Vector Maintenance")
+    table.add_column("Metric", style="bold")
+    table.add_column("Value", overflow="fold")
+    table.add_row("Mode", "dry-run" if report.dry_run else "applied")
+    table.add_row("Vectors scanned", str(report.vectors_scanned))
+    table.add_row("Stale vectors", str(report.stale_vectors))
+    table.add_row("Vectors deleted", str(report.vectors_deleted))
+    table.add_row("Stale index metadata", str(report.stale_index_metadata))
+    table.add_row("Index metadata deleted", str(report.index_metadata_deleted))
+    for reason, count in report.reasons.items():
+        table.add_row(f"Reason: {reason}", str(count))
+    get_console().print(table)
+    if report.dry_run and report.stale_vectors:
+        get_console().print(
+            "No rows were changed. Re-run with --apply --yes after reviewing "
+            "this report."
+        )
 
 
 @app.command("clusters")
@@ -1056,7 +1136,7 @@ def rename_cluster_command(
     except ValueError as exc:
         console.print(str(exc))
         raise typer.Exit(1) from exc
-    repository = _open_repository(project_dir.expanduser().resolve())
+    repository = _open_repository(project_dir.expanduser().resolve(), write=True)
     try:
         with repository.connection:
             repository.upsert_cluster_label_override(
@@ -1083,7 +1163,7 @@ def reset_cluster_label_command(
 ) -> None:
     """Remove a local manual label override for a cluster."""
 
-    repository = _open_repository(project_dir.expanduser().resolve())
+    repository = _open_repository(project_dir.expanduser().resolve(), write=True)
     try:
         with repository.connection:
             deleted = repository.delete_cluster_label_override(cluster_signature)
@@ -1309,7 +1389,7 @@ def delete_map_run_command(
     if not yes and not typer.confirm(f"Delete saved map run {run_id}?"):
         get_console().print("Cancelled.")
         return
-    repository = _open_repository(project_dir.expanduser().resolve())
+    repository = _open_repository(project_dir.expanduser().resolve(), write=True)
     try:
         with repository.connection:
             deleted = repository.delete_map_run(run_id)
@@ -1379,14 +1459,14 @@ def export_project_command(
 
     try:
         result = export_project(
-            project_dir=project_dir.expanduser().resolve(),
+            project_dir=project_dir.expanduser(),
             output_path=out,
             include_db=include_db,
             include_vector_indexes=include_vector_indexes,
             include_source_files=include_source_files,
             yes=yes,
         )
-    except (PermissionError, ValueError) as exc:
+    except (OSError, DatabaseError, PermissionError, ValueError) as exc:
         get_console().print(str(exc))
         raise typer.Exit(1) from exc
     get_console().print(f"Wrote project backup to {result['output_path']}.")
@@ -1407,25 +1487,17 @@ def import_project_command(
         bool,
         typer.Option("--dry-run", help="Inspect planned writes without importing."),
     ] = False,
-    validate_checksums: Annotated[
-        bool,
-        typer.Option(
-            "--validate-checksums/--no-validate-checksums",
-            help="Validate bundle checksums before import.",
-        ),
-    ] = True,
 ) -> None:
     """Import a local project backup into a target project directory."""
 
     try:
         result = import_project(
             backup_path=backup,
-            project_dir=project_dir.expanduser().resolve(),
+            project_dir=project_dir.expanduser(),
             force=force,
             dry_run=dry_run,
-            validate_checksums=validate_checksums,
         )
-    except (FileNotFoundError, FileExistsError, ValueError) as exc:
+    except (DatabaseError, OSError, ValueError) as exc:
         get_console().print(str(exc))
         raise typer.Exit(1) from exc
     action = "Would write" if dry_run else "Imported"
@@ -1903,8 +1975,33 @@ def zotero_import_command(
     to_read_tag: Annotated[list[str] | None, typer.Option("--to-read-tag")] = None,
     include_status: Annotated[str, typer.Option("--include-status")] = "all",
     limit: Annotated[int | None, typer.Option("--limit")] = None,
-    since_version: Annotated[int | None, typer.Option("--since-version")] = None,
-    force: Annotated[bool, typer.Option("--force")] = False,
+    since_version: Annotated[
+        int | None,
+        typer.Option(
+            "--since-version",
+            help=(
+                "Expert recovery check: must exactly match this profile's saved "
+                "cursor. Normal sync resumes automatically."
+            ),
+        ),
+    ] = None,
+    full: Annotated[
+        bool,
+        typer.Option(
+            "--full",
+            help="Ignore this profile's cursor and perform an explicit full sync.",
+        ),
+    ] = False,
+    force: Annotated[
+        bool,
+        typer.Option(
+            "--force",
+            help=(
+                "Rematerialize records returned by the changed feed. Combine with "
+                "--full to rematerialize the complete profile."
+            ),
+        ),
+    ] = False,
     dry_run: Annotated[bool, typer.Option("--dry-run")] = False,
     build_reading_map: Annotated[
         bool,
@@ -1940,6 +2037,7 @@ def zotero_import_command(
             include_status=include_status,
             limit=limit,
             since_version=since_version,
+            full=full,
             force=force,
             dry_run=dry_run,
             build_reading_map=build_reading_map,
@@ -1947,7 +2045,25 @@ def zotero_import_command(
             min_chars=min_chars,
             verbose=verbose,
         )
-    except (ZoteroAPIError, ZoteroFilterError) as exc:
+        if not dry_run:
+            from paper_galaxy.services.sources import register_zotero_source
+
+            profile_filters: dict[str, object] = {
+                "include_status": summary.include_status,
+                "pdf_policy": pdf_policy,
+            }
+            if collection:
+                profile_filters["collections"] = [collection]
+            if tag:
+                profile_filters["tags"] = list(tag)
+            if item_type:
+                profile_filters["item_types"] = list(item_type)
+            register_zotero_source(
+                project_dir,
+                summary.source_id,
+                filters=profile_filters,
+            )
+    except (ValueError, ZoteroAPIError, ZoteroFilterError) as exc:
         console.print(str(exc))
         raise typer.Exit(1) from exc
     payload = _zotero_import_summary_payload(summary)
@@ -2176,6 +2292,14 @@ def serve_command(
     """Serve the local Phase 3 browser app."""
 
     console = get_console()
+    from paper_galaxy.web.server import _is_loopback_host
+
+    if not _is_loopback_host(host):
+        console.print(
+            "Paper Galaxy only binds to a loopback host by default. Use "
+            "127.0.0.1 or ::1."
+        )
+        raise typer.Exit(1)
     try:
         from paper_galaxy.web.server import serve_app
 
@@ -2190,6 +2314,9 @@ def serve_command(
             neighbors=neighbors,
             map_limit=limit,
         )
+    except (JobWorkerLeaseError, OSError, ValueError) as exc:
+        console.print(f"Paper Galaxy could not start safely: {exc}")
+        raise typer.Exit(1) from None
     except MissingDependencyError as exc:
         del exc
         console.print(
@@ -2198,6 +2325,136 @@ def serve_command(
             markup=False,
         )
         raise typer.Exit(1) from None
+
+
+@app.command("launch")
+def launch_command(
+    project_dir: Annotated[
+        Path,
+        typer.Option(
+            "--project-dir",
+            help="Project directory to create or open safely.",
+        ),
+    ] = Path("."),
+    corpus: Annotated[
+        list[Path] | None,
+        typer.Option(
+            "--corpus",
+            help="Existing local corpus directory to register read-only; repeatable.",
+        ),
+    ] = None,
+    zotero_sync: Annotated[
+        bool,
+        typer.Option(
+            "--zotero-sync/--no-zotero-sync",
+            help="Queue sync for already registered read-only Zotero profiles.",
+        ),
+    ] = False,
+    open_browser: Annotated[
+        bool,
+        typer.Option(
+            "--open/--no-open",
+            help="Open the loopback workspace in the default browser.",
+        ),
+    ] = True,
+    port: Annotated[
+        int,
+        typer.Option(
+            "--port",
+            help="Preferred loopback port; an occupied port falls back safely.",
+        ),
+    ] = 8765,
+    seed: Annotated[
+        int,
+        typer.Option("--seed", help="Random seed for deterministic local analysis."),
+    ] = 42,
+    neighbors: Annotated[
+        int,
+        typer.Option("--neighbors", help="Nearest neighbors per map document."),
+    ] = 5,
+    limit: Annotated[
+        int,
+        typer.Option("--limit", help="Maximum active documents in the live map."),
+    ] = 1000,
+) -> None:
+    """Create or open a project and start the local research workstation."""
+
+    console = get_console()
+    option_error = _launch_option_error(
+        port=port,
+        seed=seed,
+        neighbors=neighbors,
+        limit=limit,
+    )
+    if option_error is not None:
+        console.print(f"Launch could not start safely: {option_error}")
+        raise typer.Exit(1)
+    lexical_project = project_dir.expanduser().absolute()
+    try:
+        from paper_galaxy.services.jobs import JobManager
+        from paper_galaxy.services.launch import prepare_launch
+        from paper_galaxy.web.server import serve_app
+
+        preparation = prepare_launch(
+            project_dir=lexical_project,
+            corpus_dirs=list(corpus or []),
+            zotero_sync=zotero_sync,
+            queue_analysis=True,
+            analysis_seed=seed,
+            analysis_neighbors=neighbors,
+            analysis_limit=limit,
+        )
+        console.print(
+            f"Prepared {len(preparation.source_ids)} source(s) and queued "
+            f"{len(preparation.job_ids)} job(s)."
+        )
+        manager = JobManager(preparation.project_dir)
+        try:
+            serve_app(
+                project_dir=preparation.project_dir,
+                host="127.0.0.1",
+                port=port,
+                reload=False,
+                open_browser=open_browser,
+                seed=seed,
+                clusters=None,
+                neighbors=neighbors,
+                map_limit=limit,
+                fallback_to_free_port=True,
+                job_manager=manager,
+            )
+        except KeyboardInterrupt:
+            console.print("Paper Galaxy stopped cleanly.")
+            return
+    except MissingDependencyError:
+        console.print(
+            "Missing local workstation dependencies. Install with: "
+            'python -m pip install "paper-galaxy[full]"',
+            markup=False,
+        )
+        raise typer.Exit(1) from None
+    except (DatabaseError, JobWorkerLeaseError, OSError, ValueError) as exc:
+        console.print(f"Launch could not start safely: {exc}")
+        console.print("Verify the project/source paths and retry with --no-open.")
+        raise typer.Exit(1) from None
+
+
+def _launch_option_error(
+    *,
+    port: int,
+    seed: int,
+    neighbors: int,
+    limit: int,
+) -> str | None:
+    if not 0 <= port <= 65535:
+        return "--port must be between 0 and 65535."
+    if not 0 <= seed <= 2**31 - 1:
+        return "--seed must be between 0 and 2147483647."
+    if not 1 <= neighbors <= 50:
+        return "--neighbors must be between 1 and 50."
+    if not 1 <= limit <= 2_000:
+        return "--limit must be between 1 and 2000."
+    return None
 
 
 def _print_zotero_doctor(
@@ -2298,6 +2555,13 @@ def _zotero_import_summary_payload(
         "warnings": list(summary.warnings),
         "reading_status_counts": dict(summary.reading_status_counts),
         "map_run_id": summary.map_run_id,
+        "profile_id": summary.profile_id,
+        "profile_signature": summary.profile_signature,
+        "full_sync": bool(summary.full_sync),
+        "changed_parents": int(summary.changed_parents),
+        "changed_children": int(summary.changed_children),
+        "deleted_records": int(summary.deleted_records),
+        "duration_seconds": float(summary.duration_seconds),
     }
 
 
@@ -2343,25 +2607,10 @@ def _object_list(value: object) -> list[object]:
     return value if isinstance(value, list) else []
 
 
-def _open_repository(project_dir: Path) -> Repository:
-    connection = connect_database(project_dir)
-    initialize_database(connection)
+def _open_repository(project_dir: Path, *, write: bool = False) -> Repository:
+    if write:
+        ensure_database_ready(project_dir)
+        connection = connect_read_write(project_dir)
+    else:
+        connection = connect_read_only(project_dir)
     return Repository(connection, resolve_database_path(project_dir))
-
-
-def _default_project_toml(project_dir: Path) -> str:
-    project_name = _escape_toml_string(project_dir.name or "Paper Galaxy Project")
-    return "\n".join(
-        [
-            f'project_name = "{project_name}"',
-            f'created_by = "paper-galaxy {__version__}"',
-            "map_seed = 42",
-            "corpus_dirs = []",
-            'database_path = ".paper-galaxy/paper_galaxy.sqlite3"',
-            "",
-        ]
-    )
-
-
-def _escape_toml_string(value: str) -> str:
-    return value.replace("\\", "\\\\").replace('"', '\\"')

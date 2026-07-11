@@ -308,6 +308,215 @@ def test_serve_reports_missing_app_dependency(monkeypatch: object) -> None:
     assert 'python -m pip install -e ".[dev,ml,pdf,app]"' in result.output
 
 
+def test_serve_reports_active_worker_without_traceback(monkeypatch: object) -> None:
+    from paper_galaxy.services.worker_lease import JobWorkerLeaseError
+
+    runner = CliRunner()
+
+    def raise_active_worker(**kwargs: object) -> None:
+        del kwargs
+        raise JobWorkerLeaseError("synthetic worker is already active")
+
+    monkeypatch.setattr(
+        "paper_galaxy.web.server.serve_app",
+        raise_active_worker,
+    )
+
+    result = runner.invoke(app, ["serve"])
+
+    assert result.exit_code == 1
+    assert "could not start safely" in result.output
+    assert "worker is already active" in result.output
+    assert "Traceback" not in result.output
+
+
+def test_launch_prepares_jobs_and_starts_loopback_server(
+    monkeypatch: object, tmp_path: Path
+) -> None:
+    from paper_galaxy.services.launch import LaunchPreparation
+
+    runner = CliRunner()
+    corpus = tmp_path / "corpus"
+    corpus.mkdir()
+    calls: dict[str, object] = {}
+
+    def fake_prepare_launch(**kwargs: object) -> LaunchPreparation:
+        calls["prepare"] = kwargs
+        return LaunchPreparation(
+            project_dir=tmp_path.resolve(),
+            project_created=True,
+            source_ids=("source_1",),
+            job_ids=("job_1", "job_2"),
+        )
+
+    class FakeManager:
+        def __init__(self, project_dir: Path) -> None:
+            calls["manager_project"] = project_dir
+
+    def fake_serve_app(**kwargs: object) -> None:
+        calls["serve"] = kwargs
+
+    monkeypatch.setattr(
+        "paper_galaxy.services.launch.prepare_launch", fake_prepare_launch
+    )
+    monkeypatch.setattr("paper_galaxy.services.jobs.JobManager", FakeManager)
+    monkeypatch.setattr("paper_galaxy.web.server.serve_app", fake_serve_app)
+
+    result = runner.invoke(
+        app,
+        [
+            "launch",
+            "--project-dir",
+            str(tmp_path),
+            "--corpus",
+            str(corpus),
+            "--zotero-sync",
+            "--no-open",
+            "--port",
+            "9876",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert calls["prepare"] == {
+        "project_dir": tmp_path.resolve(),
+        "corpus_dirs": [corpus],
+        "zotero_sync": True,
+        "queue_analysis": True,
+        "analysis_seed": 42,
+        "analysis_neighbors": 5,
+        "analysis_limit": 1000,
+    }
+    assert calls["manager_project"] == tmp_path.resolve()
+    serve = calls["serve"]
+    assert isinstance(serve, dict)
+    assert serve["host"] == "127.0.0.1"
+    assert serve["port"] == 9876
+    assert serve["fallback_to_free_port"] is True
+    assert serve["open_browser"] is False
+    assert serve["job_manager"].__class__ is FakeManager
+    assert "Prepared 1 source(s) and queued 2 job(s)." in result.output
+
+
+def test_launch_treats_keyboard_interrupt_as_clean_shutdown(
+    monkeypatch: object,
+    tmp_path: Path,
+) -> None:
+    from paper_galaxy.services.launch import LaunchPreparation
+
+    runner = CliRunner()
+
+    def fake_prepare_launch(**kwargs: object) -> LaunchPreparation:
+        del kwargs
+        return LaunchPreparation(
+            project_dir=tmp_path.resolve(),
+            project_created=True,
+            source_ids=(),
+            job_ids=(),
+        )
+
+    class FakeManager:
+        def __init__(self, project_dir: Path) -> None:
+            del project_dir
+
+    def interrupt_after_server_shutdown(**kwargs: object) -> None:
+        del kwargs
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(
+        "paper_galaxy.services.launch.prepare_launch", fake_prepare_launch
+    )
+    monkeypatch.setattr("paper_galaxy.services.jobs.JobManager", FakeManager)
+    monkeypatch.setattr(
+        "paper_galaxy.web.server.serve_app", interrupt_after_server_shutdown
+    )
+
+    result = runner.invoke(
+        app,
+        ["launch", "--project-dir", str(tmp_path), "--no-open"],
+    )
+
+    assert result.exit_code == 0
+    assert "Paper Galaxy stopped cleanly." in result.output
+    assert result.exception is None
+
+
+def test_launch_does_not_misreport_interrupted_preparation_as_clean_shutdown(
+    monkeypatch: object,
+    tmp_path: Path,
+) -> None:
+    runner = CliRunner()
+
+    def interrupt_during_preparation(**kwargs: object) -> object:
+        del kwargs
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(
+        "paper_galaxy.services.launch.prepare_launch",
+        interrupt_during_preparation,
+    )
+
+    result = runner.invoke(
+        app,
+        ["launch", "--project-dir", str(tmp_path), "--no-open"],
+    )
+
+    assert result.exit_code == 130
+    assert "Paper Galaxy stopped cleanly." not in result.output
+
+
+def test_launch_rejects_invalid_options_before_preparing_project(
+    monkeypatch: object,
+    tmp_path: Path,
+) -> None:
+    runner = CliRunner()
+    called = False
+
+    def fake_prepare_launch(**kwargs: object) -> object:
+        nonlocal called
+        del kwargs
+        called = True
+        raise AssertionError("prepare_launch must not run")
+
+    monkeypatch.setattr(
+        "paper_galaxy.services.launch.prepare_launch",
+        fake_prepare_launch,
+    )
+
+    result = runner.invoke(
+        app,
+        ["launch", "--project-dir", str(tmp_path / "project"), "--port", "-1"],
+    )
+
+    assert result.exit_code == 1
+    assert "--port must be between 0 and 65535" in result.output
+    assert called is False
+    assert not (tmp_path / "project").exists()
+
+
+def test_serve_rejects_non_loopback_before_server_start(
+    monkeypatch: object, tmp_path: Path
+) -> None:
+    runner = CliRunner()
+    called = False
+
+    def fake_serve_app(**kwargs: object) -> None:
+        nonlocal called
+        del kwargs
+        called = True
+
+    monkeypatch.setattr("paper_galaxy.web.server.serve_app", fake_serve_app)
+
+    result = runner.invoke(
+        app,
+        ["serve", "--project-dir", str(tmp_path), "--host", "0.0.0.0"],
+    )
+
+    assert result.exit_code == 1
+    assert "loopback" in result.output
+    assert called is False
+
+
 def test_phase_five_command_help_exits_successfully() -> None:
     runner = CliRunner()
 

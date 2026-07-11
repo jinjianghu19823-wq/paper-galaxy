@@ -3,6 +3,12 @@ CREATE TABLE IF NOT EXISTS schema_meta (
   value TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS schema_migrations (
+  version INTEGER PRIMARY KEY,
+  name TEXT NOT NULL UNIQUE,
+  applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE TABLE IF NOT EXISTS corpora (
   id TEXT PRIMARY KEY,
   root_path TEXT NOT NULL,
@@ -24,6 +30,9 @@ CREATE TABLE IF NOT EXISTS scan_runs (
   skipped_files INTEGER NOT NULL DEFAULT 0,
   chunks_written INTEGER NOT NULL DEFAULT 0,
   status TEXT NOT NULL,
+  error_code TEXT,
+  error_message TEXT,
+  owner_pid INTEGER,
   FOREIGN KEY(corpus_id) REFERENCES corpora(id)
 );
 
@@ -35,6 +44,7 @@ CREATE TABLE IF NOT EXISTS documents (
   file_type TEXT NOT NULL,
   title TEXT NOT NULL,
   sha256 TEXT NOT NULL,
+  content_revision_sha256 TEXT NOT NULL DEFAULT 'legacy-unknown',
   size_bytes INTEGER NOT NULL,
   mtime_ns INTEGER NOT NULL,
   char_count INTEGER NOT NULL,
@@ -58,6 +68,7 @@ CREATE TABLE IF NOT EXISTS chunks (
   chunk_index INTEGER NOT NULL,
   text TEXT NOT NULL,
   char_count INTEGER NOT NULL,
+  text_sha256 TEXT NOT NULL DEFAULT 'legacy-unknown',
   FOREIGN KEY(document_id) REFERENCES documents(id) ON DELETE CASCADE,
   UNIQUE(document_id, chunk_index)
 );
@@ -98,6 +109,8 @@ CREATE TABLE IF NOT EXISTS embedding_models (
   dimension INTEGER NOT NULL,
   distance TEXT NOT NULL,
   config_json TEXT NOT NULL DEFAULT '{}',
+  model_fingerprint TEXT NOT NULL DEFAULT 'legacy-unknown',
+  fingerprint_algorithm TEXT NOT NULL DEFAULT 'legacy-unknown',
   created_at TEXT NOT NULL,
   UNIQUE(name, provider, dimension, distance, config_json)
 );
@@ -108,6 +121,9 @@ CREATE TABLE IF NOT EXISTS vectors (
   object_type TEXT NOT NULL,
   object_id TEXT NOT NULL,
   text_sha256 TEXT NOT NULL,
+  source_content_sha256 TEXT NOT NULL DEFAULT 'legacy-unknown',
+  model_fingerprint TEXT NOT NULL DEFAULT 'legacy-unknown',
+  algorithm_version TEXT NOT NULL DEFAULT 'legacy-unknown',
   dimension INTEGER NOT NULL,
   dtype TEXT NOT NULL,
   vector BLOB NOT NULL,
@@ -130,8 +146,12 @@ CREATE TABLE IF NOT EXISTS embedding_runs (
   chunks_seen INTEGER NOT NULL DEFAULT 0,
   chunks_embedded INTEGER NOT NULL DEFAULT 0,
   chunks_unchanged INTEGER NOT NULL DEFAULT 0,
+  sources_changed INTEGER NOT NULL DEFAULT 0,
   errors INTEGER NOT NULL DEFAULT 0,
   config_json TEXT NOT NULL DEFAULT '{}',
+  error_code TEXT,
+  error_message TEXT,
+  owner_pid INTEGER,
   FOREIGN KEY(model_id) REFERENCES embedding_models(id)
 );
 
@@ -141,6 +161,9 @@ CREATE TABLE IF NOT EXISTS vector_indexes (
   object_type TEXT NOT NULL,
   index_path TEXT NOT NULL,
   vector_count INTEGER NOT NULL,
+  model_fingerprint TEXT NOT NULL DEFAULT 'legacy-unknown',
+  algorithm_version TEXT NOT NULL DEFAULT 'legacy-unknown',
+  vector_set_sha256 TEXT NOT NULL DEFAULT 'legacy-unknown',
   created_at TEXT NOT NULL,
   metadata_json TEXT NOT NULL DEFAULT '{}',
   FOREIGN KEY(model_id) REFERENCES embedding_models(id)
@@ -236,6 +259,9 @@ CREATE TABLE IF NOT EXISTS zotero_import_runs (
   skipped INTEGER NOT NULL DEFAULT 0,
   warnings_json TEXT NOT NULL DEFAULT '[]',
   config_json TEXT NOT NULL DEFAULT '{}',
+  error_code TEXT,
+  error_message TEXT,
+  owner_pid INTEGER,
   FOREIGN KEY(source_id) REFERENCES zotero_sources(id)
 );
 
@@ -257,6 +283,9 @@ CREATE TABLE IF NOT EXISTS zotero_items (
   extra TEXT,
   reading_status TEXT NOT NULL DEFAULT 'unknown',
   data_json TEXT NOT NULL DEFAULT '{}',
+  child_manifest_json TEXT,
+  deleted_at TEXT,
+  deleted_version INTEGER,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
   UNIQUE(source_id, zotero_key),
@@ -283,6 +312,8 @@ CREATE TABLE IF NOT EXISTS zotero_collections (
   path TEXT,
   version INTEGER,
   data_json TEXT NOT NULL DEFAULT '{}',
+  deleted_at TEXT,
+  deleted_version INTEGER,
   UNIQUE(source_id, zotero_key),
   FOREIGN KEY(source_id) REFERENCES zotero_sources(id)
 );
@@ -317,6 +348,8 @@ CREATE TABLE IF NOT EXISTS zotero_attachments (
   path_status TEXT NOT NULL,
   version INTEGER,
   data_json TEXT NOT NULL DEFAULT '{}',
+  deleted_at TEXT,
+  deleted_version INTEGER,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
   UNIQUE(source_id, zotero_key),
@@ -333,6 +366,154 @@ CREATE TABLE IF NOT EXISTS zotero_document_links (
   FOREIGN KEY(document_id) REFERENCES documents(id) ON DELETE CASCADE,
   FOREIGN KEY(zotero_item_id) REFERENCES zotero_items(id) ON DELETE CASCADE,
   FOREIGN KEY(attachment_id) REFERENCES zotero_attachments(id) ON DELETE SET NULL
+);
+
+CREATE TABLE IF NOT EXISTS zotero_sync_profiles (
+  id TEXT PRIMARY KEY,
+  source_id TEXT NOT NULL,
+  profile_signature TEXT NOT NULL,
+  materialization_signature TEXT,
+  last_version INTEGER CHECK(last_version IS NULL OR last_version >= 0),
+  requires_full_sync INTEGER NOT NULL DEFAULT 1
+    CHECK(requires_full_sync IN (0, 1)),
+  revision INTEGER NOT NULL DEFAULT 0 CHECK(revision >= 0),
+  last_run_id TEXT,
+  last_sync_at TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  CHECK(
+    requires_full_sync = 1
+    OR (last_version IS NOT NULL AND materialization_signature IS NOT NULL)
+  ),
+  UNIQUE(source_id, profile_signature),
+  FOREIGN KEY(id) REFERENCES registered_sources(id) ON DELETE RESTRICT,
+  FOREIGN KEY(source_id) REFERENCES zotero_sources(id) ON DELETE RESTRICT,
+  FOREIGN KEY(last_run_id) REFERENCES zotero_import_runs(id) ON DELETE RESTRICT
+);
+
+CREATE TABLE IF NOT EXISTS zotero_profile_items (
+  profile_id TEXT NOT NULL,
+  zotero_item_id TEXT NOT NULL,
+  is_member INTEGER NOT NULL CHECK(is_member IN (0, 1)),
+  observed_version INTEGER NOT NULL CHECK(observed_version >= 0),
+  first_matched_at TEXT,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY(profile_id, zotero_item_id),
+  FOREIGN KEY(profile_id) REFERENCES zotero_sync_profiles(id) ON DELETE CASCADE,
+  FOREIGN KEY(zotero_item_id) REFERENCES zotero_items(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS zotero_sync_run_details (
+  run_id TEXT PRIMARY KEY,
+  profile_id TEXT NOT NULL,
+  full_sync INTEGER NOT NULL CHECK(full_sync IN (0, 1)),
+  previous_version INTEGER CHECK(previous_version IS NULL OR previous_version >= 0),
+  response_version INTEGER CHECK(response_version IS NULL OR response_version >= 0),
+  committed_version INTEGER CHECK(committed_version IS NULL OR committed_version >= 0),
+  changed_parents INTEGER NOT NULL DEFAULT 0 CHECK(changed_parents >= 0),
+  changed_children INTEGER NOT NULL DEFAULT 0 CHECK(changed_children >= 0),
+  deleted_records INTEGER NOT NULL DEFAULT 0 CHECK(deleted_records >= 0),
+  metadata_only_documents INTEGER NOT NULL DEFAULT 0
+    CHECK(metadata_only_documents >= 0),
+  pdf_failures INTEGER NOT NULL DEFAULT 0 CHECK(pdf_failures >= 0),
+  duration_ms INTEGER NOT NULL DEFAULT 0 CHECK(duration_ms >= 0),
+  FOREIGN KEY(run_id) REFERENCES zotero_import_runs(id) ON DELETE CASCADE,
+  FOREIGN KEY(profile_id) REFERENCES registered_sources(id) ON DELETE RESTRICT
+);
+
+CREATE TABLE IF NOT EXISTS zotero_child_items (
+  source_id TEXT NOT NULL,
+  zotero_key TEXT NOT NULL,
+  parent_key TEXT NOT NULL,
+  item_type TEXT NOT NULL CHECK(item_type IN ('attachment', 'note', 'annotation')),
+  version INTEGER,
+  data_json TEXT NOT NULL DEFAULT '{}',
+  deleted_at TEXT,
+  deleted_version INTEGER,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY(source_id, zotero_key),
+  FOREIGN KEY(source_id) REFERENCES zotero_sources(id) ON DELETE RESTRICT
+);
+
+CREATE TABLE IF NOT EXISTS zotero_tombstones (
+  source_id TEXT NOT NULL,
+  object_type TEXT NOT NULL CHECK(object_type IN (
+    'item', 'collection', 'search', 'tag', 'setting'
+  )),
+  zotero_key TEXT NOT NULL,
+  library_version INTEGER NOT NULL,
+  deleted_at TEXT NOT NULL,
+  PRIMARY KEY(source_id, object_type, zotero_key),
+  FOREIGN KEY(source_id) REFERENCES zotero_sources(id) ON DELETE RESTRICT
+);
+
+CREATE TABLE IF NOT EXISTS registered_sources (
+  id TEXT PRIMARY KEY,
+  kind TEXT NOT NULL CHECK(kind IN ('corpus_directory', 'zotero_profile')),
+  display_name TEXT NOT NULL,
+  root_path TEXT,
+  zotero_source_id TEXT,
+  profile_signature TEXT NOT NULL,
+  config_json TEXT NOT NULL DEFAULT '{}',
+  last_success_at TEXT,
+  last_error_code TEXT,
+  last_error_message TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  removed_at TEXT,
+  CHECK(
+    (kind = 'corpus_directory' AND root_path IS NOT NULL AND zotero_source_id IS NULL)
+    OR
+    (kind = 'zotero_profile' AND root_path IS NULL AND zotero_source_id IS NOT NULL)
+  ),
+  UNIQUE(kind, profile_signature),
+  FOREIGN KEY(zotero_source_id) REFERENCES zotero_sources(id) ON DELETE RESTRICT
+);
+
+CREATE TABLE IF NOT EXISTS jobs (
+  id TEXT PRIMARY KEY,
+  queue_sequence INTEGER NOT NULL UNIQUE CHECK(queue_sequence > 0),
+  kind TEXT NOT NULL CHECK(kind IN (
+    'index_corpus', 'zotero_sync', 'rebuild_analysis', 'backup_project'
+  )),
+  source_id TEXT,
+  request_key TEXT NOT NULL,
+  status TEXT NOT NULL CHECK(status IN (
+    'queued', 'running', 'cancelling', 'completed', 'failed', 'interrupted',
+    'cancelled'
+  )),
+  params_json TEXT NOT NULL DEFAULT '{}',
+  progress_current INTEGER NOT NULL DEFAULT 0 CHECK(progress_current >= 0),
+  progress_total INTEGER CHECK(progress_total IS NULL OR progress_total >= 0),
+  message TEXT NOT NULL DEFAULT '',
+  result_summary_json TEXT NOT NULL DEFAULT '{}',
+  error_code TEXT,
+  error_message TEXT,
+  cancel_requested INTEGER NOT NULL DEFAULT 0 CHECK(cancel_requested IN (0, 1)),
+  owner_pid INTEGER,
+  owner_instance_id TEXT,
+  heartbeat_at TEXT,
+  writer_slot INTEGER NOT NULL DEFAULT 1 CHECK(writer_slot = 1),
+  revision INTEGER NOT NULL DEFAULT 0 CHECK(revision >= 0),
+  created_at TEXT NOT NULL,
+  started_at TEXT,
+  finished_at TEXT,
+  updated_at TEXT NOT NULL,
+  CHECK(progress_total IS NULL OR progress_current <= progress_total),
+  CHECK(status != 'cancelling' OR cancel_requested = 1),
+  CHECK(
+    (status = 'queued' AND started_at IS NULL AND finished_at IS NULL
+      AND owner_pid IS NULL AND owner_instance_id IS NULL)
+    OR
+    (status IN ('running', 'cancelling') AND started_at IS NOT NULL
+      AND finished_at IS NULL AND owner_pid IS NOT NULL
+      AND owner_instance_id IS NOT NULL)
+    OR
+    (status IN ('completed', 'failed', 'interrupted', 'cancelled')
+      AND finished_at IS NOT NULL)
+  ),
+  FOREIGN KEY(source_id) REFERENCES registered_sources(id) ON DELETE RESTRICT
 );
 
 CREATE VIRTUAL TABLE IF NOT EXISTS documents_fts USING fts5(
@@ -353,6 +534,9 @@ CREATE INDEX IF NOT EXISTS idx_documents_sha256
 
 CREATE INDEX IF NOT EXISTS idx_chunks_document_id
   ON chunks(document_id);
+
+CREATE INDEX IF NOT EXISTS idx_chunks_text_sha256
+  ON chunks(text_sha256);
 
 CREATE INDEX IF NOT EXISTS idx_scan_runs_corpus_started_at
   ON scan_runs(corpus_id, started_at);
@@ -419,3 +603,35 @@ CREATE INDEX IF NOT EXISTS idx_zotero_document_links_item
 
 CREATE INDEX IF NOT EXISTS idx_zotero_document_links_document
   ON zotero_document_links(document_id);
+
+CREATE INDEX IF NOT EXISTS idx_zotero_sync_profiles_source
+  ON zotero_sync_profiles(source_id, updated_at);
+
+CREATE INDEX IF NOT EXISTS idx_zotero_profile_items_item
+  ON zotero_profile_items(zotero_item_id, profile_id);
+
+CREATE INDEX IF NOT EXISTS idx_zotero_child_items_parent
+  ON zotero_child_items(source_id, parent_key, deleted_at, zotero_key);
+
+CREATE INDEX IF NOT EXISTS idx_zotero_tombstones_source
+  ON zotero_tombstones(source_id, object_type, library_version);
+
+CREATE INDEX IF NOT EXISTS idx_registered_sources_active
+  ON registered_sources(kind, removed_at, display_name, id);
+
+CREATE INDEX IF NOT EXISTS idx_registered_sources_zotero
+  ON registered_sources(zotero_source_id);
+
+CREATE INDEX IF NOT EXISTS idx_jobs_status_created_at
+  ON jobs(status, queue_sequence);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_jobs_active_dedupe
+  ON jobs(request_key)
+  WHERE status IN ('queued', 'running', 'cancelling');
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_jobs_single_writer
+  ON jobs(writer_slot)
+  WHERE status IN ('running', 'cancelling');
+
+CREATE INDEX IF NOT EXISTS idx_jobs_source_created_at
+  ON jobs(source_id, created_at);

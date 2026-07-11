@@ -27,6 +27,7 @@ source for nearest-neighbor search and proximity explanations.
 
 - `cli`: command-line entrypoints.
 - `config`: project and runtime configuration models.
+- `projects`: atomic, no-clobber local project creation and safe reopen.
 - `paths`: project path and metadata helpers.
 - `logging`: shared console and logging setup.
 - `models`: dataclasses shared by the Phase 1 pipeline.
@@ -48,8 +49,11 @@ source for nearest-neighbor search and proximity explanations.
 - `chunking`: deterministic paragraph/window text chunking.
 - `records`: persistent dataclasses for documents, chunks, extraction reports,
   scan summaries, search results, and database stats.
-- `storage.sqlite`: database path resolution and SQLite connection setup.
-- `storage.migrations`: idempotent schema initialization.
+- `storage.sqlite`: database path resolution plus explicit read-only,
+  read-write, migration/bootstrap, and external read-only connection modes.
+- `storage.migrations`: transactional current-schema bootstrap, ordered forward
+  migrations, migration history, and pre-migration SQLite snapshots.
+- `storage.json`: strict decoding for typed JSON stored in SQLite.
 - `storage.repository`: explicit parameterized SQL operations.
 - `indexer`: Phase 2 incremental indexing orchestration.
 - `search`: local FTS search and database stats wrappers.
@@ -58,17 +62,37 @@ source for nearest-neighbor search and proximity explanations.
 - `embeddings.builder`: local document/chunk embedding build orchestration.
 - `embeddings.search`: SQLite-backed semantic search and vector stats.
 - `embeddings.similarity`: TF-IDF, dense, and hybrid neighbor comparison.
-- `embeddings.index`: optional local vector index path and FAISS availability
-  helpers.
+- `embeddings.ranking`: bounded-memory NumPy cosine scoring and deterministic
+  top-k selection.
+- `embeddings.maintenance`: explicit dry-run-first stale-vector pruning.
+- `embeddings.index`: compatibility path helper for build-owned local indexes;
+  no FAISS implementation is advertised in this checkpoint.
 - `maps.runs`: persisted saved map run creation, lookup, and JSON export.
 - `validation`: project health checks for config, schema, FTS, counts, dangling
   rows, optional dependencies, and map run consistency.
-- `backup.bundle`: local zip backup export/import with manifests and checksums.
+- `backup.snapshot`: online SQLite snapshots plus integrity/schema validation.
+- `backup.archive`: strict streaming ZIP topology, limits, manifest, and
+  checksum validation.
+- `backup.publish`: same-filesystem atomic publication and rollback.
+- `backup.staging`: private owned staging and conservative orphan cleanup.
+- `backup.bundle`: portable v2 backup orchestration with strict v1 inspection.
+- `storage.locking`: cross-process shared operation and exclusive maintenance
+  locks, including legacy-project claim and database-handle drain.
+- `services.sources`: persistent, path-private corpus and read-only Zotero
+  source registry with use-time locator revalidation.
+- `services.jobs`: bounded durable single-writer jobs, cooperative cancellation,
+  safe summaries, and restart recovery; `services.worker_lease` serializes the
+  background worker across processes.
+- `services.launch`: idempotent project/source/job preparation for one-command
+  local startup.
 - `plugins`: static built-in local plugin metadata.
 - `zotero`: read-only local Zotero connector, normalization, attachment path
   resolution, importer, SQLite diagnostics, and reading graph builder.
 - `web.server`: lazy FastAPI/Uvicorn app creation and local server startup.
-- `web.api`: read-only local JSON API routes.
+- `web.security`: loopback Host allowlisting, same-origin write enforcement,
+  per-process write tokens, and browser security headers.
+- `web.api`: local JSON routes with read-only GET repositories and explicit
+  writer repositories for mutation endpoints.
 - `web.map_builder`: ephemeral map generation from active indexed documents.
 - `web.static`: static HTML/CSS/vanilla JavaScript browser UI, including the
   Phase 3.1 dependency-free force graph renderer.
@@ -145,6 +169,14 @@ Schema overview:
 - `zotero_attachments`: attachment metadata and local path resolution status.
 - `zotero_document_links`: links between Zotero items/attachments and Paper
   Galaxy document rows.
+- `zotero_sync_profiles`: profile-scoped cursors, CAS revisions, and the
+  source-global materialization generation.
+- `zotero_profile_items`: versioned filter-profile membership used for union
+  visibility.
+- `zotero_sync_run_details`: typed incremental-sync cursor and result audit.
+- `zotero_child_items`: private note/annotation/attachment cache for parent
+  reconstruction.
+- `zotero_tombstones`: verified local deletion audit.
 - `documents_fts`: FTS5 table for local search.
 
 Document status controls search visibility. `active` documents are returned by
@@ -156,6 +188,228 @@ them.
 
 Phase 2 prepares for Phase 3 by making project state persistent and incremental.
 The static Phase 1 `scan` command remains file-based and independent.
+
+### SQLite lifecycle and connection boundaries
+
+Schema version 10 extends the explicit, forward-only lifecycle that replaced
+implicit `CREATE IF NOT EXISTS` initialization:
+
+- A new database is bootstrapped directly at the current schema in one explicit
+  transaction. Bootstrap records the current migration registry in
+  `schema_migrations` and commits before returning.
+- The oldest supported historical schema is v6. Its fixture is reconstructed
+  from repository history and upgraded only through the registered v6 -> v7
+  -> v8 -> v9 -> v10 sequence. v7 adds migration history and structured `error_code` /
+  `error_message` fields to scan, embedding, and Zotero import runs, plus a
+  private child-version manifest for monotonic Zotero-derived documents. v8
+  records a document content revision over title, relative path, and extracted
+  text, plus chunk hashes, model fingerprints, vector source/model/algorithm
+  provenance, run owner PIDs, and vector-index provenance. Existing vectors
+  whose freshness cannot be reconstructed remain marked `legacy-unknown` and
+  are excluded from semantic results until rebuilt. v9 adds path-private
+  registered corpus/Zotero sources and a durable, bounded local job state
+  machine with exact partial-index capability checks and deterministic legacy
+  Zotero-profile backfill. v10 adds registered-profile cursor state with
+  compare-and-swap revisions, typed per-run sync details, a private child-item
+  cache, verified deletion tombstones, and soft-delete state. Migrated v9
+  profiles intentionally receive no guessed cursor and require one safe full
+  baseline that rematerializes shared documents. The v9 -> v10 regression runs
+  against a frozen copy of the real shipped v9 schema, not a current schema with
+  its version label changed.
+- Migration takes a unique, mode-`0600` snapshot with SQLite's online backup
+  API before changing schema, then verifies the snapshot with `quick_check` and
+  `foreign_key_check`. It never replaces an existing backup or the live
+  database/WAL sidecars.
+- The migration sequence, every schema version update, and its history record
+  share one `BEGIN IMMEDIATE` transaction. Any failure rolls the entire schema
+  change back. Successful migration commits itself rather than relying on a
+  later caller commit.
+- Databases older than v6 without a supported registry path are rejected.
+  Databases from a newer Paper Galaxy version are also rejected and are never
+  silently downgraded or relabelled.
+- A version number alone is not trusted. Bootstrap, migration, and operational
+  connections verify required tables/columns, ordered primary keys, critical
+  unique identities, foreign-key targets/actions, indexes, the FTS5 virtual
+  table and `MATCH`, and migration-history identity.
+
+Connection intent is explicit:
+
+- `connect_read_only` opens an existing, current-schema project database with a
+  SQLite URI in `mode=ro`, enables `query_only`, foreign-key enforcement, and a
+  bounded busy timeout, and never creates a project directory, database, table,
+  or schema metadata.
+- `connect_read_write` opens an existing, current-schema project database for
+  short transactions. Writers enable foreign keys, a bounded busy timeout,
+  rollback-journal `DELETE` mode, and `synchronous=FULL`. This favors durable
+  local research state and lets ordinary read-only opens avoid creating
+  WAL/SHM files. The one-writer design and short commits bound lock intervals.
+  Consistent backups still use SQLite's backup API rather than copying live
+  database files.
+- `connect_migration` is the only connection that may create a database or
+  change schema. A new database file is claimed with mode `0600` before
+  transactional bootstrap.
+- `connect_external_read_only` opens an existing external SQLite database for
+  Zotero diagnostics without creating Paper Galaxy schema or writing Zotero.
+
+Read-only connections reject symbolic or incomplete WAL/SHM sidecars. They also
+inspect the database header and refuse a clean legacy WAL-mode database whose
+sidecars are absent, because opening it would create files. A Paper Galaxy
+writer maintenance pass safely normalizes a project database to DELETE/FULL;
+external Zotero databases are never normalized and instead ask the user to open
+Zotero Desktop. When a valid active WAL and existing SHM are present, SQLite may
+update SHM coordination bytes while reading; `query_only` still prevents data
+or schema writes and no new directory entry is created.
+
+Stored JSON is decoded by shape: nullable list/object fields have documented
+empty defaults, while malformed JSON, scalar JSON where a container is
+required, duplicate object keys, non-finite numbers, or a nested type mismatch
+raises a structured
+`StoredJSONError`. Repository and validation paths no longer hide persisted
+corruption by silently replacing it with an empty value. Ordinary Web API
+projections also exclude private raw Zotero payloads, stored local paths, and
+internal configuration fields.
+
+Project validation now runs through the read-only connection and reports:
+
+- SQLite `quick_check` and `foreign_key_check` results;
+- schema tables/columns, PK/UNIQUE/FK/index/FTS identity, and migration history;
+- FTS/document/chunk/text presence and content consistency;
+- orphan model/document/chunk vectors, dimensions, BLOB sizes, invalid JSON,
+  invalid object/dtype/non-finite values, source/model/algorithm provenance,
+  stale index metadata, and legacy vectors whose freshness cannot be proven;
+  and
+- invalid or lagging Zotero cursors/record versions, source-global
+  materialization disagreement, and filter-profile membership inconsistencies,
+  including child/collection/attachment versions and child manifest shape.
+
+A check that cannot run is reported as `not_run` or `check_errors`; it is not
+presented as a successful zero count.
+
+### Backup archive and restore boundary
+
+Backup is split across three trust boundaries rather than copying project
+files directly:
+
+1. `backup.snapshot` uses `sqlite3.Connection.backup()` to copy the committed
+   database view, including active WAL pages, into a mode-`0600` staging file.
+   The snapshot is normalized to rollback-journal mode and must pass
+   `quick_check`, `foreign_key_check`, declared schema version, and the same
+   capability registry used by operational connections.
+2. `backup.archive` treats every ZIP as untrusted. It rejects duplicate or
+   non-portable names, special/symlink entries, missing or extra checksum
+   members, checksum duplicates, unsupported compression, excessive entry,
+   expanded-size or ratio limits, and manifest/payload/schema disagreement.
+   Digests and extraction are streamed with bounded chunks; path/component,
+   project-config, archive-size, and free-space budgets bound memory, CPU, and
+   disk consumption.
+3. `backup.publish` keeps export staging beside the output and restore staging
+   on the target filesystem. Export publishes one validated file with
+   `os.replace`. A new restore publishes one complete directory; a forced
+   restore moves overwritten files into an owner-only rollback transaction,
+   publishes the configuration last, and restores original inodes on failure.
+   A durable prepared/committed journal with original/new digests also supports
+   recovery after process interruption rather than only in-process exceptions.
+
+Backup holds a shared project lock across all inputs. Restore holds the
+exclusive maintenance marker across interrupted-transaction recovery,
+preflight, validation, and publication. Existing pre-marker connections are
+drained through a legacy database-file lock; new connections consistently use
+the stable build-owned marker. A sibling prepared transaction is itself an
+operational connection gate until recovery. Dry-run never creates that marker.
+Private staging roots carry versioned operation/target/PID ownership metadata;
+later matching invocations conservatively remove dead owned orphans only.
+PID liveness checks use non-destructive Windows process handles; the POSIX
+signal-zero probe is never called on Windows.
+
+The v2 manifest records explicit project-relative database and vector-index
+destinations. Custom internal database paths round-trip. Absolute or escaping
+database paths are mapped to the internal default, and project-external vector
+indexes are omitted. The restore path never comes from an unchecked browser or
+ZIP filename. Legacy v1 database/config backups remain readable, but their
+basename-only vector indexes are not restored because their logical paths
+cannot be proven.
+
+### Short write transactions and run auditing
+
+Indexing performs discovery, file metadata reads, hashing, extraction, and
+chunk preparation outside SQLite write transactions. Each unchanged touch,
+file result, extraction diagnostic, or document/chunk replacement is committed
+in a short atomic unit. A single extraction failure is recorded for that file
+and does not poison the whole corpus run; an orchestration or sidecar-output
+failure marks the run `failed` (or `interrupted` for interruption) with a safe,
+bounded error code/message instead of leaving it permanently `running`.
+Explicit writer readiness also checks the recorded owner PID for unfinished
+scan, embedding, and Zotero runs. Rows owned by a dead process become
+`interrupted` in one short transaction; live owners are never rewritten and
+read-only connections perform no recovery writes.
+
+Embedding inference and vector encoding also happen outside the write
+transaction. Validated vector records are committed in bounded batches, and
+the audit row records only successfully committed progress if a later batch
+fails. Immediately before each batch write, the repository compares the
+document or chunk source hash again. An inference result whose source changed
+in flight is discarded and counted as `sources_changed`. Replacing or
+deactivating a document removes its document/chunk vectors, and every vector
+write invalidates affected vector-index metadata; an identical Zotero sync
+keeps unchanged chunks and vectors intact. Zotero network fetching,
+normalization, and PDF extraction do not occupy one long writer transaction:
+the canonical locator/profile identity, source row, sync state, and running
+audit are registered in one initial transaction before fetching; item changes
+commit in short units, and
+the exact registered profile cursor advances only in the final successful
+transaction. `/items?since=` carries parent and child changes together;
+`/deleted?since=` is reconciled only when every page/endpoint shares one
+`Last-Modified-Version`. Fetch, normalization, item, or process-interruption
+failures are audited; a post-import reading-map failure is a retryable warning
+and does not rewrite the completed sync as failed. Regressive, divergent, or
+partial parent/collection/attachment/note/annotation responses fail before
+cursor advance. Child-only updates use the private cache and bounded parent
+hydration instead of per-parent child requests. A deletion-feed tombstone can
+remove a child from its parent or make a deleted parent non-active; an
+unverified omission remains an error. Parent deletion also retires cached
+children, attachments, every profile membership, linked document visibility,
+and vectors. Collection-only rename/delete versions hydrate and rebuild affected
+parents before cursor publication.
+
+Filter cursors are profile-scoped, but normalized Zotero items and Paper Galaxy
+documents are shared per source. A source-global materialization signature
+covers attachment-root resolution, include flags, PDF policy, reading-status
+tag vocabularies, minimum text length, and chunk configuration. A signature
+change requires explicit `--full`, invalidates peer memberships, and fences
+their cursors until they establish a new baseline. Durable jobs inherit the
+latest completed compatible materialization config. `zotero_profile_items`
+stores `is_member` and `observed_version`; document activity is the union of
+memberships belonging to non-removed profiles. Filter exit or source removal
+therefore deactivates only documents no other active profile covers. Cursor
+CAS, run completion, profile success, and job ownership fencing share the final
+write transaction. Generation preparation is deferred until the complete
+remote response has passed the shared version check and source-wide fence. A
+stale full response therefore cannot invalidate peer memberships or the current
+published documents, chunks, and vectors. For a content-changing full sync,
+attachment resolution, PDF reads, text assembly, and chunking finish before the
+write lock. Generation preparation, source rows, memberships, documents,
+chunks, vectors, cursor, and run completion then commit in one transaction, so
+cancel, failure, or process death cannot expose a half generation. The initial
+registration transaction independently rechecks the exact source row and every
+active profile locator before any upsert; a stale concurrent preflight cannot
+overwrite an established local Zotero data directory.
+
+Locator preflight is deliberately write-free. Once a project owns a canonical
+loopback API origin and optional Zotero data directory, a mismatched locator is
+rejected before the connector or writer is invoked. Changed parent metadata is
+also evaluated against every compatible active profile's persisted filters;
+this updates versioned memberships without borrowing or advancing peer cursors.
+Before the first complete remote response, a failed locator claim is retired
+from active use while its failed run and removed profile remain auditable. The
+source-wide published Zotero version is monotonic and is rechecked before every
+business-row transaction, after the in-flight commit guard, and during final
+cursor publication, preventing an older profile snapshot from mixing a prior
+library generation into newer state.
+
+Saved-map API and export payloads share a domain-layer deep whitelist for run,
+point, neighbor, term, representative, and cluster fields. Legacy nested raw
+JSON, absolute paths, internal metadata, and raw warnings cannot cross those
+ordinary boundaries.
 
 ## Phase 3 Local Web App
 
@@ -170,7 +424,7 @@ The local app architecture is:
 paper-galaxy serve
   -> FastAPI local backend on 127.0.0.1 by default
   -> static HTML/CSS/vanilla JS frontend
-  -> SQLite repository read APIs
+  -> explicit SQLite read/write repository APIs
   -> ephemeral map builder using TF-IDF helpers
 ```
 
@@ -180,15 +434,15 @@ external images.
 
 API endpoints:
 
-- `GET /api/health`: app status, project directory, database path, and database
-  existence.
+- `GET /api/health`: app status and non-sensitive project/database availability
+  flags.
 - `GET /api/config`: read-only runtime app configuration.
 - `GET /api/stats`: Phase 2 database counts.
 - `GET /api/vector-stats`: Phase 5 embedding model and vector counts.
 - `GET /api/search`: local SQLite FTS search.
 - `GET /api/documents`: document metadata lists.
-- `GET /api/documents/{document_id}`: metadata, local path, chunk previews, and
-  text preview.
+- `GET /api/documents/{document_id}`: safe metadata, corpus-relative identity,
+  chunk previews, and text preview.
 - `GET /api/map`: active document map points, cluster labels, nearest neighbors,
   cluster explanation metadata, stats, and warnings.
 - `GET /api/map?run_id=...`: saved map run payload with persisted points and
@@ -211,6 +465,12 @@ API endpoints:
 - `GET /api/zotero/reading-map`: live Zotero reading map payload from imported
   local records.
 
+All Web GET paths use read-only connections and cannot bootstrap or migrate a
+database. Missing, locked, corrupt, migration-required, and future-schema
+states are returned as structured safe errors. Normal health/config and data
+responses do not expose absolute project, database, source, attachment, or
+model paths; detailed local paths remain available to explicit CLI diagnostics.
+
 Map generation reads active indexed records and extracted text from SQLite. It
 does not re-extract source files. It reuses the Phase 1 TF-IDF, layout,
 clustering, label, top-term, and neighbor helpers. Nearest neighbors are
@@ -231,8 +491,9 @@ settings. SVG elements are created on data load and updated in place on each
 tick.
 
 Manual layout is frontend-only state. Dragged or pinned node positions and
-graph display settings are stored in browser `localStorage`, keyed by local
-database identity and map settings. Graph movement does not mutate SQLite,
+graph display settings are stored in browser `localStorage`, keyed by a
+non-sensitive local project namespace and map settings. Graph movement does not
+mutate SQLite,
 create map runs, or change the indexed corpus.
 
 Missing and unindexed documents are excluded from the default map. Search can
@@ -348,20 +609,41 @@ Model loading is intentionally strict. `--model PATH_OR_NAME` loads a local path
 when it exists. A non-local name is refused by default with an explanation that
 remote or cached model names are disabled to avoid hidden downloads. Only
 `--allow-model-download` lets Sentence Transformers resolve or download a model
-name.
+name. Local model identity hashes the relative file layout, sizes, and exact
+bytes before and after loading; a changed directory is rejected. Explicitly
+allowed non-local models must expose a deterministic loaded state fingerprint.
+Model path/name alone is never accepted as weight identity.
 
 Document embedding text repeats the title three times, includes the
 corpus-relative path once, and appends the first configured slice of extracted
 text. Chunk embeddings use chunk text directly. Missing and unindexed documents
-are not embedded by default.
+are not embedded by default. The vector source revision is independent from the
+raw file hash: document revisions cover title, relative path, and full extracted
+text using namespaced canonical JSON rather than ambiguous delimiter joining,
+while chunk revisions hash exact chunk text. This also catches extraction
+algorithm changes that produce different text from identical source bytes.
 
-`paper-galaxy semantic-search` embeds the query locally and computes cosine
-similarity against stored vectors in SQLite. It does not build vectors
-implicitly and does not require FAISS for correctness. `paper-galaxy
+`paper-galaxy semantic-search` embeds the query locally and streams only active
+vectors whose source hash, model fingerprint, dimension, and algorithm version
+match current records. NumPy scores bounded blocks and retains only the exact,
+deterministically tie-broken top-k; display metadata is loaded in one batch, so
+search no longer performs per-vector document/text queries. It does not build
+vectors implicitly. `paper-galaxy
 compare-neighbors` computes TF-IDF neighbors from the inspectable baseline,
 dense neighbors from stored vectors, and hybrid neighbors with configurable
-weights. `/api/vector-stats` exposes model and vector counts to the local web
+weights. Its document, text, and vector reads use an optimistic SQLite
+`data_version` snapshot with bounded retries, preventing concurrent indexing
+from mixing stale TF-IDF scores with current dense results without holding a
+long read lock. `/api/vector-stats` exposes model and vector counts to the local web
 app without loading embedding models.
+
+`paper-galaxy prune-stale-vectors --project-dir .` is read-only by default and
+reports orphaned, inactive, stale, malformed, or unverifiable vector rows. The
+bounded deletion path requires both `--apply` and `--yes`; it removes only
+SQLite vector/index-metadata rows and never source documents, databases,
+backups, or on-disk user files. FAISS is not installed or claimed by the
+embedding extra in this checkpoint; exact blockwise NumPy scoring is the
+maintained implementation.
 
 ## Phase 6 Explainability And Labeling
 

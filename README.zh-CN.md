@@ -41,6 +41,37 @@ Paper Galaxy 目前有两种主要使用方式：
 
 ## 从源码安装
 
+要安装本地工作站，可以克隆仓库，并在隔离环境中安装 `full` extra。它汇总了本地网页
+应用、TF-IDF/地图和 PDF 抽取所需的依赖：
+
+```bash
+git clone https://github.com/jinjianghu19823-wq/paper-galaxy.git
+cd paper-galaxy
+python -m venv .venv
+source .venv/bin/activate  # Windows PowerShell: .venv\Scripts\Activate.ps1
+python -m pip install ".[full]"
+paper-galaxy doctor
+```
+
+在仓库根目录中也可以运行 `pipx install ".[full]"` 或
+`uv tool install ".[full]"`。它们会把命令安装在独立环境中，不需要手动激活 venv。
+完整安装方式见 [docs/INSTALL.zh-CN.md](docs/INSTALL.zh-CN.md)。
+
+一个命令即可创建或重新打开本地项目、登记（但不复制）论文目录，并启动工作站：
+
+```bash
+paper-galaxy launch \
+  --project-dir ~/PaperGalaxy \
+  --corpus ~/Papers \
+  --no-open
+```
+
+服务器默认只绑定 loopback（`127.0.0.1`）。`--no-open` 不自动打开浏览器；桌面交互时
+可以改用 `--open`。重复启动会复用已有项目和 source 登记，不会修改源目录，也不会
+自动下载 OCR 或 embedding 模型。
+
+参与开发时，再安装开发工具：
+
 ```bash
 git clone https://github.com/jinjianghu19823-wq/paper-galaxy.git
 cd paper-galaxy
@@ -112,6 +143,13 @@ paper-galaxy zotero import \
 - `--include-status read|reading|to_read|unknown|all`：按阅读状态标签筛选。
 - `--pdf-policy extract`：能读取本地 PDF 时抽取正文文本。
 - `--pdf-policy metadata`：只导入元数据，速度更快。
+- 默认导入会从当前精确 filter profile 自己保存的 cursor 增量继续。只有明确需要完整
+  reconciliation 时才使用 `--full`；失败、取消、version drift 或受 `--limit` 截断的
+  导入都不会推进 cursor。
+- 会改变本地正文的选项共同形成 source-global materialization fingerprint，包括
+  attachment/PDF/note/metadata 是否纳入、PDF policy、阅读状态标签集合、最小文本长度和
+  chunk size/overlap。指纹变化时必须显式使用 `--full`；默认后台 job 会继承最近一次
+  兼容的 completed run 配置，不会悄悄退回默认值。
 - `--pdf-policy skip-missing`：跳过预期有 PDF 但无法读取本地 PDF 的条目。
 
 如果 PDF 缺失或暂不支持，Zotero 条目仍然可以作为 metadata-only 文档进入图谱，包含标题、作者、摘要、标签、collection、笔记和 `zotero://items/<key>` 链接。导入后的 Zotero 元数据和抽取文本会存放在 `.paper-galaxy/`，不要把这个目录提交到 git。
@@ -158,6 +196,7 @@ paper-galaxy scan /path/to/your/papers --out galaxy.html --force
 ```bash
 paper-galaxy --help
 paper-galaxy doctor
+paper-galaxy launch --project-dir ~/PaperGalaxy --corpus ~/Papers --no-open
 paper-galaxy init
 paper-galaxy init /path/to/project
 paper-galaxy scan examples/tiny_corpus --out galaxy.html --force
@@ -213,6 +252,14 @@ paper-galaxy serve --project-dir .
 
 真实库过滤保持显式和保守。`--collection` 可以使用 Zotero collection key、精确名称或路径；名称大小写不敏感，但歧义匹配会报清楚的错误。阅读状态过滤支持 `all`、`read`、`reading`、`to_read` 和 `unknown`；`unclassified` 仍作为 `unknown` 的旧别名接受。`--pdf-policy metadata` 可用于快速 metadata-only 导入，`--pdf-policy skip-missing` 会跳过本应有本地 PDF 但无法读取的条目。
 
+profile membership 与共享 item 数据分开按版本保存。条目变化时，最新 metadata 会按每个
+compatible active profile 的持久 filter 重新判定，但不会推进其他 profile 的 cursor；只要
+仍有 profile 包含它，文档就继续可见，否则转为 non-active。移除已登记 source 也使用同一
+个并集规则。经过确认的 parent 删除会同时停用缓存 child、attachment 和 profile
+membership；collection 重命名或删除时也会重建受影响的 parent document。项目一旦建立
+locator identity，换用其他 local API origin 或 Zotero data directory 会在远端访问和项目
+写入前被拒绝。
+
 隐私边界：Zotero 连接器只使用本地 API，不写回 Zotero，不上传数据，也不会默认复制或移动 PDF。导入后的元数据和本地 PDF 抽取文本会进入 `.paper-galaxy/` 下的 Paper Galaxy 数据库，因此不要把该目录提交到 git。
 
 更多说明：
@@ -235,6 +282,12 @@ paper-galaxy serve --project-dir .
 
 ```bash
 python -m pip install -e ".[dev,ml,pdf,app]"
+paper-galaxy launch --project-dir ~/PaperGalaxy --corpus ~/Papers --open
+```
+
+等价的分步 CLI 流程是：
+
+```bash
 paper-galaxy init .
 paper-galaxy index examples/tiny_corpus --project-dir . --min-chars 40
 paper-galaxy serve --project-dir .
@@ -250,7 +303,13 @@ paper-galaxy serve --project-dir .
 
 `paper-galaxy build-map-run` 会把当前 TF-IDF 地图的确定性快照保存进 SQLite。`map-runs`、`show-map-run`、`export-map-run` 和 `delete-map-run` 用于列出、检查、导出和删除这些快照。
 
-`paper-galaxy export-project` 会写出 zip 备份包，包含 manifest、校验和、项目元数据，以及用户用 `--yes` 确认后包含的本地 SQLite 数据库。默认不包含源文档。`paper-galaxy import-project` 会验证备份包，并在没有 `--force` 时拒绝覆盖已有 `.paper-galaxy/` 目录。
+`paper-galaxy export-project` 在 `--yes` 确认后通过 SQLite online backup API 建立
+活动数据库快照，在 staging 中验证带 checksum 的可移植 v2 bundle，再原子发布。源文档
+永远不进入备份；向量索引需显式传入 `--include-vector-indexes`。`import-project` 在任何
+目标写入前强制检查 ZIP 拓扑与资源上限、全部 checksum、SQLite 完整性、外键、schema
+兼容性和项目相对恢复映射。已有 `.paper-galaxy` 必须显式 `--force`；强制恢复失败会
+回滚原文件。`--dry-run` 可只验证并查看计划。完整 threat model 见
+[备份与恢复](docs/BACKUP_AND_RESTORE.zh-CN.md)。
 
 `paper-galaxy plugins` 会列出内置的本地抽取插件边界。Phase 7 只有静态内置边界，没有远程插件加载。
 

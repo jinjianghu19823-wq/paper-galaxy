@@ -181,7 +181,9 @@ remains the browser surface.
 
 Dense embeddings live behind the optional `embeddings` extra. The default
 development/app install remains useful with TF-IDF, SQLite FTS, and the local
-web app even when Sentence Transformers and FAISS are unavailable.
+web app even when Sentence Transformers are unavailable. Dense search uses the
+maintained exact blockwise NumPy implementation; an unused FAISS dependency or
+index entry point is not advertised as working functionality.
 
 ## ADR 0030: No Hidden Model Downloads
 

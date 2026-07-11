@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Callable
 from pathlib import Path
 
 from paper_galaxy.explain.clusters import clusters_payload
@@ -19,9 +20,12 @@ from paper_galaxy.ml.neighbors import compute_neighbors
 from paper_galaxy.ml.tfidf import compute_tfidf, top_terms_for_documents
 from paper_galaxy.models import Document, MapPoint
 from paper_galaxy.records import DatabaseStats, IndexedDocument
-from paper_galaxy.storage.migrations import initialize_database
 from paper_galaxy.storage.repository import Repository
-from paper_galaxy.storage.sqlite import connect_database, resolve_database_path
+from paper_galaxy.storage.sqlite import connect_read_only, resolve_database_path
+
+
+class MapPayloadCancelled(RuntimeError):
+    """Raised between expensive deterministic map-building stages."""
 
 
 def build_map_payload(
@@ -31,13 +35,13 @@ def build_map_payload(
     clusters: int | None = None,
     neighbors: int = 5,
     limit: int = 1000,
+    cancel_requested: Callable[[], bool] | None = None,
 ) -> dict[str, object]:
     """Build JSON-serializable map data from active indexed documents."""
 
     database_path = resolve_database_path(project_dir)
-    connection = connect_database(project_dir)
+    connection = connect_read_only(project_dir)
     try:
-        initialize_database(connection)
         repository = Repository(connection, database_path)
         stats = repository.get_stats()
         limited_rows = repository.list_documents_with_text(
@@ -46,6 +50,7 @@ def build_map_payload(
         )
     finally:
         connection.close()
+    _raise_if_map_payload_cancelled(cancel_requested)
 
     warnings = _limit_warnings(stats, len(limited_rows), limit)
     if not limited_rows:
@@ -75,8 +80,11 @@ def build_map_payload(
     ]
 
     _, matrix, terms = compute_tfidf([document.text for document in documents])
+    _raise_if_map_payload_cancelled(cancel_requested)
     coordinates = compute_layout(matrix, seed=seed)
+    _raise_if_map_payload_cancelled(cancel_requested)
     cluster_ids = compute_clusters(matrix, requested=clusters, seed=seed)
+    _raise_if_map_payload_cancelled(cancel_requested)
     cluster_labels = _cluster_label_metadata(
         project_dir=project_dir,
         documents=documents,
@@ -85,13 +93,16 @@ def build_map_payload(
         terms=terms,
         warnings=warnings,
     )
+    _raise_if_map_payload_cancelled(cancel_requested)
     cluster_by_id = {label.cluster_id: label for label in cluster_labels}
     document_neighbors = compute_neighbors(
         matrix,
         documents,
         neighbor_count=neighbors,
     )
+    _raise_if_map_payload_cancelled(cancel_requested)
     document_terms = top_terms_for_documents(matrix, terms)
+    _raise_if_map_payload_cancelled(cancel_requested)
     points = [
         MapPoint(
             document_id=document.id,
@@ -119,6 +130,13 @@ def build_map_payload(
     }
 
 
+def _raise_if_map_payload_cancelled(
+    cancel_requested: Callable[[], bool] | None,
+) -> None:
+    if cancel_requested is not None and cancel_requested():
+        raise MapPayloadCancelled("Analysis cancelled between computation stages.")
+
+
 def _cluster_label_metadata(
     *,
     project_dir: Path,
@@ -133,11 +151,12 @@ def _cluster_label_metadata(
     except Exception as exc:
         simple_labels = label_clusters(matrix, cluster_ids, terms)
         labels = fallback_cluster_labels(documents, cluster_ids, simple_labels)
-        warnings.append(f"Cluster label evidence fell back to simple labels: {exc}")
+        warnings.append(
+            f"Cluster label evidence fell back to simple labels ({type(exc).__name__})."
+        )
     signatures = [label.cluster_signature for label in labels]
-    connection = connect_database(project_dir)
+    connection = connect_read_only(project_dir)
     try:
-        initialize_database(connection)
         repository = Repository(connection, resolve_database_path(project_dir))
         overrides = repository.get_cluster_label_overrides(signatures)
     finally:
@@ -192,7 +211,6 @@ def _point_payload(point: MapPoint) -> dict[str, object]:
 
 def _stats_payload(stats: DatabaseStats) -> dict[str, object]:
     return {
-        "database_path": str(stats.database_path),
         "documents": stats.documents,
         "active_documents": stats.active_documents,
         "missing_documents": stats.missing_documents,

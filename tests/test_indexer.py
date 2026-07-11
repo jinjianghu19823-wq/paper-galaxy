@@ -5,7 +5,10 @@ import shutil
 import sqlite3
 from pathlib import Path
 
-from paper_galaxy.indexer import index_corpus
+import pytest
+
+import paper_galaxy.indexer as indexer_module
+from paper_galaxy.indexer import IndexingCancelled, IndexingSourceChanged, index_corpus
 from paper_galaxy.storage.sqlite import resolve_database_path
 
 
@@ -187,3 +190,120 @@ def test_indexing_records_image_ocr_unavailable_report(tmp_path: Path) -> None:
         )
         == 1
     )
+
+
+def test_indexing_cancels_at_a_document_boundary_and_marks_run_interrupted(
+    tmp_path: Path,
+) -> None:
+    corpus = tmp_path / "corpus"
+    corpus.mkdir()
+    (corpus / "a.md").write_text("# A\n\n" + "a" * 80, encoding="utf-8")
+    (corpus / "b.md").write_text("# B\n\n" + "b" * 80, encoding="utf-8")
+    cancel = False
+
+    def progress(current: int, total: int, message: str) -> None:
+        nonlocal cancel
+        assert total == 2
+        assert message.startswith("Indexing local document")
+        if current == 0:
+            cancel = True
+
+    with pytest.raises(IndexingCancelled, match="document boundary"):
+        index_corpus(
+            corpus,
+            project_dir=tmp_path,
+            min_chars=1,
+            cancel_requested=lambda: cancel,
+            progress_callback=progress,
+        )
+
+    database_path = resolve_database_path(tmp_path)
+    assert scalar(database_path, "SELECT COUNT(*) FROM documents") == 1
+    connection = sqlite3.connect(database_path)
+    try:
+        status = connection.execute(
+            "SELECT status FROM scan_runs ORDER BY started_at DESC LIMIT 1"
+        ).fetchone()[0]
+    finally:
+        connection.close()
+    assert status == "interrupted"
+
+
+def test_indexing_rejects_corpus_root_replacement_before_reading_new_target(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    corpus = tmp_path / "corpus"
+    corpus.mkdir()
+    (corpus / "paper.md").write_text("# Public\n\n" + "a" * 80, encoding="utf-8")
+    secret = tmp_path / "secret"
+    secret.mkdir()
+    secret_text = "# Private\n\nDO NOT INDEX " + "z" * 80
+    (secret / "paper.md").write_text(secret_text, encoding="utf-8")
+    project = tmp_path / "project"
+    displaced = tmp_path / "displaced-corpus"
+    real_discover = indexer_module.discover_files
+
+    def replace_after_discovery(
+        root: Path,
+        *,
+        include_pdf: bool,
+        include_images: bool,
+    ) -> list[Path]:
+        discovered = real_discover(
+            root,
+            include_pdf=include_pdf,
+            include_images=include_images,
+        )
+        root.rename(displaced)
+        root.symlink_to(secret, target_is_directory=True)
+        return discovered
+
+    monkeypatch.setattr(indexer_module, "discover_files", replace_after_discovery)
+
+    with pytest.raises(IndexingSourceChanged, match=r"corpus root changed"):
+        index_corpus(corpus, project_dir=project, min_chars=1)
+
+    database = resolve_database_path(project)
+    assert scalar(database, "SELECT COUNT(*) FROM documents") == 0
+    with sqlite3.connect(database) as connection:
+        stored_text = " ".join(
+            str(row[0]) for row in connection.execute("SELECT text FROM documents_fts")
+        )
+        status = connection.execute(
+            "SELECT status FROM scan_runs ORDER BY started_at DESC LIMIT 1"
+        ).fetchone()[0]
+    assert "DO NOT INDEX" not in stored_text
+    assert status == "failed"
+
+
+def test_indexing_rejects_custom_database_inside_corpus_before_creation(
+    tmp_path: Path,
+) -> None:
+    corpus = tmp_path / "corpus"
+    corpus.mkdir()
+    sentinel = corpus / "keep.txt"
+    sentinel.write_bytes(b"private source")
+    project = tmp_path / "project"
+    metadata = project / ".paper-galaxy"
+    metadata.mkdir(parents=True)
+    database = corpus / "paper-galaxy.sqlite3"
+    (metadata / "project.toml").write_text(
+        "\n".join(
+            [
+                'project_name = "Synthetic"',
+                'created_by = "test"',
+                "map_seed = 42",
+                "corpus_dirs = []",
+                f'database_path = "{database.as_posix()}"',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match=r"database cannot be stored inside"):
+        index_corpus(corpus, project_dir=project, min_chars=1)
+
+    assert sentinel.read_bytes() == b"private source"
+    assert not database.exists()

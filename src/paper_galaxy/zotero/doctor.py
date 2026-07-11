@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import importlib.util
-import sqlite3
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from paper_galaxy.errors import DatabaseError
+from paper_galaxy.storage.json import StoredJSONError
 from paper_galaxy.storage.repository import Repository
-from paper_galaxy.storage.sqlite import resolve_database_path
+from paper_galaxy.storage.sqlite import connect_read_only, resolve_database_path
 from paper_galaxy.zotero.attachments import RESOLVED_STATUSES, resolve_attachment_path
 from paper_galaxy.zotero.detect import detect_zotero
 from paper_galaxy.zotero.local_api import DEFAULT_LOCAL_API_URL, LocalZoteroAPIClient
@@ -198,7 +199,7 @@ def validate_local_zotero(
         )
     )
 
-    project_payload, last_import = _project_payload(database_path)
+    project_payload, last_import = _project_payload(resolved_project_dir)
     checks.append(
         ZoteroDoctorCheck(
             name="project_database",
@@ -410,8 +411,9 @@ def _add_path_checks(
 
 
 def _project_payload(
-    database_path: Path,
+    project_dir: Path,
 ) -> tuple[dict[str, object], dict[str, object] | None]:
+    database_path = resolve_database_path(project_dir)
     payload: dict[str, object] = {
         "database_exists": database_path.exists(),
         "previous_zotero_import_state": False,
@@ -419,18 +421,21 @@ def _project_payload(
     }
     if not database_path.exists():
         return payload, None
-    uri = f"file:{database_path}?mode=ro"
     try:
-        connection = sqlite3.connect(uri, uri=True)
-        connection.row_factory = sqlite3.Row
+        connection = connect_read_only(project_dir)
         try:
             repository = Repository(connection, database_path)
             stats = repository.zotero_stats()
             last_import = repository.zotero_import_status()
         finally:
             connection.close()
-    except sqlite3.Error as exc:
-        payload["error"] = str(exc)
+    except DatabaseError as exc:
+        payload["error"] = exc.safe_message
+        payload["error_code"] = exc.code
+        return payload, None
+    except StoredJSONError as exc:
+        payload["error"] = "Stored Zotero import JSON is invalid."
+        payload["error_code"] = exc.code
         return payload, None
     payload["previous_zotero_import_state"] = bool(stats.get("source_count"))
     payload["zotero_stats"] = stats

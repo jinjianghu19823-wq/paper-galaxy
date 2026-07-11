@@ -9,7 +9,7 @@ Create a clean virtual environment and install the app extras:
 ```bash
 python -m venv .venv
 source .venv/bin/activate
-python -m pip install -e ".[dev,ml,pdf,app]"
+python -m pip install ".[full]"
 paper-galaxy doctor
 ```
 
@@ -71,6 +71,23 @@ paper-galaxy init . --force
 paper-galaxy index examples/tiny_corpus --project-dir . --min-chars 40
 paper-galaxy serve --project-dir .
 ```
+
+For a new workstation, the equivalent one-command flow is:
+
+```bash
+paper-galaxy launch --project-dir ~/PaperGalaxy --corpus ~/Papers --open
+```
+
+## Launch Says A Worker Is Already Active
+
+Only one background writer may serve a project. Close the other Paper Galaxy
+window/process and retry. Do not delete the worker lock or edit the jobs table;
+the next exclusive worker safely marks genuinely interrupted work and preserves
+completed artifacts. A restore must also run while the workspace is stopped.
+
+If launch rejects a source/project relationship, choose a project directory
+outside the corpus or Zotero data directory. Paper Galaxy intentionally refuses
+to create its database inside a read-only source tree.
 
 ## Zotero Local API Unavailable
 
@@ -166,3 +183,27 @@ paper-galaxy validate-project --project-dir .
 
 Validation reports counts, schema status, warnings, and errors without full
 extracted text.
+
+## Semantic Search Says No Current Vectors
+
+Current builds reject legacy, orphaned, inactive, stale-source, malformed, or
+model-fingerprint-mismatched vectors instead of returning them as valid hits.
+Inspect the local-only counts without changing the project:
+
+```bash
+paper-galaxy prune-stale-vectors --project-dir .
+paper-galaxy validate-project --project-dir .
+```
+
+Re-run `paper-galaxy embed` with the intended local model path to rebuild
+current rows. If you have reviewed the report and want to remove only invalid
+SQLite vector/index-metadata rows, use:
+
+```bash
+paper-galaxy prune-stale-vectors --project-dir . --apply --yes
+```
+
+This command never removes papers, project databases, backups, or user files.
+If the local model directory changes while loading, stabilize that directory
+and retry; Paper Galaxy will not bind vectors to an unverified path-only model
+identity.

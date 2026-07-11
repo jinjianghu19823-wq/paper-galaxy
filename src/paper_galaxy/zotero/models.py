@@ -148,6 +148,23 @@ class ZoteroDetection:
 
 
 @dataclass(frozen=True)
+class ZoteroSyncBatch:
+    """One complete, version-fenced batch from the read-only local API."""
+
+    records: tuple[dict[str, Any], ...]
+    library_version: int
+    complete: bool = True
+
+
+@dataclass(frozen=True)
+class ZoteroDeletedBatch:
+    """Deleted Zotero object keys observed since one library version."""
+
+    object_keys: dict[str, tuple[str, ...]]
+    library_version: int
+
+
+@dataclass(frozen=True)
 class ZoteroImportRunSummary:
     """Summary returned by one Zotero import run."""
 
@@ -185,6 +202,13 @@ class ZoteroImportRunSummary:
     warnings: tuple[str, ...] = ()
     reading_status_counts: dict[str, int] = field(default_factory=dict)
     map_run_id: str | None = None
+    profile_id: str | None = None
+    profile_signature: str | None = None
+    full_sync: bool = False
+    changed_parents: int = 0
+    changed_children: int = 0
+    deleted_records: int = 0
+    duration_seconds: float = 0.0
 
 
 @dataclass(frozen=True)

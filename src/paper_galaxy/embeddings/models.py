@@ -11,6 +11,8 @@ from typing import Any
 
 from paper_galaxy.records import IndexedDocument
 
+LEGACY_UNKNOWN_PROVENANCE = "legacy-unknown"
+
 
 @dataclass(frozen=True)
 class EmbeddingModelRecord:
@@ -23,6 +25,8 @@ class EmbeddingModelRecord:
     distance: str
     config: dict[str, Any]
     created_at: str
+    model_fingerprint: str = LEGACY_UNKNOWN_PROVENANCE
+    fingerprint_algorithm: str = LEGACY_UNKNOWN_PROVENANCE
 
 
 @dataclass(frozen=True)
@@ -40,6 +44,9 @@ class VectorRecord:
     metadata: dict[str, Any]
     created_at: str
     updated_at: str
+    source_content_sha256: str = LEGACY_UNKNOWN_PROVENANCE
+    model_fingerprint: str = LEGACY_UNKNOWN_PROVENANCE
+    algorithm_version: str = LEGACY_UNKNOWN_PROVENANCE
 
 
 @dataclass(frozen=True)
@@ -61,7 +68,9 @@ class EmbeddingRunSummary:
     chunks_seen: int = 0
     chunks_embedded: int = 0
     chunks_unchanged: int = 0
+    sources_changed: int = 0
     errors: int = 0
+    owner_pid: int | None = None
 
 
 @dataclass(frozen=True)
@@ -79,6 +88,24 @@ class SemanticSearchResult:
     score: float
     snippet: str
     chunk_index: int | None = None
+
+
+@dataclass(frozen=True)
+class SemanticResultSource:
+    """Top-k display source joined to its current stored vector revision."""
+
+    document: IndexedDocument
+    text: str
+    chunk_index: int | None
+    source_content_sha256: str
+    vector_id: str
+    vector_text_sha256: str
+    vector_updated_at: str
+    vector_blob: bytes
+    vector_dimension: int
+    vector_dtype: str
+    vector_model_fingerprint: str
+    vector_algorithm_version: str
 
 
 @dataclass(frozen=True)
@@ -109,6 +136,8 @@ def stable_embedding_model_id(
     dimension: int,
     distance: str,
     config: Mapping[str, Any],
+    model_fingerprint: str = LEGACY_UNKNOWN_PROVENANCE,
+    fingerprint_algorithm: str = LEGACY_UNKNOWN_PROVENANCE,
 ) -> str:
     """Return a deterministic model id from the model identity."""
 
@@ -118,6 +147,8 @@ def stable_embedding_model_id(
         "dimension": dimension,
         "distance": distance,
         "config": dict(sorted(config.items())),
+        "model_fingerprint": model_fingerprint,
+        "fingerprint_algorithm": fingerprint_algorithm,
     }
     digest = hashlib.sha256(
         json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
